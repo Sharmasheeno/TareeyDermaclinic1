@@ -86,13 +86,13 @@ function tdc_display_name(string $legalName): string
     $titles = ['dr', 'mr', 'mrs', 'ms', 'prof'];
     $parts  = preg_split('/\s+/', trim($legalName)) ?: [];
 
-    foreach ($parts as $part) {
-        if (!in_array(strtolower(rtrim($part, '.')), $titles, true)) {
-            return $part;
-        }
+    while (!empty($parts) && in_array(strtolower(rtrim($parts[0], '.')), $titles, true)) {
+        array_shift($parts);
     }
 
-    return $legalName !== '' ? $legalName : 'User';
+    $remaining = trim(implode(' ', $parts));
+
+    return $remaining !== '' ? $remaining : ($legalName !== '' ? $legalName : 'User');
 }
 
 $legalName     = (string) ($_SESSION['userlegalname'] ?? 'User');
@@ -183,7 +183,7 @@ $csrfToken     = (string) ($_SESSION['csrf_token'] ?? '');
         justify-content:center;
     }
     .nav-items{ list-style:none; display:flex; align-items:center; gap:4px; }
-    .nav-link, .nav-trigger{
+    .nav-link{
         appearance:none; background:none; border:none; cursor:pointer;
         display:flex; align-items:center; gap:7px;
         font-family:'Google Sans', sans-serif;
@@ -193,20 +193,16 @@ $csrfToken     = (string) ($_SESSION['csrf_token'] ?? '');
         padding:12px;
         transition:color 0.12s;
     }
-    .nav-link svg, .nav-trigger svg.item-icon{ width:16px; height:16px; fill:var(--navy-55); flex-shrink:0; transition:fill 0.12s; }
-    .nav-link:hover, .nav-trigger:hover{ color:var(--orange); }
-    .nav-link:hover svg, .nav-trigger:hover svg.item-icon{ fill:var(--orange); }
+    .nav-link svg{ width:16px; height:16px; fill:var(--navy-55); flex-shrink:0; transition:fill 0.12s; }
+    .nav-link:hover{ color:var(--orange); }
+    .nav-link:hover svg{ fill:var(--orange); }
     .nav-item.active > .nav-link{
         color:var(--navy);
         box-shadow:inset 0 -2px 0 var(--orange);
     }
     .nav-item.active > .nav-link svg{ fill:var(--navy); }
     .chevron{ width:10px; height:10px; stroke:var(--navy-55); fill:none; stroke-width:2.4; stroke-linecap:round; stroke-linejoin:round; transition:transform 0.15s ease, stroke 0.12s; }
-    .nav-trigger:hover .chevron{ stroke:var(--orange); }
     .nav-item.open .chevron{ transform:rotate(180deg); }
-    .nav-item.open > .nav-trigger{ color:var(--orange); }
-    .nav-item.open > .nav-trigger svg.item-icon{ fill:var(--orange); }
-    .nav-item.open > .nav-trigger .chevron{ stroke:var(--orange); }
     .dropdown-menu{
         position:absolute; top:calc(100% + 6px); left:0;
         min-width:220px;
@@ -271,7 +267,7 @@ $csrfToken     = (string) ($_SESSION['csrf_token'] ?? '');
                 </button>
                 <div class="dropdown-menu profile-menu">
                     <div class="profile-header"><?= htmlspecialchars($displayName, ENT_QUOTES, 'UTF-8') ?><span>Signed in</span></div>
-                    <a href="#">Account Settings</a>
+                    <a href="setup.php">Setup</a>
                     <a href="?logout=1&csrf=<?= urlencode($csrfToken) ?>">Log Out</a>
                 </div>
             </div>
@@ -287,81 +283,46 @@ $csrfToken     = (string) ($_SESSION['csrf_token'] ?? '');
                 </a>
             </li>
 
-            <li class="nav-item" data-menu="reception">
-                <button type="button" class="nav-trigger">
-                    <svg class="item-icon" viewBox="0 0 20 20"><path d="M10 2a1 1 0 011 1v1.06A6.002 6.002 0 0116 10v3l1.3 2.6a1 1 0 01-.9 1.4H3.6a1 1 0 01-.9-1.4L4 13v-3a6.002 6.002 0 015-5.94V3a1 1 0 011-1zM8 18a2 2 0 004 0H8z"/></svg>
+            <li class="nav-item">
+                <a href="reception.php" class="nav-link">
+                    <svg viewBox="0 0 20 20"><path d="M10 2a1 1 0 011 1v1.06A6.002 6.002 0 0116 10v3l1.3 2.6a1 1 0 01-.9 1.4H3.6a1 1 0 01-.9-1.4L4 13v-3a6.002 6.002 0 015-5.94V3a1 1 0 011-1zM8 18a2 2 0 004 0H8z"/></svg>
                     <span>Reception</span>
-                    <svg class="chevron" viewBox="0 0 12 12"><polyline points="2,4 6,8 10,4"/></svg>
-                </button>
-                <div class="dropdown-menu">
-                    <a href="#">Book Appointment</a>
-                    <a href="#">Patient Check-In</a>
-                    <a href="#">Queue Status</a>
-                </div>
+                </a>
             </li>
 
-            <li class="nav-item" data-menu="doctor">
-                <button type="button" class="nav-trigger">
-                    <svg class="item-icon" viewBox="0 0 20 20"><path d="M7 2a1 1 0 00-1 1v3a1 1 0 002 0V4h4v2a1 1 0 002 0V3a1 1 0 00-1-1H7zM6 8a1 1 0 00-1 1v3a5 5 0 0010 0V9a1 1 0 10-2 0v3a3 3 0 11-6 0V9a1 1 0 00-1-1zm8 8a2 2 0 11-4 0h4z"/></svg>
+            <li class="nav-item">
+                <a href="doctor.php" class="nav-link">
+                    <svg viewBox="0 0 20 20"><path d="M7 2a1 1 0 00-1 1v3a1 1 0 002 0V4h4v2a1 1 0 002 0V3a1 1 0 00-1-1H7zM6 8a1 1 0 00-1 1v3a5 5 0 0010 0V9a1 1 0 10-2 0v3a3 3 0 11-6 0V9a1 1 0 00-1-1zm8 8a2 2 0 11-4 0h4z"/></svg>
                     <span>Doctor</span>
-                    <svg class="chevron" viewBox="0 0 12 12"><polyline points="2,4 6,8 10,4"/></svg>
-                </button>
-                <div class="dropdown-menu">
-                    <a href="#">Patient Records</a>
-                    <a href="#">Consultations</a>
-                    <a href="#">Write Prescription</a>
-                </div>
+                </a>
             </li>
 
-            <li class="nav-item" data-menu="pharmacy">
-                <button type="button" class="nav-trigger">
-                    <svg class="item-icon" viewBox="0 0 20 20"><path d="M13.657 2.343a4 4 0 00-5.657 0L2.343 8a4 4 0 105.657 5.657l5.657-5.657a4 4 0 000-5.657zM8.5 6.5l5 5-1.5 1.5-5-5 1.5-1.5z"/></svg>
+            <li class="nav-item">
+                <a href="pharmacy.php" class="nav-link">
+                    <svg viewBox="0 0 20 20"><path d="M13.657 2.343a4 4 0 00-5.657 0L2.343 8a4 4 0 105.657 5.657l5.657-5.657a4 4 0 000-5.657zM8.5 6.5l5 5-1.5 1.5-5-5 1.5-1.5z"/></svg>
                     <span>Pharmacy</span>
-                    <svg class="chevron" viewBox="0 0 12 12"><polyline points="2,4 6,8 10,4"/></svg>
-                </button>
-                <div class="dropdown-menu">
-                    <a href="#">Medication Inventory</a>
-                    <a href="#">Dispense Order</a>
-                    <a href="#">Stock Requests</a>
-                </div>
+                </a>
             </li>
 
-            <li class="nav-item" data-menu="lab">
-                <button type="button" class="nav-trigger">
-                    <svg class="item-icon" viewBox="0 0 20 20"><path d="M8 2a1 1 0 000 2v4.586l-4.243 4.243A2 2 0 005.172 16h9.656a2 2 0 001.415-3.171L12 8.586V4a1 1 0 100-2H8zm2 2h0v5a1 1 0 01-.293.707L7.4 12h5.2l-2.307-2.293A1 1 0 0110 9V4z"/></svg>
+            <li class="nav-item">
+                <a href="lab.php" class="nav-link">
+                    <svg viewBox="0 0 20 20"><path d="M8 2a1 1 0 000 2v4.586l-4.243 4.243A2 2 0 005.172 16h9.656a2 2 0 001.415-3.171L12 8.586V4a1 1 0 100-2H8zm2 2h0v5a1 1 0 01-.293.707L7.4 12h5.2l-2.307-2.293A1 1 0 0110 9V4z"/></svg>
                     <span>Lab</span>
-                    <svg class="chevron" viewBox="0 0 12 12"><polyline points="2,4 6,8 10,4"/></svg>
-                </button>
-                <div class="dropdown-menu">
-                    <a href="#">Test Requests</a>
-                    <a href="#">Lab Results</a>
-                    <a href="#">Sample Tracking</a>
-                </div>
+                </a>
             </li>
 
-            <li class="nav-item" data-menu="accounting">
-                <button type="button" class="nav-trigger">
-                    <svg class="item-icon" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M4 3a1 1 0 00-1 1v12a1 1 0 001 1h12a1 1 0 001-1V4a1 1 0 00-1-1H4zm2 3h8v2H6V6zm0 4h8v2H6v-2zm0 4h5v2H6v-2z" clip-rule="evenodd"/></svg>
+            <li class="nav-item">
+                <a href="accounting.php" class="nav-link">
+                    <svg viewBox="0 0 20 20"><path fill-rule="evenodd" d="M4 3a1 1 0 00-1 1v12a1 1 0 001 1h12a1 1 0 001-1V4a1 1 0 00-1-1H4zm2 3h8v2H6V6zm0 4h8v2H6v-2zm0 4h5v2H6v-2z" clip-rule="evenodd"/></svg>
                     <span>Accounting</span>
-                    <svg class="chevron" viewBox="0 0 12 12"><polyline points="2,4 6,8 10,4"/></svg>
-                </button>
-                <div class="dropdown-menu">
-                    <a href="#">Chart of Accounts</a>
-                    <a href="#">Accounting Books</a>
-                </div>
+                </a>
             </li>
 
-            <li class="nav-item" data-menu="report">
-                <button type="button" class="nav-trigger">
-                    <svg class="item-icon" viewBox="0 0 20 20"><path d="M4 13a1 1 0 011-1h1a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1v-4zm5-5a1 1 0 011-1h1a1 1 0 011 1v9a1 1 0 01-1 1h-1a1 1 0 01-1-1V8zm5-4a1 1 0 011-1h1a1 1 0 011 1v13a1 1 0 01-1 1h-1a1 1 0 01-1-1V4z"/></svg>
+            <li class="nav-item">
+                <a href="report.php" class="nav-link">
+                    <svg viewBox="0 0 20 20"><path d="M4 13a1 1 0 011-1h1a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1v-4zm5-5a1 1 0 011-1h1a1 1 0 011 1v9a1 1 0 01-1 1h-1a1 1 0 01-1-1V8zm5-4a1 1 0 011-1h1a1 1 0 011 1v13a1 1 0 01-1 1h-1a1 1 0 01-1-1V4z"/></svg>
                     <span>Report</span>
-                    <svg class="chevron" viewBox="0 0 12 12"><polyline points="2,4 6,8 10,4"/></svg>
-                </button>
-                <div class="dropdown-menu">
-                    <a href="#">Daily Summary</a>
-                    <a href="#">Monthly Report</a>
-                    <a href="#">Analytics</a>
-                </div>
+                </a>
             </li>
         </ul>
     </nav>
@@ -385,7 +346,7 @@ $csrfToken     = (string) ($_SESSION['csrf_token'] ?? '');
     }
 
     items.forEach(function(item){
-        const trigger = item.querySelector('.nav-trigger, .icon-btn, .profile-trigger');
+        const trigger = item.querySelector('.icon-btn, .profile-trigger');
         if(!trigger) return;
         trigger.addEventListener('click', function(e){
             e.stopPropagation();
