@@ -1,0 +1,1860 @@
+<?php
+/**
+ * auth/pages/reception.php
+ * ---------------------------------------------------------------------
+ * Tarey Derma Clinic — Reception Desk
+ * ---------------------------------------------------------------------
+ * Handles three related entities from a single, self-contained page,
+ * matching the "reception = patient registration, laboratory bills,
+ * pharmacy bills" grouping used across the app's navigation:
+ *
+ *   1. Patient Registration  -> Patients table   (modal add/edit)
+ *   2. Laboratory Bills       -> Laboratory table  (modal add/edit)
+ *   3. Pharmacy Bills         -> Prescriptions table (full-page,
+ *      multi-line form — one bill can contain several medication
+ *      lines, so a modal doesn't fit; see SECTION 5C for the grouping
+ *      convention used since Prescriptions has no bill/header column).
+ *
+ * Security controls (same posture as home.php / settings.php):
+ *   - Secure, strict-mode session cookies (HttpOnly, SameSite=Strict,
+ *     Secure when served over HTTPS)
+ *   - Defensive headers: clickjacking, MIME-sniffing, referrer leakage
+ *   - no-store caching so authenticated markup is never cached
+ *   - Session gate: unauthenticated requests never reach the markup
+ *   - Role gate: only 'superuser' and 'receptionuser' may use this page
+ *   - CSRF-token-checked POST handlers, rotated on every submit
+ *   - Prepared statements only — no string-built SQL from user input
+ *   - Post/Redirect/Get on every successful write
+ *   - All session/user-derived output escaped before hitting HTML
+ *
+ * Schema notes / assumptions (see chat reply for full detail):
+ *   - Laboratory.TestID has no catalog table in this codebase, so it
+ *     is auto-generated as a simple running integer (SECTION 5B).
+ *   - Prescriptions has no column to group multiple medication lines
+ *     into one bill. This page encodes the grouping in the primary
+ *     key itself: PrescriptionID = "RX000123-01", "RX000123-02", ...
+ *     All lines sharing the "RX000123" prefix are one Pharmacy Bill.
+ *   - The printable prescription slip (print_prescription.php) reads
+ *     optional Quantity / Route columns on Prescriptions. This page
+ *     writes them too, but only if you've run the small migration
+ *     noted in my reply — everything else works without it.
+ * ---------------------------------------------------------------------
+ */
+declare(strict_types=1);
+
+// =======================================================================
+// SECTION 1 — Session bootstrap & defensive headers
+// =======================================================================
+ini_set('session.use_strict_mode', '1');
+session_set_cookie_params([
+    'lifetime' => 0,
+    'path'     => '/',
+    'domain'   => '',
+    'secure'   => !empty($_SERVER['HTTPS']),
+    'httponly' => true,
+    'samesite' => 'Strict',
+]);
+session_start();
+
+header('X-Frame-Options: DENY');
+header('X-Content-Type-Options: nosniff');
+header('Referrer-Policy: strict-origin-when-cross-origin');
+header('Cache-Control: no-store, no-cache, must-revalidate');
+
+// =======================================================================
+// SECTION 2 — Reference data & shared constants
+// =======================================================================
+const ALLOWED_SECTIONS      = ['patients', 'laboratory', 'pharmacy'];
+const ALLOWED_RECEPTION_ROLES = ['superuser', 'receptionuser'];
+
+const GENDER_OPTIONS = [
+    'Male'   => 'Male',
+    'Female' => 'Female',
+];
+
+const PATIENT_TYPE_OPTIONS = [
+    'New Patient'       => 'New Patient',
+    'Returning Patient' => 'Returning Patient',
+    'Referral'          => 'Referral',
+    'Emergency'         => 'Emergency',
+];
+
+const LAB_RESULT_OPTIONS = [
+    'Pending'  => 'Pending',
+    'Positive' => 'Positive',
+    'Negative' => 'Negative',
+];
+
+const PAYMENT_STATUS_OPTIONS = [
+    'Unpaid'  => 'Unpaid',
+    'Partial' => 'Partial',
+    'Paid'    => 'Paid',
+];
+
+/**
+ * Primary navigation — single source of truth, shared shape with
+ * home.php / settings.php. Flat, single-link items only.
+ */
+const NAV_ITEMS = [
+    [
+        'href'  => 'home.php',
+        'label' => 'Dashboard',
+        'icon'  => '<path d="M3 4a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H4a1 1 0 01-1-1V4zm0 8a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H4a1 1 0 01-1-1v-4zm8-8a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1V4zm0 8a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z"/>',
+    ],
+    [
+        'href'  => 'reception.php',
+        'label' => 'Reception',
+        'icon'  => '<path d="M10 2a1 1 0 011 1v1.06A6.002 6.002 0 0116 10v3l1.3 2.6a1 1 0 01-.9 1.4H3.6a1 1 0 01-.9-1.4L4 13v-3a6.002 6.002 0 015-5.94V3a1 1 0 011-1zM8 18a2 2 0 004 0H8z"/>',
+    ],
+    [
+        'href'  => 'doctors.php',
+        'label' => 'Doctors',
+        'icon'  => '<path d="M7 2a1 1 0 00-1 1v3a1 1 0 002 0V4h4v2a1 1 0 002 0V3a1 1 0 00-1-1H7zM6 8a1 1 0 00-1 1v3a5 5 0 0010 0V9a1 1 0 10-2 0v3a3 3 0 11-6 0V9a1 1 0 00-1-1zm8 8a2 2 0 11-4 0h4z"/>',
+    ],
+    [
+        'href'  => 'patients.php',
+        'label' => 'Patients',
+        'icon'  => '<path d="M10 2a3 3 0 100 6 3 3 0 000-6zM4 17a6 6 0 1112 0v1H4v-1z"/>',
+    ],
+    [
+        'href'  => 'laboratory.php',
+        'label' => 'Laboratory',
+        'icon'  => '<path d="M8 2a1 1 0 000 2v4.586l-4.243 4.243A2 2 0 005.172 16h9.656a2 2 0 001.415-3.171L12 8.586V4a1 1 0 100-2H8zm2 2h0v5a1 1 0 01-.293.707L7.4 12h5.2l-2.307-2.293A1 1 0 0110 9V4z"/>',
+    ],
+    [
+        'href'  => 'pharmacy.php',
+        'label' => 'Pharmacy',
+        'icon'  => '<path d="M13.657 2.343a4 4 0 00-5.657 0L2.343 8a4 4 0 105.657 5.657l5.657-5.657a4 4 0 000-5.657zM8.5 6.5l5 5-1.5 1.5-5-5 1.5-1.5z"/>',
+    ],
+    [
+        'href'  => 'accounting.php',
+        'label' => 'Accounting',
+        'icon'  => '<path fill-rule="evenodd" d="M4 3a1 1 0 00-1 1v12a1 1 0 001 1h12a1 1 0 001-1V4a1 1 0 00-1-1H4zm2 3h8v2H6V6zm0 4h8v2H6v-2zm0 4h5v2H6v-2z" clip-rule="evenodd"/>',
+    ],
+    [
+        'href'  => 'reports.php',
+        'label' => 'Reports',
+        'icon'  => '<path d="M4 13a1 1 0 011-1h1a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1v-4zm5-5a1 1 0 011-1h1a1 1 0 011 1v9a1 1 0 01-1 1h-1a1 1 0 01-1-1V8zm5-4a1 1 0 011-1h1a1 1 0 011 1v13a1 1 0 01-1 1h-1a1 1 0 01-1-1V4z"/>',
+    ],
+    [
+        'href'  => 'settings.php',
+        'label' => 'Settings',
+        'icon'  => '<path fill-rule="evenodd" d="M8.34 1.804A1 1 0 019.32 1h1.36a1 1 0 01.98.804l.331 1.652a6.993 6.993 0 011.929 1.115l1.598-.54a1 1 0 011.186.447l.68 1.178a1 1 0 01-.223 1.28l-1.281 1.05a7.05 7.05 0 010 2.228l1.28 1.05a1 1 0 01.224 1.28l-.68 1.178a1 1 0 01-1.187.447l-1.598-.54a6.993 6.993 0 01-1.929 1.115l-.33 1.652a1 1 0 01-.98.804H9.32a1 1 0 01-.98-.804l-.331-1.652a6.993 6.993 0 01-1.929-1.115l-1.598.54a1 1 0 01-1.186-.447l-.68-1.178a1 1 0 01.223-1.28l1.281-1.05a7.05 7.05 0 010-2.228l-1.28-1.05a1 1 0 01-.224-1.28l.68-1.178a1 1 0 011.187-.447l1.598.54A6.993 6.993 0 018.01 3.456l.33-1.652zM10 13a3 3 0 100-6 3 3 0 000 6z" clip-rule="evenodd"/>',
+    ],
+];
+
+// =======================================================================
+// SECTION 3 — Pure helper functions (no I/O beyond the given PDO)
+// =======================================================================
+
+/** Escapes a value for safe HTML output. Single source of truth. */
+function tdc_e(?string $value): string
+{
+    return htmlspecialchars((string) $value, ENT_QUOTES, 'UTF-8');
+}
+
+/**
+ * Strips a leading honorific (Dr., Mr., Mrs., Ms., Prof.) and returns
+ * the first remaining token, for a friendlier greeting/avatar.
+ */
+function tdc_display_name(string $legalName): string
+{
+    $titles = ['dr', 'mr', 'mrs', 'ms', 'prof'];
+    $parts  = preg_split('/\s+/', trim($legalName)) ?: [];
+
+    while (!empty($parts) && in_array(strtolower(rtrim($parts[0], '.')), $titles, true)) {
+        array_shift($parts);
+    }
+
+    $remaining = trim(implode(' ', $parts));
+
+    return $remaining !== '' ? $remaining : ($legalName !== '' ? $legalName : 'User');
+}
+
+/** Strict Y-m-d date validator (rejects "2026-02-31" style overflow dates). */
+function tdc_is_valid_date(string $date): bool
+{
+    $d = DateTime::createFromFormat('Y-m-d', $date);
+    return $d !== false && $d->format('Y-m-d') === $date;
+}
+
+/**
+ * Self-contained, CSRF-guarded logout (?logout=1&csrf=...).
+ * Exits the script when a logout is processed; otherwise returns.
+ */
+function tdc_handle_logout(): void
+{
+    if (!isset($_GET['logout'])) {
+        return;
+    }
+
+    $validLogoutToken = !empty($_SESSION['csrf_token'])
+        && hash_equals($_SESSION['csrf_token'], $_GET['csrf'] ?? '');
+
+    if ($validLogoutToken) {
+        $_SESSION = [];
+        if (ini_get('session.use_cookies')) {
+            $cookieParams = session_get_cookie_params();
+            setcookie(
+                session_name(),
+                '',
+                time() - 42000,
+                $cookieParams['path'],
+                $cookieParams['domain'],
+                $cookieParams['secure'],
+                $cookieParams['httponly']
+            );
+        }
+        session_destroy();
+    }
+
+    header('Location: ../auth.php');
+    exit;
+}
+
+/** Redirects (Post/Redirect/Get) back to a section with a one-shot flash flag. */
+function tdc_redirect(string $section, string $flag): void
+{
+    header('Location: reception.php?section=' . urlencode($section) . '&' . $flag . '=1');
+    exit;
+}
+
+/** Runs a scalar query and returns the single value. */
+function tdc_scalar(PDO $pdo, string $sql, array $params = [])
+{
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute($params);
+    return $stmt->fetchColumn();
+}
+
+/**
+ * Generates the next zero-padded reference for a VARCHAR primary key,
+ * e.g. tdc_next_ref($pdo, 'Laboratory', 'LaboratoryID', 'LAB') -> "LAB000042".
+ * Table/column are always hardcoded call-site literals — never user input.
+ */
+function tdc_next_ref(PDO $pdo, string $table, string $column, string $prefix, int $pad = 6): string
+{
+    $sql  = "SELECT {$column} FROM {$table} WHERE {$column} LIKE :pattern ORDER BY LENGTH({$column}) DESC, {$column} DESC LIMIT 1";
+    $last = tdc_scalar($pdo, $sql, ['pattern' => $prefix . '%']);
+
+    $next = 1;
+    if ($last !== false && $last !== null) {
+        $next = ((int) substr((string) $last, strlen($prefix))) + 1;
+    }
+
+    return $prefix . str_pad((string) $next, $pad, '0', STR_PAD_LEFT);
+}
+
+/**
+ * Generates the next Pharmacy Bill base reference, e.g. "RX000123".
+ * Individual medication lines are stored as "RX000123-01", "-02", etc.
+ * (see SECTION 5C for why this convention exists instead of a real
+ * grouping column).
+ */
+function tdc_next_prescription_base(PDO $pdo): string
+{
+    $last = tdc_scalar(
+        $pdo,
+        "SELECT PrescriptionID FROM Prescriptions WHERE PrescriptionID LIKE 'RX%' ORDER BY LENGTH(PrescriptionID) DESC, PrescriptionID DESC LIMIT 1"
+    );
+
+    $next = 1;
+    if ($last !== false && $last !== null) {
+        $base = strtok((string) $last, '-'); // "RXxxxxxx"
+        $next = ((int) substr($base, 2)) + 1;
+    }
+
+    return 'RX' . str_pad((string) $next, 6, '0', STR_PAD_LEFT);
+}
+
+/** True if a column exists on a table. Used to degrade gracefully before an optional migration is run. */
+function tdc_table_has_column(PDO $pdo, string $table, string $column): bool
+{
+    static $cache = [];
+    $key = $table . '.' . $column;
+    if (!array_key_exists($key, $cache)) {
+        $stmt = $pdo->prepare("SHOW COLUMNS FROM {$table} LIKE :col");
+        $stmt->execute(['col' => $column]);
+        $cache[$key] = $stmt->fetch() !== false;
+    }
+    return $cache[$key];
+}
+
+// =======================================================================
+// SECTION 4 — Validation functions
+// =======================================================================
+
+/** @param array{PatientName:string,PatientPhone:string,Gender:string,Age:string,DateOfBirth:string,PatientType:string,AllocatedDoctor:string} $input */
+function tdc_validate_patient_form(array $input): array
+{
+    $errors = [];
+
+    if ($input['PatientName'] === '' || mb_strlen($input['PatientName']) < 2 || mb_strlen($input['PatientName']) > 150) {
+        $errors[] = 'Patient name is required (2-150 characters).';
+    }
+    if ($input['PatientPhone'] !== '' && !preg_match('/^[0-9+\-\s()]{6,20}$/', $input['PatientPhone'])) {
+        $errors[] = 'Phone number format is invalid.';
+    }
+    if ($input['Gender'] !== '' && !array_key_exists($input['Gender'], GENDER_OPTIONS)) {
+        $errors[] = 'Please select a valid gender.';
+    }
+    if ($input['Age'] !== '' && (!ctype_digit($input['Age']) || (int) $input['Age'] > 150)) {
+        $errors[] = 'Age must be a whole number between 0 and 150.';
+    }
+    if ($input['DateOfBirth'] !== '' && !tdc_is_valid_date($input['DateOfBirth'])) {
+        $errors[] = 'Date of birth is not a valid date.';
+    }
+    if ($input['PatientType'] !== '' && !array_key_exists($input['PatientType'], PATIENT_TYPE_OPTIONS)) {
+        $errors[] = 'Please select a valid patient type.';
+    }
+    if ($input['AllocatedDoctor'] !== '' && !ctype_digit($input['AllocatedDoctor'])) {
+        $errors[] = 'Please select a valid doctor.';
+    }
+
+    return $errors;
+}
+
+/** @param array{PatientID:string,TestName:string,Price:string,PaymentStatus:string,Result:string} $input */
+function tdc_validate_lab_form(array $input): array
+{
+    $errors = [];
+
+    if ($input['PatientID'] === '' || !ctype_digit($input['PatientID'])) {
+        $errors[] = 'Please select a valid patient.';
+    }
+    if ($input['TestName'] === '' || mb_strlen($input['TestName']) > 150) {
+        $errors[] = 'Test name is required (max 150 characters).';
+    }
+    if ($input['Price'] === '' || !is_numeric($input['Price']) || (float) $input['Price'] < 0) {
+        $errors[] = 'Price must be a valid non-negative number.';
+    }
+    if (!array_key_exists($input['PaymentStatus'], PAYMENT_STATUS_OPTIONS)) {
+        $errors[] = 'Please select a valid payment status.';
+    }
+    if ($input['Result'] !== '' && !array_key_exists($input['Result'], LAB_RESULT_OPTIONS)) {
+        $errors[] = 'Please select a valid result.';
+    }
+
+    return $errors;
+}
+
+/** @param array{PatientID:string,DoctorID:string,TotalAmount:string,AmountPaid:string,MedicationName:array} $input */
+function tdc_validate_pharmacy_form(array $input): array
+{
+    $errors = [];
+
+    if ($input['PatientID'] === '' || !ctype_digit($input['PatientID'])) {
+        $errors[] = 'Please select a valid patient.';
+    }
+    if ($input['DoctorID'] === '' || !ctype_digit($input['DoctorID'])) {
+        $errors[] = 'Please select the prescribing doctor.';
+    }
+    if ($input['TotalAmount'] === '' || !is_numeric($input['TotalAmount']) || (float) $input['TotalAmount'] < 0) {
+        $errors[] = 'Total amount must be a valid non-negative number.';
+    }
+    if ($input['AmountPaid'] === '' || !is_numeric($input['AmountPaid']) || (float) $input['AmountPaid'] < 0) {
+        $errors[] = 'Amount paid must be a valid non-negative number.';
+    }
+    if (is_numeric($input['TotalAmount'] ?? null) && is_numeric($input['AmountPaid'] ?? null)
+        && (float) $input['AmountPaid'] > (float) $input['TotalAmount']) {
+        $errors[] = 'Amount paid cannot exceed the total amount.';
+    }
+
+    $medications = $input['MedicationName'] ?? [];
+    $hasLine     = false;
+    foreach ($medications as $i => $name) {
+        $name = trim((string) $name);
+        if ($name === '') {
+            continue;
+        }
+        $hasLine = true;
+        if (mb_strlen($name) > 150) {
+            $errors[] = 'Medication name at line ' . ($i + 1) . ' is too long (max 150 characters).';
+        }
+        $qty = trim((string) ($input['Quantity'][$i] ?? ''));
+        if ($qty !== '' && (!ctype_digit($qty) || (int) $qty < 1)) {
+            $errors[] = 'Quantity at line ' . ($i + 1) . ' must be a positive whole number.';
+        }
+    }
+    if (!$hasLine) {
+        $errors[] = 'Add at least one medication line.';
+    }
+
+    return $errors;
+}
+
+// =======================================================================
+// SECTION 5 — Persistence functions
+// =======================================================================
+
+// --- 5A. Patients -------------------------------------------------------
+
+function tdc_save_patient(PDO $pdo, array $input, bool $isEdit, int $editId): void
+{
+    $params = [
+        'PatientName'     => $input['PatientName'],
+        'PatientPhone'    => $input['PatientPhone'] !== '' ? $input['PatientPhone'] : null,
+        'PatientAddress'  => $input['PatientAddress'] !== '' ? $input['PatientAddress'] : null,
+        'Gender'          => $input['Gender'] !== '' ? $input['Gender'] : null,
+        'Age'             => $input['Age'] !== '' ? (int) $input['Age'] : null,
+        'DateOfBirth'     => $input['DateOfBirth'] !== '' ? $input['DateOfBirth'] : null,
+        'PatientType'     => $input['PatientType'] !== '' ? $input['PatientType'] : null,
+        'AllocatedDoctor' => $input['AllocatedDoctor'] !== '' ? (int) $input['AllocatedDoctor'] : null,
+        'Remark'          => $input['Remark'] !== '' ? $input['Remark'] : null,
+    ];
+
+    if ($isEdit) {
+        $params['id'] = $editId;
+        $stmt = $pdo->prepare(
+            'UPDATE Patients SET PatientName = :PatientName, PatientPhone = :PatientPhone,
+                PatientAddress = :PatientAddress, Gender = :Gender, Age = :Age,
+                DateOfBirth = :DateOfBirth, PatientType = :PatientType,
+                AllocatedDoctor = :AllocatedDoctor, Remark = :Remark
+             WHERE PatientID = :id'
+        );
+        $stmt->execute($params);
+        return;
+    }
+
+    $stmt = $pdo->prepare(
+        'INSERT INTO Patients (PatientName, PatientPhone, PatientAddress, Gender, Age,
+            DateOfBirth, PatientType, AllocatedDoctor, Remark, VisitNumber, DueBalance)
+         VALUES (:PatientName, :PatientPhone, :PatientAddress, :Gender, :Age,
+            :DateOfBirth, :PatientType, :AllocatedDoctor, :Remark, 1, 0.00)'
+    );
+    $stmt->execute($params);
+}
+
+/** @return string[] error messages; empty on success */
+function tdc_delete_patient(PDO $pdo, int $id): array
+{
+    // App-level referential guard: the schema has no FK constraints,
+    // so we check dependents ourselves before allowing a delete.
+    $labCount = (int) tdc_scalar($pdo, 'SELECT COUNT(*) FROM Laboratory WHERE PatientID = :id', ['id' => $id]);
+    $rxCount  = (int) tdc_scalar($pdo, 'SELECT COUNT(*) FROM Prescriptions WHERE PatientID = :id', ['id' => $id]);
+
+    if ($labCount > 0 || $rxCount > 0) {
+        return ['This patient has existing laboratory or pharmacy bills and cannot be deleted.'];
+    }
+
+    $stmt = $pdo->prepare('DELETE FROM Patients WHERE PatientID = :id');
+    $stmt->execute(['id' => $id]);
+    return [];
+}
+
+function tdc_record_patient_visit(PDO $pdo, int $id): void
+{
+    $stmt = $pdo->prepare('UPDATE Patients SET VisitNumber = VisitNumber + 1 WHERE PatientID = :id');
+    $stmt->execute(['id' => $id]);
+}
+
+// --- 5B. Laboratory ------------------------------------------------------
+
+function tdc_save_lab(PDO $pdo, array $input, bool $isEdit, string $editId): void
+{
+    $params = [
+        'PatientID'     => (int) $input['PatientID'],
+        'TestName'      => $input['TestName'],
+        'Description'   => $input['Description'] !== '' ? $input['Description'] : null,
+        'Price'         => round((float) $input['Price'], 2),
+        'IsAvailable'   => ($input['IsAvailable'] ?? '') === '1' ? 1 : 0,
+        'Result'        => $input['Result'] !== '' ? $input['Result'] : 'Pending',
+        'ResultDate'    => $input['ResultDate'] !== '' ? $input['ResultDate'] : null,
+        'PaymentStatus' => $input['PaymentStatus'],
+    ];
+
+    if ($isEdit) {
+        $params['id'] = $editId;
+        $stmt = $pdo->prepare(
+            'UPDATE Laboratory SET PatientID = :PatientID, TestName = :TestName,
+                Description = :Description, Price = :Price, IsAvailable = :IsAvailable,
+                Result = :Result, ResultDate = :ResultDate, PaymentStatus = :PaymentStatus
+             WHERE LaboratoryID = :id'
+        );
+        $stmt->execute($params);
+        return;
+    }
+
+    // TestID has no catalog table in this codebase (see file header note),
+    // so it is a simple running integer, unique enough for display purposes.
+    $params['LaboratoryID'] = tdc_next_ref($pdo, 'Laboratory', 'LaboratoryID', 'LAB');
+    $params['TestID']       = (int) tdc_scalar($pdo, 'SELECT COALESCE(MAX(TestID), 0) + 1 FROM Laboratory') ?: 1;
+
+    $stmt = $pdo->prepare(
+        'INSERT INTO Laboratory (LaboratoryID, PatientID, TestID, TestName, Description,
+            Price, IsAvailable, Result, ResultDate, PaymentStatus)
+         VALUES (:LaboratoryID, :PatientID, :TestID, :TestName, :Description,
+            :Price, :IsAvailable, :Result, :ResultDate, :PaymentStatus)'
+    );
+    $stmt->execute($params);
+}
+
+function tdc_delete_lab(PDO $pdo, string $id): void
+{
+    $stmt = $pdo->prepare('DELETE FROM Laboratory WHERE LaboratoryID = :id');
+    $stmt->execute(['id' => $id]);
+}
+
+// --- 5C. Pharmacy (Prescriptions) ----------------------------------------
+//
+// Prescriptions has no column to group several medication lines into a
+// single bill, so this page encodes the grouping in the primary key:
+// one bill's lines are PrescriptionID = "{base}-01", "{base}-02", ...
+// Editing a bill deletes and re-inserts its lines inside a transaction,
+// which is safe here because a bill is always small (a handful of rows).
+
+/** @throws RuntimeException if the patient no longer exists */
+function tdc_fetch_patient_snapshot(PDO $pdo, int $patientId): array
+{
+    $stmt = $pdo->prepare('SELECT PatientID, PatientName, PatientPhone, PatientAddress, Gender, Age, VisitNumber FROM Patients WHERE PatientID = :id');
+    $stmt->execute(['id' => $patientId]);
+    $row = $stmt->fetch();
+    if ($row === false) {
+        throw new RuntimeException('Selected patient no longer exists.');
+    }
+    return $row;
+}
+
+function tdc_save_pharmacy(PDO $pdo, array $input, bool $isEdit, string $editBase): void
+{
+    $patient = tdc_fetch_patient_snapshot($pdo, (int) $input['PatientID']);
+
+    $totalAmount = round((float) $input['TotalAmount'], 2);
+    $amountPaid  = round((float) $input['AmountPaid'], 2);
+    $dueBalance  = round($totalAmount - $amountPaid, 2);
+
+    $base = $isEdit ? $editBase : tdc_next_prescription_base($pdo);
+
+    // Optional migration (see chat reply): ALTER TABLE Prescriptions
+    // ADD COLUMN Quantity INT DEFAULT 1, ADD COLUMN Route VARCHAR(50) NULL.
+    $supportsQty   = tdc_table_has_column($pdo, 'Prescriptions', 'Quantity');
+    $supportsRoute = tdc_table_has_column($pdo, 'Prescriptions', 'Route');
+
+    $columns = ['PrescriptionID', 'PatientID', 'PatientName', 'PatientPhone', 'PatientAddress',
+        'Gender', 'Age', 'VisitNumber', 'DoctorID', 'MedicationName', 'Dosage',
+        'Frequency', 'Duration', 'Instructions', 'TotalAmount', 'AmountPaid', 'DueBalance'];
+    if ($supportsQty) {
+        $columns[] = 'Quantity';
+    }
+    if ($supportsRoute) {
+        $columns[] = 'Route';
+    }
+    $placeholders = array_map(static fn (string $c) => ':' . $c, $columns);
+    $insertSql    = 'INSERT INTO Prescriptions (' . implode(', ', $columns) . ') VALUES (' . implode(', ', $placeholders) . ')';
+
+    $pdo->beginTransaction();
+    try {
+        if ($isEdit) {
+            $del = $pdo->prepare('DELETE FROM Prescriptions WHERE PrescriptionID LIKE :pattern');
+            $del->execute(['pattern' => $base . '-%']);
+        }
+
+        $insert = $pdo->prepare($insertSql);
+
+        $line = 0;
+        foreach ($input['MedicationName'] as $i => $name) {
+            $name = trim((string) $name);
+            if ($name === '') {
+                continue; // Skip blank rows the clerk left empty.
+            }
+            $line++;
+
+            $row = [
+                'PrescriptionID' => $base . '-' . str_pad((string) $line, 2, '0', STR_PAD_LEFT),
+                'PatientID'      => $patient['PatientID'],
+                'PatientName'    => $patient['PatientName'],
+                'PatientPhone'   => $patient['PatientPhone'],
+                'PatientAddress' => $patient['PatientAddress'],
+                'Gender'         => $patient['Gender'],
+                'Age'            => $patient['Age'],
+                'VisitNumber'    => $patient['VisitNumber'],
+                'DoctorID'       => (int) $input['DoctorID'],
+                'MedicationName' => $name,
+                'Dosage'         => trim((string) ($input['Dosage'][$i] ?? '')) ?: null,
+                'Frequency'      => trim((string) ($input['Frequency'][$i] ?? '')) ?: null,
+                'Duration'       => trim((string) ($input['Duration'][$i] ?? '')) ?: null,
+                'Instructions'   => trim((string) ($input['Instructions'][$i] ?? '')) ?: null,
+                'TotalAmount'    => $totalAmount,
+                'AmountPaid'     => $amountPaid,
+                'DueBalance'     => $dueBalance,
+            ];
+            if ($supportsQty) {
+                $qty = trim((string) ($input['Quantity'][$i] ?? ''));
+                $row['Quantity'] = $qty !== '' ? (int) $qty : 1;
+            }
+            if ($supportsRoute) {
+                $row['Route'] = trim((string) ($input['Route'][$i] ?? '')) ?: null;
+            }
+
+            $insert->execute($row);
+        }
+
+        $pdo->commit();
+    } catch (Throwable $e) {
+        $pdo->rollBack();
+        throw $e;
+    }
+}
+
+function tdc_delete_pharmacy_bill(PDO $pdo, string $base): void
+{
+    $stmt = $pdo->prepare('DELETE FROM Prescriptions WHERE PrescriptionID LIKE :pattern');
+    $stmt->execute(['pattern' => $base . '-%']);
+}
+
+// =======================================================================
+// SECTION 6 — Logout (may exit)
+// =======================================================================
+tdc_handle_logout();
+
+// =======================================================================
+// SECTION 7 — Auth gate & role gate
+// =======================================================================
+if (empty($_SESSION['user_id'])) {
+    header('Location: ../auth.php');
+    exit;
+}
+
+if (!in_array($_SESSION['role'] ?? '', ALLOWED_RECEPTION_ROLES, true)) {
+    header('Location: home.php');
+    exit;
+}
+
+require_once __DIR__ . '/../../db.php';
+
+if (empty($_SESSION['csrf_token'])) {
+    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+}
+
+// =======================================================================
+// SECTION 8 — Request-scoped state
+// =======================================================================
+$section = $_GET['section'] ?? null;
+if ($section !== null && !in_array($section, ALLOWED_SECTIONS, true)) {
+    $section = null;
+}
+
+$errors = [];
+
+$oldPatient = [
+    'PatientID' => '', 'PatientName' => '', 'PatientPhone' => '', 'PatientAddress' => '',
+    'Gender' => '', 'Age' => '', 'DateOfBirth' => '', 'PatientType' => '',
+    'AllocatedDoctor' => '', 'Remark' => '',
+];
+
+$oldLab = [
+    'LaboratoryID' => '', 'PatientID' => '', 'PatientLabel' => '', 'TestName' => '',
+    'Description' => '', 'Price' => '', 'IsAvailable' => '1', 'Result' => 'Pending',
+    'ResultDate' => '', 'PaymentStatus' => 'Unpaid',
+];
+
+$oldPharmacy = [
+    'BillRef' => '', 'PatientID' => '', 'PatientLabel' => '', 'DoctorID' => '',
+    'TotalAmount' => '', 'AmountPaid' => '',
+    'MedicationName' => [], 'Dosage' => [], 'Frequency' => [], 'Duration' => [],
+    'Instructions' => [], 'Quantity' => [], 'Route' => [],
+];
+
+$pharmacyShowForm = false; // true => render the pharmacy form instead of the bills list
+
+// =======================================================================
+// SECTION 9 — POST handler (dispatch by section)
+// =======================================================================
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($section, ALLOWED_SECTIONS, true)) {
+
+    if (!hash_equals($_SESSION['csrf_token'], $_POST['csrf_token'] ?? '')) {
+        $errors[] = 'Your session has expired. Please refresh and try again.';
+    } else {
+        $formAction = (string) ($_POST['form_action'] ?? 'save');
+
+        // --- Patients ------------------------------------------------
+        if ($section === 'patients') {
+            if ($formAction === 'delete') {
+                $deleteId = (int) ($_POST['PatientID'] ?? 0);
+                $errors   = $deleteId > 0 ? tdc_delete_patient($pdo, $deleteId) : ['Invalid patient selected.'];
+                if (empty($errors)) {
+                    tdc_redirect('patients', 'deleted');
+                }
+            } elseif ($formAction === 'visit') {
+                $visitId = (int) ($_POST['PatientID'] ?? 0);
+                if ($visitId > 0) {
+                    tdc_record_patient_visit($pdo, $visitId);
+                }
+                tdc_redirect('patients', 'visited');
+            } else {
+                $oldPatient['PatientID']       = trim((string) ($_POST['PatientID'] ?? ''));
+                $oldPatient['PatientName']     = trim((string) ($_POST['PatientName'] ?? ''));
+                $oldPatient['PatientPhone']    = trim((string) ($_POST['PatientPhone'] ?? ''));
+                $oldPatient['PatientAddress']  = trim((string) ($_POST['PatientAddress'] ?? ''));
+                $oldPatient['Gender']          = (string) ($_POST['Gender'] ?? '');
+                $oldPatient['Age']             = trim((string) ($_POST['Age'] ?? ''));
+                $oldPatient['DateOfBirth']     = trim((string) ($_POST['DateOfBirth'] ?? ''));
+                $oldPatient['PatientType']     = (string) ($_POST['PatientType'] ?? '');
+                $oldPatient['AllocatedDoctor'] = trim((string) ($_POST['AllocatedDoctor'] ?? ''));
+                $oldPatient['Remark']          = trim((string) ($_POST['Remark'] ?? ''));
+
+                $isEdit = $oldPatient['PatientID'] !== '' && ctype_digit($oldPatient['PatientID']);
+                $errors = tdc_validate_patient_form($oldPatient);
+
+                if (empty($errors)) {
+                    try {
+                        tdc_save_patient($pdo, $oldPatient, $isEdit, (int) $oldPatient['PatientID']);
+                        tdc_redirect('patients', 'success');
+                    } catch (PDOException $e) {
+                        error_log('[RECEPTION][PATIENTS] save failed: ' . $e->getMessage());
+                        $errors[] = 'A system error occurred while saving the patient. Please try again.';
+                    }
+                }
+            }
+
+        // --- Laboratory ------------------------------------------------
+        } elseif ($section === 'laboratory') {
+            if ($formAction === 'delete') {
+                $deleteId = trim((string) ($_POST['LaboratoryID'] ?? ''));
+                if ($deleteId === '') {
+                    $errors[] = 'Invalid laboratory bill selected.';
+                } else {
+                    try {
+                        tdc_delete_lab($pdo, $deleteId);
+                        tdc_redirect('laboratory', 'deleted');
+                    } catch (PDOException $e) {
+                        error_log('[RECEPTION][LAB] delete failed: ' . $e->getMessage());
+                        $errors[] = 'A system error occurred while deleting the bill. Please try again.';
+                    }
+                }
+            } else {
+                $oldLab['LaboratoryID']  = trim((string) ($_POST['LaboratoryID'] ?? ''));
+                $oldLab['PatientID']     = trim((string) ($_POST['PatientID'] ?? ''));
+                $oldLab['PatientLabel']  = trim((string) ($_POST['PatientLabel'] ?? ''));
+                $oldLab['TestName']      = trim((string) ($_POST['TestName'] ?? ''));
+                $oldLab['Description']   = trim((string) ($_POST['Description'] ?? ''));
+                $oldLab['Price']         = trim((string) ($_POST['Price'] ?? ''));
+                $oldLab['IsAvailable']   = (string) ($_POST['IsAvailable'] ?? '0');
+                $oldLab['Result']        = (string) ($_POST['Result'] ?? 'Pending');
+                $oldLab['ResultDate']    = trim((string) ($_POST['ResultDate'] ?? ''));
+                $oldLab['PaymentStatus'] = (string) ($_POST['PaymentStatus'] ?? 'Unpaid');
+
+                $isEdit = $oldLab['LaboratoryID'] !== '';
+                $errors = tdc_validate_lab_form($oldLab);
+
+                if (empty($errors)) {
+                    try {
+                        tdc_save_lab($pdo, $oldLab, $isEdit, $oldLab['LaboratoryID']);
+                        tdc_redirect('laboratory', 'success');
+                    } catch (PDOException $e) {
+                        error_log('[RECEPTION][LAB] save failed: ' . $e->getMessage());
+                        $errors[] = 'A system error occurred while saving the bill. Please try again.';
+                    }
+                }
+            }
+
+        // --- Pharmacy ----------------------------------------------------
+        } elseif ($section === 'pharmacy') {
+            if ($formAction === 'delete') {
+                $base = preg_replace('/[^A-Za-z0-9]/', '', (string) ($_POST['BillRef'] ?? ''));
+                if ($base === '') {
+                    $errors[] = 'Invalid pharmacy bill selected.';
+                } else {
+                    try {
+                        tdc_delete_pharmacy_bill($pdo, $base);
+                        tdc_redirect('pharmacy', 'deleted');
+                    } catch (PDOException $e) {
+                        error_log('[RECEPTION][PHARMACY] delete failed: ' . $e->getMessage());
+                        $errors[] = 'A system error occurred while deleting the bill. Please try again.';
+                    }
+                }
+            } else {
+                $oldPharmacy['BillRef']        = preg_replace('/[^A-Za-z0-9]/', '', (string) ($_POST['BillRef'] ?? ''));
+                $oldPharmacy['PatientID']      = trim((string) ($_POST['PatientID'] ?? ''));
+                $oldPharmacy['PatientLabel']   = trim((string) ($_POST['PatientLabel'] ?? ''));
+                $oldPharmacy['DoctorID']       = trim((string) ($_POST['DoctorID'] ?? ''));
+                $oldPharmacy['TotalAmount']    = trim((string) ($_POST['TotalAmount'] ?? ''));
+                $oldPharmacy['AmountPaid']     = trim((string) ($_POST['AmountPaid'] ?? ''));
+                $oldPharmacy['MedicationName'] = $_POST['MedicationName'] ?? [];
+                $oldPharmacy['Dosage']         = $_POST['Dosage'] ?? [];
+                $oldPharmacy['Frequency']      = $_POST['Frequency'] ?? [];
+                $oldPharmacy['Duration']       = $_POST['Duration'] ?? [];
+                $oldPharmacy['Instructions']   = $_POST['Instructions'] ?? [];
+                $oldPharmacy['Quantity']       = $_POST['Quantity'] ?? [];
+                $oldPharmacy['Route']          = $_POST['Route'] ?? [];
+
+                $isEdit = $oldPharmacy['BillRef'] !== '';
+                $errors = tdc_validate_pharmacy_form($oldPharmacy);
+                $pharmacyShowForm = true; // stay on the form for both success (until redirect) and failure
+
+                if (empty($errors)) {
+                    try {
+                        tdc_save_pharmacy($pdo, $oldPharmacy, $isEdit, $oldPharmacy['BillRef']);
+                        tdc_redirect('pharmacy', 'success');
+                    } catch (Throwable $e) {
+                        error_log('[RECEPTION][PHARMACY] save failed: ' . $e->getMessage());
+                        $errors[] = 'A system error occurred while saving the bill. Please try again.';
+                    }
+                }
+            }
+        }
+    }
+
+    // Rotate CSRF token after every POST (success paths already rotated + exited above via header()).
+    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+}
+
+// =======================================================================
+// SECTION 10 — GET data loading for display
+// =======================================================================
+$doctors = $pdo->query('SELECT DoctorID, DoctorName, Specialty FROM Doctors ORDER BY DoctorName ASC')->fetchAll();
+$doctorNameById = array_column($doctors, 'DoctorName', 'DoctorID');
+
+$patientOptions = [];
+if (in_array($section, ['laboratory', 'pharmacy'], true)) {
+    $stmt = $pdo->query('SELECT PatientID, PatientName, PatientPhone FROM Patients ORDER BY PatientName ASC LIMIT 500');
+    foreach ($stmt->fetchAll() as $p) {
+        $patientOptions[] = [
+            'id'    => (int) $p['PatientID'],
+            'label' => $p['PatientName'] . ($p['PatientPhone'] ? ' — ' . $p['PatientPhone'] : ''),
+        ];
+    }
+}
+
+$patients      = [];
+$patientSearch = '';
+if ($section === 'patients') {
+    $patientSearch = trim((string) ($_GET['q'] ?? ''));
+    if ($patientSearch !== '') {
+        $stmt = $pdo->prepare(
+            'SELECT p.*, d.DoctorName FROM Patients p LEFT JOIN Doctors d ON d.DoctorID = p.AllocatedDoctor
+             WHERE p.PatientName LIKE :q OR p.PatientPhone LIKE :q ORDER BY p.RegisteredAt DESC LIMIT 200'
+        );
+        $stmt->execute(['q' => '%' . $patientSearch . '%']);
+    } else {
+        $stmt = $pdo->query(
+            'SELECT p.*, d.DoctorName FROM Patients p LEFT JOIN Doctors d ON d.DoctorID = p.AllocatedDoctor
+             ORDER BY p.RegisteredAt DESC LIMIT 200'
+        );
+    }
+    $patients = $stmt->fetchAll();
+}
+
+$labBills = [];
+if ($section === 'laboratory') {
+    $stmt = $pdo->query(
+        'SELECT l.*, p.PatientName, p.PatientPhone FROM Laboratory l
+         JOIN Patients p ON p.PatientID = l.PatientID
+         ORDER BY l.OrderDate DESC LIMIT 200'
+    );
+    $labBills = $stmt->fetchAll();
+}
+
+$pharmacyBills = [];
+if ($section === 'pharmacy') {
+    $stmt = $pdo->query(
+        "SELECT SUBSTRING_INDEX(PrescriptionID, '-', 1) AS BillRef,
+                MIN(PatientID) AS PatientID, MIN(PatientName) AS PatientName,
+                MIN(DoctorID) AS DoctorID, COUNT(*) AS LineCount,
+                MIN(TotalAmount) AS TotalAmount, MIN(AmountPaid) AS AmountPaid,
+                MIN(DueBalance) AS DueBalance, MIN(PrescriptionDate) AS PrescriptionDate
+         FROM Prescriptions
+         GROUP BY BillRef
+         ORDER BY PrescriptionDate DESC
+         LIMIT 200"
+    );
+    $pharmacyBills = $stmt->fetchAll();
+
+    // A failed POST already forces the form back open (SECTION 9). On a
+    // plain GET, ?new=1 or ?edit=REF opens the create/edit form instead.
+    if (empty($errors)) {
+        if (isset($_GET['new'])) {
+            $pharmacyShowForm = true;
+        } elseif (isset($_GET['edit'])) {
+            $editRef = preg_replace('/[^A-Za-z0-9]/', '', (string) $_GET['edit']);
+            $stmt = $pdo->prepare('SELECT * FROM Prescriptions WHERE PrescriptionID LIKE :pattern ORDER BY PrescriptionID ASC');
+            $stmt->execute(['pattern' => $editRef . '-%']);
+            $rows = $stmt->fetchAll();
+
+            if (!empty($rows)) {
+                $pharmacyShowForm            = true;
+                $oldPharmacy['BillRef']      = $editRef;
+                $oldPharmacy['PatientID']    = (string) $rows[0]['PatientID'];
+                $oldPharmacy['PatientLabel'] = $rows[0]['PatientName'] . ($rows[0]['PatientPhone'] ? ' — ' . $rows[0]['PatientPhone'] : '');
+                $oldPharmacy['DoctorID']     = (string) $rows[0]['DoctorID'];
+                $oldPharmacy['TotalAmount']  = (string) $rows[0]['TotalAmount'];
+                $oldPharmacy['AmountPaid']   = (string) $rows[0]['AmountPaid'];
+                foreach ($rows as $r) {
+                    $oldPharmacy['MedicationName'][] = (string) $r['MedicationName'];
+                    $oldPharmacy['Dosage'][]          = (string) ($r['Dosage'] ?? '');
+                    $oldPharmacy['Frequency'][]       = (string) ($r['Frequency'] ?? '');
+                    $oldPharmacy['Duration'][]        = (string) ($r['Duration'] ?? '');
+                    $oldPharmacy['Instructions'][]    = (string) ($r['Instructions'] ?? '');
+                    $oldPharmacy['Quantity'][]        = (string) ($r['Quantity'] ?? '');
+                    $oldPharmacy['Route'][]           = (string) ($r['Route'] ?? '');
+                }
+            }
+        }
+    }
+}
+
+// =======================================================================
+// SECTION 11 — View data
+// =======================================================================
+$legalName     = (string) ($_SESSION['userlegalname'] ?? 'User');
+$displayName   = tdc_display_name($legalName);
+$avatarLetters = strtoupper(substr($displayName, 0, 2));
+$csrfToken     = (string) ($_SESSION['csrf_token'] ?? '');
+$currentPage   = basename((string) ($_SERVER['SCRIPT_NAME'] ?? 'reception.php'));
+
+$justSaved   = isset($_GET['success']);
+$justDeleted = isset($_GET['deleted']);
+$justVisited = isset($_GET['visited']);
+?>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tarey Derma Clinic</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Google+Sans:ital,opsz,wght@0,17..18,400..700;1,17..18,400..700&display=swap" rel="stylesheet">
+<style>
+    :root{
+        --navy: #2E3192;
+        --navy-30: rgba(46,49,146,0.3);
+        --navy-10: rgba(46,49,146,0.08);
+        --navy-55: rgba(46,49,146,0.55);
+        --orange: #F15A24;
+        --white: #ffffff;
+        --border: 2px solid var(--navy);
+        --on-navy-70: rgba(255,255,255,0.7);
+    }
+    *, *::before, *::after{ box-sizing:border-box; margin:0; padding:0; }
+    body{ font-family:'Google Sans', sans-serif; background:var(--white); color:var(--navy); min-height:100vh; }
+    .app-header{ position:relative; z-index:100; }
+    .nav-item{ position:relative; flex-shrink:0; }
+    .utility-bar{ display:flex; align-items:center; justify-content:space-between; background:var(--navy); padding:8px 24px; }
+    .brand-chip{ background:var(--white); display:flex; align-items:center; padding:5px 14px; flex-shrink:0; }
+    .brand-chip img{ height:30px; width:auto; object-fit:contain; display:block; }
+    .utility-right{ display:flex; align-items:center; gap:2px; }
+    .icon-btn{ appearance:none; background:none; border:2px solid transparent; cursor:pointer; display:flex; align-items:center; justify-content:center; width:38px; height:38px; position:relative; color:var(--on-navy-70); transition:color 0.12s; }
+    .icon-btn:hover{ color:var(--white); }
+    .icon-btn svg{ width:20px; height:20px; stroke:currentColor; fill:none; stroke-width:2; stroke-linecap:round; stroke-linejoin:round; }
+    .icon-btn .badge{ position:absolute; top:6px; right:7px; width:7px; height:7px; background:var(--orange); border:2px solid var(--navy); }
+    .nav-item.open > .icon-btn{ color:var(--orange); }
+    .profile-static{ display:flex; align-items:center; gap:9px; padding:6px 8px; font-family:'Google Sans', sans-serif; color:var(--white); }
+    .avatar{ width:30px; height:30px; flex-shrink:0; background:var(--white); color:var(--navy); display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:700; letter-spacing:0.02em; }
+    .profile-name{ font-size:13.5px; font-weight:600; }
+    .menu-bar{ background:var(--white); padding:0 24px; display:flex; justify-content:safe center; overflow-x:auto; overflow-y:hidden; scrollbar-width:thin; scrollbar-color:var(--navy-30) transparent; }
+    .menu-bar::-webkit-scrollbar{ height:4px; }
+    .menu-bar::-webkit-scrollbar-track{ background:transparent; }
+    .menu-bar::-webkit-scrollbar-thumb{ background:var(--navy-30); border-radius:2px; }
+    .menu-bar::-webkit-scrollbar-thumb:hover{ background:var(--navy-55); }
+    .nav-items{ list-style:none; display:flex; align-items:center; gap:4px; flex-wrap:nowrap; flex-shrink:0; }
+    .nav-link{ appearance:none; background:none; border:none; cursor:pointer; display:flex; align-items:center; gap:7px; font-family:'Google Sans', sans-serif; font-size:13.5px; font-weight:600; letter-spacing:0.01em; color:var(--navy); text-decoration:none; padding:12px; white-space:nowrap; flex-shrink:0; transition:color 0.12s; }
+    .nav-link svg{ width:16px; height:16px; fill:var(--navy-55); flex-shrink:0; transition:fill 0.12s; }
+    .nav-link:hover{ color:var(--orange); }
+    .nav-link:hover svg{ fill:var(--orange); }
+    .nav-item.active > .nav-link{ color:var(--navy); box-shadow:inset 0 -2px 0 var(--orange); }
+    .nav-item.active > .nav-link svg{ fill:var(--navy); }
+    .dropdown-menu{ position:absolute; top:calc(100% + 6px); left:0; min-width:220px; background:var(--white); border:var(--border); display:none; flex-direction:column; padding:6px 0; }
+    .nav-item.open > .dropdown-menu{ display:flex; }
+    .dropdown-menu a{ display:block; text-decoration:none; color:var(--navy); font-size:13.5px; font-weight:500; padding:9px 16px; transition:background 0.12s, color 0.12s; }
+    .dropdown-menu a:hover{ background:var(--navy-10); color:var(--orange); }
+    .notif-menu{ right:0; left:auto; min-width:260px; }
+    .notif-menu .notif-title{ padding:10px 16px 8px; font-size:12px; font-weight:700; letter-spacing:0.04em; text-transform:uppercase; color:var(--navy-55); }
+    .notif-empty{ padding:20px 16px 22px; font-size:13px; color:var(--navy-55); text-align:center; }
+    .page-body{ padding:40px 32px; }
+    .welcome-eyebrow{ font-size:11px; font-weight:600; letter-spacing:0.08em; text-transform:uppercase; color:var(--navy-55); margin-bottom:8px; }
+    .welcome-title{ font-size:26px; font-weight:700; color:var(--navy); }
+    .welcome-sub{ font-size:14px; color:var(--navy-55); margin-top:6px; margin-bottom:28px; }
+
+    .error-msg{ display:flex; flex-direction:column; gap:4px; background:var(--white); border:2px solid var(--navy); color:var(--navy); font-size:13px; font-weight:500; padding:14px 16px; margin-bottom:24px; max-width:1200px; }
+    .error-msg .error-title{ display:flex; align-items:center; gap:8px; font-weight:700; }
+    .error-msg svg{ width:16px; height:16px; flex-shrink:0; }
+    .error-msg ul{ list-style:none; padding-left:24px; }
+    .error-msg li::before{ content:"— "; }
+
+    .form-group{ display:flex; flex-direction:column; }
+    .form-group label{ font-size:11px; font-weight:600; letter-spacing:0.06em; text-transform:uppercase; color:var(--navy); margin-bottom:6px; }
+    .form-group input, .form-group select, .form-group textarea{ width:100%; padding:11px 12px; border:2px solid rgba(46,49,146,0.3); font-size:14px; font-family:'Google Sans', sans-serif; color:var(--navy); background:var(--white); outline:none; transition:border-color 0.15s; }
+    .form-group textarea{ resize:vertical; min-height:70px; }
+    .form-group input::placeholder, .form-group textarea::placeholder{ color:rgba(46,49,146,0.45); }
+    .form-group input:focus, .form-group select:focus, .form-group textarea:focus{ border-color:var(--orange); }
+    .form-group select{ cursor:pointer; }
+    .form-row{ display:flex; gap:16px; flex-wrap:wrap; }
+    .form-row .form-group{ flex:1; min-width:180px; }
+    .checkbox-row{ display:flex; align-items:center; gap:8px; }
+    .checkbox-row input{ width:auto; }
+    .btn{ padding:11px 22px; font-size:14px; font-weight:600; border:2px solid var(--navy); cursor:pointer; letter-spacing:0.02em; transition:background 0.12s, color 0.12s, border-color 0.12s; text-decoration:none; display:inline-flex; align-items:center; gap:6px; }
+    .btn-primary{ background:var(--navy); color:var(--white); }
+    .btn-primary:hover{ background:var(--orange); border-color:var(--orange); }
+    .btn-secondary{ background:var(--white); color:var(--navy); }
+    .btn-secondary:hover{ color:var(--orange); border-color:var(--orange); }
+
+    .setup-grid{ display:grid; grid-template-columns:repeat(3, minmax(220px,1fr)); gap:20px; max-width:920px; }
+    .setup-card{ display:flex; align-items:flex-start; gap:14px; padding:20px; border:2px solid var(--navy); text-decoration:none; color:var(--navy); transition:background 0.12s, border-color 0.12s; }
+    .setup-card:hover{ background:var(--navy-10); border-color:var(--orange); }
+    .setup-card .setup-icon{ width:32px; height:32px; flex-shrink:0; color:var(--navy-55); }
+    .setup-card .setup-icon svg{ width:100%; height:100%; fill:none; stroke:currentColor; stroke-width:1.6; }
+    .setup-card-title{ font-size:14.5px; font-weight:700; color:var(--navy); margin-bottom:4px; }
+    .setup-card-desc{ font-size:12.5px; color:var(--navy-55); }
+
+    .back-link{ display:inline-flex; align-items:center; gap:6px; font-size:13px; font-weight:600; color:var(--navy-55); text-decoration:none; margin-bottom:16px; }
+    .back-link:hover{ color:var(--orange); }
+
+    .section-toolbar{ display:flex; align-items:center; justify-content:space-between; gap:12px; max-width:1200px; margin-bottom:16px; flex-wrap:wrap; }
+    .search-box{ display:flex; gap:8px; }
+    .search-box input{ padding:10px 12px; border:2px solid rgba(46,49,146,0.3); font-size:13.5px; font-family:'Google Sans',sans-serif; color:var(--navy); min-width:240px; }
+    .search-box input:focus{ outline:none; border-color:var(--orange); }
+
+    .data-table-wrap{ max-width:1200px; border:2px solid var(--navy); overflow-x:auto; }
+    .data-table{ width:100%; border-collapse:collapse; }
+    .data-table th, .data-table td{ padding:12px 14px; font-size:13px; text-align:left; border-bottom:1px solid var(--navy-30); white-space:nowrap; }
+    .data-table th{ background:var(--navy-10); font-weight:700; text-transform:uppercase; font-size:11px; letter-spacing:.05em; color:var(--navy); }
+    .data-table tbody tr:last-child td{ border-bottom:none; }
+    .data-table tbody tr:hover{ background:var(--navy-10); }
+    .empty-row td{ text-align:center; padding:28px; color:var(--navy-55); }
+
+    .status-badge{ display:inline-block; padding:3px 9px; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.03em; border:1.5px solid var(--navy); color:var(--navy); white-space:nowrap; }
+    .status-badge.warn{ border-color:var(--orange); color:var(--orange); }
+    .status-badge.danger{ border-color:#c0392b; color:#c0392b; }
+
+    .row-actions{ display:flex; gap:8px; flex-wrap:wrap; }
+    .row-actions form{ display:inline; }
+    .btn-sm{ padding:6px 12px; font-size:12px; font-weight:600; border:2px solid var(--navy); cursor:pointer; background:var(--white); color:var(--navy); text-decoration:none; display:inline-flex; align-items:center; }
+    .btn-sm:hover{ background:var(--orange); border-color:var(--orange); color:var(--white); }
+    .btn-sm.danger{ border-color:#c0392b; color:#c0392b; }
+    .btn-sm.danger:hover{ background:#c0392b; border-color:#c0392b; color:var(--white); }
+
+    .combo{ position:relative; }
+    .combo-list{ position:absolute; top:calc(100% + 4px); left:0; right:0; max-height:220px; overflow-y:auto; background:var(--white); border:2px solid var(--navy); list-style:none; z-index:50; }
+    .combo-list li{ padding:9px 12px; font-size:13px; cursor:pointer; }
+    .combo-list li:hover, .combo-list li.active{ background:var(--navy-10); color:var(--orange); }
+    .combo-empty{ padding:9px 12px; font-size:12.5px; color:var(--navy-55); }
+
+    .line-items-wrap{ max-width:1200px; border:2px solid var(--navy); overflow-x:auto; margin-bottom:16px; }
+    .line-items{ width:100%; border-collapse:collapse; min-width:960px; }
+    .line-items th, .line-items td{ padding:8px 10px; border-bottom:1px solid var(--navy-30); vertical-align:top; }
+    .line-items th{ background:var(--navy-10); font-size:11px; text-transform:uppercase; letter-spacing:.04em; text-align:left; }
+    .line-items input{ width:100%; padding:7px 8px; border:1.5px solid rgba(46,49,146,0.3); font-size:13px; font-family:'Google Sans',sans-serif; color:var(--navy); }
+    .line-items input:focus{ outline:none; border-color:var(--orange); }
+    .remove-line-btn{ background:none; border:none; color:#c0392b; cursor:pointer; font-size:20px; line-height:1; padding:4px; }
+    .add-line-btn{ margin-bottom:20px; }
+    .totals-row{ display:flex; gap:20px; flex-wrap:wrap; max-width:1200px; margin-bottom:20px; }
+    .totals-row .form-group{ min-width:180px; flex:0 1 200px; }
+    .due-display{ font-weight:700; font-size:15px; color:var(--navy); padding:11px 0; }
+    .form-actions{ display:flex; gap:10px; max-width:1200px; }
+
+    #js-toast{ position:fixed; bottom:28px; left:50%; transform:translateX(-50%) translateY(20px); display:flex; align-items:center; gap:8px; background:var(--white); border:2px solid var(--navy); color:var(--navy); font-size:13px; font-weight:500; padding:10px 18px; white-space:nowrap; z-index:9999; opacity:0; pointer-events:none; transition:opacity 0.2s ease, transform 0.2s ease; }
+    #js-toast svg{ width:16px; height:16px; flex-shrink:0; }
+    #js-toast.show{ opacity:1; transform:translateX(-50%) translateY(0); }
+
+    .modal-overlay{ position:fixed; inset:0; background:rgba(46,49,146,0.35); display:none; align-items:center; justify-content:center; z-index:1000; padding:20px; }
+    .modal-overlay.show{ display:flex; }
+    .modal-box{ background:var(--white); border:2px solid var(--navy); width:100%; max-width:560px; max-height:90vh; overflow-y:auto; }
+    .modal-head{ display:flex; align-items:center; justify-content:space-between; padding:18px 22px; border-bottom:2px solid var(--navy); }
+    .modal-head h3{ font-size:16px; font-weight:700; color:var(--navy); }
+    .modal-close{ appearance:none; background:none; border:none; cursor:pointer; color:var(--navy-55); width:26px; height:26px; }
+    .modal-close:hover{ color:var(--orange); }
+    .modal-close svg{ width:100%; height:100%; }
+    .modal-body{ padding:22px; }
+    .modal-body .form-group{ margin-bottom:16px; }
+    .modal-hint{ font-size:11.5px; color:var(--navy-55); margin-top:4px; }
+    .modal-actions{ display:flex; justify-content:flex-end; gap:10px; margin-top:6px; }
+
+    .logout-fab{ position:fixed; bottom:20px; right:20px; width:40px; height:40px; border-radius:50%; display:flex; align-items:center; justify-content:center; background:var(--navy); border:2px solid var(--white); cursor:pointer; text-decoration:none; z-index:9999; box-shadow:0 2px 6px rgba(46,49,146,0.35); transition:transform 0.15s ease, background 0.15s ease, box-shadow 0.15s ease; }
+    .logout-fab svg{ width:18px; height:18px; stroke:var(--white); fill:none; stroke-width:2; stroke-linecap:round; stroke-linejoin:round; transition:stroke 0.15s ease; }
+    .logout-fab:hover{ background:var(--orange); transform:scale(1.08); box-shadow:0 4px 10px rgba(241,90,36,0.4); }
+    .logout-fab:active{ transform:scale(0.96); }
+    .logout-fab:focus-visible{ outline:2px solid var(--orange); outline-offset:3px; }
+    .logout-fab::after{ content:'Log Out'; position:absolute; bottom:calc(100% + 8px); right:0; background:var(--navy); color:var(--white); font-family:'Google Sans', sans-serif; font-size:12px; font-weight:600; padding:6px 10px; white-space:nowrap; opacity:0; visibility:hidden; transform:translateY(4px); transition:opacity 0.15s ease, transform 0.15s ease, visibility 0.15s ease; pointer-events:none; }
+    .logout-fab:hover::after, .logout-fab:focus-visible::after{ opacity:1; visibility:visible; transform:translateY(0); }
+</style>
+</head>
+<body>
+
+<header class="app-header" id="topnav">
+    <div class="utility-bar">
+        <div class="brand-chip">
+            <img src="../uploads/tareydermacliniclogo.png" alt="Tarey Derma Clinic Logo">
+        </div>
+        <div class="utility-right">
+            <div class="nav-item" data-menu="notifications">
+                <button type="button" class="icon-btn" aria-label="Notifications">
+                    <svg viewBox="0 0 24 24"><path d="M18 16v-5a6 6 0 10-12 0v5l-2 2v1h16v-1l-2-2z"/><path d="M9.5 21a2.5 2.5 0 005 0"/></svg>
+                    <span class="badge"></span>
+                </button>
+                <div class="dropdown-menu notif-menu">
+                    <div class="notif-title">Notifications</div>
+                    <div class="notif-empty">You're all caught up.</div>
+                </div>
+            </div>
+            <div class="profile-static">
+                <div class="avatar"><?= tdc_e($avatarLetters) ?></div>
+                <span class="profile-name"><?= tdc_e($displayName) ?></span>
+            </div>
+        </div>
+    </div>
+
+    <nav class="menu-bar">
+        <ul class="nav-items">
+            <?php foreach (NAV_ITEMS as $item): ?>
+                <li class="nav-item<?= $item['href'] === $currentPage ? ' active' : '' ?>">
+                    <a href="<?= tdc_e($item['href']) ?>" class="nav-link">
+                        <svg viewBox="0 0 20 20"><?= $item['icon'] ?></svg>
+                        <span><?= tdc_e($item['label']) ?></span>
+                    </a>
+                </li>
+            <?php endforeach; ?>
+        </ul>
+    </nav>
+
+    <a href="?logout=1&csrf=<?= urlencode($csrfToken) ?>" class="logout-fab" aria-label="Log Out">
+        <svg viewBox="0 0 20 20"><path d="M8 3H5a2 2 0 00-2 2v10a2 2 0 002 2h3"/><path d="M13 6l4 4-4 4"/><path d="M7 10h10"/></svg>
+    </a>
+</header>
+
+<main class="page-body">
+
+<?php if ($section === null): ?>
+
+    <div class="welcome-eyebrow">Reception</div>
+    <div class="welcome-title">Reception Desk</div>
+    <div class="welcome-sub">Register patients and manage laboratory and pharmacy billing.</div>
+
+    <div class="setup-grid">
+        <a href="reception.php?section=patients" class="setup-card">
+            <div class="setup-icon"><svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 00-4-4H7a4 4 0 00-4 4v2"/><circle cx="10" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg></div>
+            <div>
+                <div class="setup-card-title">Patient Registration</div>
+                <div class="setup-card-desc">Register and manage patient records</div>
+            </div>
+        </a>
+        <a href="reception.php?section=laboratory" class="setup-card">
+            <div class="setup-icon"><svg viewBox="0 0 24 24"><path d="M9 2h6M10 2v6.5L4.5 18a2 2 0 001.7 3h11.6a2 2 0 001.7-3L14 8.5V2"/></svg></div>
+            <div>
+                <div class="setup-card-title">Laboratory Bills</div>
+                <div class="setup-card-desc">Order tests and track results &amp; payment</div>
+            </div>
+        </a>
+        <a href="reception.php?section=pharmacy" class="setup-card">
+            <div class="setup-icon"><svg viewBox="0 0 24 24"><path d="M13.657 2.343a4 4 0 00-5.657 0L2.343 8a4 4 0 105.657 5.657l5.657-5.657a4 4 0 000-5.657zM8.5 6.5l5 5"/></svg></div>
+            <div>
+                <div class="setup-card-title">Pharmacy Bills</div>
+                <div class="setup-card-desc">Create multi-item prescription bills</div>
+            </div>
+        </a>
+    </div>
+
+<?php else: ?>
+
+    <a href="reception.php" class="back-link">&larr; Back to Reception</a>
+
+    <?php if (!empty($errors)): ?>
+    <div class="error-msg">
+        <div class="error-title">
+            <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm-.75-4.75a.75.75 0 001.5 0v-4.5a.75.75 0 00-1.5 0v4.5zm.75-7a.75.75 0 100 1.5.75.75 0 000-1.5z" clip-rule="evenodd"/></svg>
+            Please fix the following:
+        </div>
+        <ul>
+            <?php foreach ($errors as $err): ?><li><?= tdc_e($err) ?></li><?php endforeach; ?>
+        </ul>
+    </div>
+    <?php endif; ?>
+
+    <?php // ============================================================
+          // PATIENT REGISTRATION
+          // ============================================================ ?>
+    <?php if ($section === 'patients'): ?>
+
+    <div class="welcome-title">Patient Registration</div>
+    <div class="welcome-sub">Register new patients and manage existing records.</div>
+
+    <div class="section-toolbar">
+        <form method="GET" action="reception.php" class="search-box">
+            <input type="hidden" name="section" value="patients">
+            <input type="text" name="q" placeholder="Search by name or phone..." value="<?= tdc_e($patientSearch) ?>">
+            <button type="submit" class="btn btn-secondary">Search</button>
+        </form>
+        <button type="button" id="addPatientBtn" class="btn btn-primary">+ Register Patient</button>
+    </div>
+
+    <div class="data-table-wrap">
+        <table class="data-table">
+            <thead>
+                <tr><th>ID</th><th>Name</th><th>Phone</th><th>Gender / Age</th><th>Type</th><th>Visit #</th><th>Doctor</th><th>Due Balance</th><th>Registered</th><th>Actions</th></tr>
+            </thead>
+            <tbody>
+                <?php if (empty($patients)): ?>
+                <tr class="empty-row"><td colspan="10">No patients found. Click "Register Patient" to add one.</td></tr>
+                <?php else: foreach ($patients as $p): ?>
+                <tr>
+                    <td>#<?= (int) $p['PatientID'] ?></td>
+                    <td><?= tdc_e($p['PatientName']) ?></td>
+                    <td><?= tdc_e($p['PatientPhone'] ?: '—') ?></td>
+                    <td><?= tdc_e(($p['Gender'] ?: '—') . ' / ' . ($p['Age'] !== null ? $p['Age'] : '—')) ?></td>
+                    <td><?= tdc_e($p['PatientType'] ?: '—') ?></td>
+                    <td><?= (int) $p['VisitNumber'] ?></td>
+                    <td><?= tdc_e($p['DoctorName'] ?: 'Unassigned') ?></td>
+                    <td><?= number_format((float) $p['DueBalance'], 2) ?></td>
+                    <td><?= tdc_e(date('Y-m-d', strtotime((string) $p['RegisteredAt']))) ?></td>
+                    <td>
+                        <div class="row-actions">
+                            <button type="button" class="btn-sm edit-patient-btn"
+                                data-id="<?= (int) $p['PatientID'] ?>"
+                                data-name="<?= tdc_e($p['PatientName']) ?>"
+                                data-phone="<?= tdc_e((string) $p['PatientPhone']) ?>"
+                                data-address="<?= tdc_e((string) $p['PatientAddress']) ?>"
+                                data-gender="<?= tdc_e((string) $p['Gender']) ?>"
+                                data-age="<?= tdc_e((string) $p['Age']) ?>"
+                                data-dob="<?= tdc_e((string) $p['DateOfBirth']) ?>"
+                                data-type="<?= tdc_e((string) $p['PatientType']) ?>"
+                                data-doctor="<?= tdc_e((string) $p['AllocatedDoctor']) ?>"
+                                data-remark="<?= tdc_e((string) $p['Remark']) ?>">Edit</button>
+                            <form method="POST" action="reception.php?section=patients" onsubmit="return confirm('Record a new visit for this patient?');">
+                                <input type="hidden" name="csrf_token" value="<?= tdc_e($csrfToken) ?>">
+                                <input type="hidden" name="form_action" value="visit">
+                                <input type="hidden" name="PatientID" value="<?= (int) $p['PatientID'] ?>">
+                                <button type="submit" class="btn-sm">New Visit</button>
+                            </form>
+                            <form method="POST" action="reception.php?section=patients" onsubmit="return confirm('Delete this patient? This cannot be undone.');">
+                                <input type="hidden" name="csrf_token" value="<?= tdc_e($csrfToken) ?>">
+                                <input type="hidden" name="form_action" value="delete">
+                                <input type="hidden" name="PatientID" value="<?= (int) $p['PatientID'] ?>">
+                                <button type="submit" class="btn-sm danger">Delete</button>
+                            </form>
+                        </div>
+                    </td>
+                </tr>
+                <?php endforeach; endif; ?>
+            </tbody>
+        </table>
+    </div>
+
+    <div class="modal-overlay" id="patientModalOverlay">
+        <div class="modal-box">
+            <div class="modal-head">
+                <h3 id="patientModalTitle">Register Patient</h3>
+                <button type="button" class="modal-close" id="patientModalCloseBtn" aria-label="Close">
+                    <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"/></svg>
+                </button>
+            </div>
+            <form id="patientForm" method="POST" action="reception.php?section=patients">
+                <div class="modal-body">
+                    <input type="hidden" name="csrf_token" value="<?= tdc_e($csrfToken) ?>">
+                    <input type="hidden" name="form_action" value="save">
+                    <input type="hidden" name="PatientID" id="pf_PatientID" value="">
+
+                    <div class="form-group"><label for="pf_PatientName">Patient Name</label>
+                        <input type="text" id="pf_PatientName" name="PatientName" placeholder="e.g. Mahamed Omar Madobe" required></div>
+
+                    <div class="form-row">
+                        <div class="form-group"><label for="pf_PatientPhone">Phone</label>
+                            <input type="text" id="pf_PatientPhone" name="PatientPhone" placeholder="e.g. 615019253"></div>
+                        <div class="form-group"><label for="pf_Gender">Gender</label>
+                            <select id="pf_Gender" name="Gender">
+                                <option value="">Select gender</option>
+                                <?php foreach (GENDER_OPTIONS as $v => $l): ?><option value="<?= tdc_e($v) ?>"><?= tdc_e($l) ?></option><?php endforeach; ?>
+                            </select></div>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group"><label for="pf_Age">Age</label>
+                            <input type="number" id="pf_Age" name="Age" min="0" max="150"></div>
+                        <div class="form-group"><label for="pf_DateOfBirth">Date of Birth</label>
+                            <input type="date" id="pf_DateOfBirth" name="DateOfBirth"></div>
+                    </div>
+
+                    <div class="form-group"><label for="pf_PatientAddress">Address</label>
+                        <input type="text" id="pf_PatientAddress" name="PatientAddress" placeholder="e.g. Degmada Hodan, Isgoyska Al-barako"></div>
+
+                    <div class="form-row">
+                        <div class="form-group"><label for="pf_PatientType">Patient Type</label>
+                            <select id="pf_PatientType" name="PatientType">
+                                <option value="">Select type</option>
+                                <?php foreach (PATIENT_TYPE_OPTIONS as $v => $l): ?><option value="<?= tdc_e($v) ?>"><?= tdc_e($l) ?></option><?php endforeach; ?>
+                            </select></div>
+                        <div class="form-group"><label for="pf_AllocatedDoctor">Allocated Doctor</label>
+                            <select id="pf_AllocatedDoctor" name="AllocatedDoctor">
+                                <option value="">Unassigned</option>
+                                <?php foreach ($doctors as $d): ?><option value="<?= (int) $d['DoctorID'] ?>"><?= tdc_e($d['DoctorName']) ?></option><?php endforeach; ?>
+                            </select></div>
+                    </div>
+
+                    <div class="form-group"><label for="pf_Remark">Remark</label>
+                        <textarea id="pf_Remark" name="Remark" placeholder="Optional notes"></textarea></div>
+
+                    <div class="modal-actions">
+                        <button type="button" class="btn btn-secondary" id="patientModalCancelBtn">Cancel</button>
+                        <button type="submit" class="btn btn-primary">Save Patient</button>
+                    </div>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <?php // ============================================================
+          // LABORATORY BILLS
+          // ============================================================ ?>
+    <?php elseif ($section === 'laboratory'): ?>
+
+    <div class="welcome-title">Laboratory Bills</div>
+    <div class="welcome-sub">Order tests for a patient and track results &amp; payment status.</div>
+
+    <div class="section-toolbar">
+        <div></div>
+        <button type="button" id="addLabBtn" class="btn btn-primary">+ New Lab Bill</button>
+    </div>
+
+    <div class="data-table-wrap">
+        <table class="data-table">
+            <thead><tr><th>Bill ID</th><th>Patient</th><th>Test</th><th>Price</th><th>Result</th><th>Payment</th><th>Ordered</th><th>Actions</th></tr></thead>
+            <tbody>
+                <?php if (empty($labBills)): ?>
+                <tr class="empty-row"><td colspan="8">No laboratory bills found. Click "New Lab Bill" to add one.</td></tr>
+                <?php else: foreach ($labBills as $l): ?>
+                <tr>
+                    <td><?= tdc_e($l['LaboratoryID']) ?></td>
+                    <td><?= tdc_e($l['PatientName']) ?><br><span style="color:var(--navy-55);font-size:11.5px;"><?= tdc_e((string) $l['PatientPhone']) ?></span></td>
+                    <td><?= tdc_e($l['TestName']) ?></td>
+                    <td><?= number_format((float) $l['Price'], 2) ?></td>
+                    <td><span class="status-badge<?= $l['Result'] === 'Positive' ? ' danger' : ($l['Result'] === 'Pending' ? ' warn' : '') ?>"><?= tdc_e($l['Result']) ?></span></td>
+                    <td><span class="status-badge<?= $l['PaymentStatus'] === 'Unpaid' ? ' danger' : ($l['PaymentStatus'] === 'Partial' ? ' warn' : '') ?>"><?= tdc_e($l['PaymentStatus']) ?></span></td>
+                    <td><?= tdc_e(date('Y-m-d', strtotime((string) $l['OrderDate']))) ?></td>
+                    <td>
+                        <div class="row-actions">
+                            <button type="button" class="btn-sm edit-lab-btn"
+                                data-id="<?= tdc_e($l['LaboratoryID']) ?>"
+                                data-patientid="<?= (int) $l['PatientID'] ?>"
+                                data-patientlabel="<?= tdc_e($l['PatientName'] . ($l['PatientPhone'] ? ' — ' . $l['PatientPhone'] : '')) ?>"
+                                data-testname="<?= tdc_e($l['TestName']) ?>"
+                                data-description="<?= tdc_e((string) $l['Description']) ?>"
+                                data-price="<?= tdc_e((string) $l['Price']) ?>"
+                                data-isavailable="<?= (int) $l['IsAvailable'] ?>"
+                                data-result="<?= tdc_e($l['Result']) ?>"
+                                data-resultdate="<?= tdc_e($l['ResultDate'] ? date('Y-m-d\TH:i', strtotime((string) $l['ResultDate'])) : '') ?>"
+                                data-paymentstatus="<?= tdc_e($l['PaymentStatus']) ?>">Edit</button>
+                            <form method="POST" action="reception.php?section=laboratory" onsubmit="return confirm('Delete this lab bill? This cannot be undone.');">
+                                <input type="hidden" name="csrf_token" value="<?= tdc_e($csrfToken) ?>">
+                                <input type="hidden" name="form_action" value="delete">
+                                <input type="hidden" name="LaboratoryID" value="<?= tdc_e($l['LaboratoryID']) ?>">
+                                <button type="submit" class="btn-sm danger">Delete</button>
+                            </form>
+                        </div>
+                    </td>
+                </tr>
+                <?php endforeach; endif; ?>
+            </tbody>
+        </table>
+    </div>
+
+    <div class="modal-overlay" id="labModalOverlay">
+        <div class="modal-box">
+            <div class="modal-head">
+                <h3 id="labModalTitle">New Lab Bill</h3>
+                <button type="button" class="modal-close" id="labModalCloseBtn" aria-label="Close">
+                    <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"/></svg>
+                </button>
+            </div>
+            <form id="labForm" method="POST" action="reception.php?section=laboratory">
+                <div class="modal-body">
+                    <input type="hidden" name="csrf_token" value="<?= tdc_e($csrfToken) ?>">
+                    <input type="hidden" name="form_action" value="save">
+                    <input type="hidden" name="LaboratoryID" id="lf_LaboratoryID" value="">
+
+                    <div class="form-group">
+                        <label for="lf_PatientSearch">Patient</label>
+                        <div class="combo" data-combo>
+                            <input type="hidden" name="PatientID" id="lf_PatientID" required>
+                            <input type="hidden" name="PatientLabel" id="lf_PatientLabel">
+                            <input type="text" class="combo-input" id="lf_PatientSearch" placeholder="Search patient by name or phone..." autocomplete="off" required>
+                            <ul class="combo-list" id="lf_PatientList" hidden></ul>
+                        </div>
+                    </div>
+
+                    <div class="form-group"><label for="lf_TestName">Test Name</label>
+                        <input type="text" id="lf_TestName" name="TestName" placeholder="e.g. Skin Biopsy" required></div>
+
+                    <div class="form-group"><label for="lf_Description">Description</label>
+                        <textarea id="lf_Description" name="Description" placeholder="Optional notes"></textarea></div>
+
+                    <div class="form-row">
+                        <div class="form-group"><label for="lf_Price">Price</label>
+                            <input type="number" step="0.01" min="0" id="lf_Price" name="Price" required></div>
+                        <div class="form-group"><label for="lf_PaymentStatus">Payment Status</label>
+                            <select id="lf_PaymentStatus" name="PaymentStatus" required>
+                                <?php foreach (PAYMENT_STATUS_OPTIONS as $v => $l): ?><option value="<?= tdc_e($v) ?>"><?= tdc_e($l) ?></option><?php endforeach; ?>
+                            </select></div>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group"><label for="lf_Result">Result</label>
+                            <select id="lf_Result" name="Result">
+                                <?php foreach (LAB_RESULT_OPTIONS as $v => $l): ?><option value="<?= tdc_e($v) ?>"><?= tdc_e($l) ?></option><?php endforeach; ?>
+                            </select></div>
+                        <div class="form-group"><label for="lf_ResultDate">Result Date</label>
+                            <input type="datetime-local" id="lf_ResultDate" name="ResultDate"></div>
+                    </div>
+
+                    <div class="form-group checkbox-row">
+                        <input type="checkbox" id="lf_IsAvailable" name="IsAvailable" value="1" checked>
+                        <label for="lf_IsAvailable" style="margin:0;text-transform:none;letter-spacing:normal;font-weight:500;">Test is currently available in-house</label>
+                    </div>
+
+                    <div class="modal-actions">
+                        <button type="button" class="btn btn-secondary" id="labModalCancelBtn">Cancel</button>
+                        <button type="submit" class="btn btn-primary">Save Bill</button>
+                    </div>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <?php // ============================================================
+          // PHARMACY BILLS
+          // ============================================================ ?>
+    <?php elseif ($section === 'pharmacy'): ?>
+
+    <?php if (!$pharmacyShowForm): ?>
+
+    <div class="welcome-title">Pharmacy Bills</div>
+    <div class="welcome-sub">Create multi-item prescription bills for a patient visit.</div>
+
+    <div class="section-toolbar">
+        <div></div>
+        <a href="reception.php?section=pharmacy&new=1" class="btn btn-primary">+ New Pharmacy Bill</a>
+    </div>
+
+    <div class="data-table-wrap">
+        <table class="data-table">
+            <thead><tr><th>Bill Ref</th><th>Patient</th><th>Doctor</th><th>Items</th><th>Total</th><th>Paid</th><th>Due</th><th>Date</th><th>Actions</th></tr></thead>
+            <tbody>
+                <?php if (empty($pharmacyBills)): ?>
+                <tr class="empty-row"><td colspan="9">No pharmacy bills found. Click "New Pharmacy Bill" to add one.</td></tr>
+                <?php else: foreach ($pharmacyBills as $b): ?>
+                <tr>
+                    <td><?= tdc_e($b['BillRef']) ?></td>
+                    <td><?= tdc_e($b['PatientName']) ?></td>
+                    <td><?= tdc_e($doctorNameById[$b['DoctorID']] ?? 'Unknown') ?></td>
+                    <td><?= (int) $b['LineCount'] ?></td>
+                    <td><?= number_format((float) $b['TotalAmount'], 2) ?></td>
+                    <td><?= number_format((float) $b['AmountPaid'], 2) ?></td>
+                    <td><span class="status-badge<?= (float) $b['DueBalance'] > 0 ? ' danger' : '' ?>"><?= number_format((float) $b['DueBalance'], 2) ?></span></td>
+                    <td><?= tdc_e(date('Y-m-d', strtotime((string) $b['PrescriptionDate']))) ?></td>
+                    <td>
+                        <div class="row-actions">
+                            <a href="reception.php?section=pharmacy&edit=<?= urlencode($b['BillRef']) ?>" class="btn-sm">Edit</a>
+                            <a href="../print_prescription.php?ref=<?= urlencode($b['BillRef']) ?>" class="btn-sm" target="_blank" rel="noopener">Print</a>
+                            <form method="POST" action="reception.php?section=pharmacy" onsubmit="return confirm('Delete this entire pharmacy bill? This cannot be undone.');">
+                                <input type="hidden" name="csrf_token" value="<?= tdc_e($csrfToken) ?>">
+                                <input type="hidden" name="form_action" value="delete">
+                                <input type="hidden" name="BillRef" value="<?= tdc_e($b['BillRef']) ?>">
+                                <button type="submit" class="btn-sm danger">Delete</button>
+                            </form>
+                        </div>
+                    </td>
+                </tr>
+                <?php endforeach; endif; ?>
+            </tbody>
+        </table>
+    </div>
+
+    <?php else: ?>
+
+    <div class="welcome-title"><?= $oldPharmacy['BillRef'] !== '' ? 'Edit Pharmacy Bill' : 'New Pharmacy Bill' ?></div>
+    <div class="welcome-sub">Add one row per medication. Totals apply to the whole bill.</div>
+
+    <form id="pharmacyForm" method="POST" action="reception.php?section=pharmacy">
+        <input type="hidden" name="csrf_token" value="<?= tdc_e($csrfToken) ?>">
+        <input type="hidden" name="form_action" value="save">
+        <input type="hidden" name="BillRef" value="<?= tdc_e($oldPharmacy['BillRef']) ?>">
+
+        <div class="form-row" style="max-width:1200px;margin-bottom:16px;">
+            <div class="form-group">
+                <label for="rf_PatientSearch">Patient</label>
+                <div class="combo" data-combo>
+                    <input type="hidden" name="PatientID" id="rf_PatientID" value="<?= tdc_e($oldPharmacy['PatientID']) ?>" required>
+                    <input type="hidden" name="PatientLabel" id="rf_PatientLabel" value="<?= tdc_e($oldPharmacy['PatientLabel']) ?>">
+                    <input type="text" class="combo-input" id="rf_PatientSearch" placeholder="Search patient by name or phone..." autocomplete="off" value="<?= tdc_e($oldPharmacy['PatientLabel']) ?>" required>
+                    <ul class="combo-list" id="rf_PatientList" hidden></ul>
+                </div>
+            </div>
+            <div class="form-group">
+                <label for="rf_DoctorID">Prescribing Doctor</label>
+                <select id="rf_DoctorID" name="DoctorID" required>
+                    <option value="">Select doctor</option>
+                    <?php foreach ($doctors as $d): ?>
+                        <option value="<?= (int) $d['DoctorID'] ?>" <?= (string) $d['DoctorID'] === $oldPharmacy['DoctorID'] ? 'selected' : '' ?>><?= tdc_e($d['DoctorName']) ?></option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
+        </div>
+
+        <div class="line-items-wrap">
+            <table class="line-items" id="lineItemsTable">
+                <thead>
+                    <tr><th style="width:40px;">#</th><th>Medication</th><th>Dosage</th><th>Quantity</th><th>Frequency</th><th>Duration</th><th>Route</th><th>Instructions</th><th style="width:36px;"></th></tr>
+                </thead>
+                <tbody id="lineItemsBody">
+                <?php
+                $lineCount = max(1, count($oldPharmacy['MedicationName']));
+                for ($i = 0; $i < $lineCount; $i++):
+                ?>
+                    <tr class="line-item-row">
+                        <td class="line-no"><?= $i + 1 ?></td>
+                        <td><input type="text" name="MedicationName[]" value="<?= tdc_e($oldPharmacy['MedicationName'][$i] ?? '') ?>" placeholder="e.g. lomefen cream"></td>
+                        <td><input type="text" name="Dosage[]" value="<?= tdc_e($oldPharmacy['Dosage'][$i] ?? '') ?>" placeholder="e.g. 250mg"></td>
+                        <td><input type="number" min="1" name="Quantity[]" value="<?= tdc_e($oldPharmacy['Quantity'][$i] ?? '1') ?>"></td>
+                        <td><input type="text" name="Frequency[]" value="<?= tdc_e($oldPharmacy['Frequency'][$i] ?? '') ?>" placeholder="e.g. bid"></td>
+                        <td><input type="text" name="Duration[]" value="<?= tdc_e($oldPharmacy['Duration'][$i] ?? '') ?>" placeholder="e.g. 7 days"></td>
+                        <td><input type="text" name="Route[]" value="<?= tdc_e($oldPharmacy['Route'][$i] ?? '') ?>" placeholder="e.g. Oral"></td>
+                        <td><input type="text" name="Instructions[]" value="<?= tdc_e($oldPharmacy['Instructions'][$i] ?? '') ?>" placeholder="Optional"></td>
+                        <td><button type="button" class="remove-line-btn" title="Remove line">&times;</button></td>
+                    </tr>
+                <?php endfor; ?>
+                </tbody>
+            </table>
+        </div>
+        <button type="button" class="btn btn-secondary add-line-btn" id="addLineBtn">+ Add Medication Line</button>
+
+        <div class="totals-row">
+            <div class="form-group"><label for="rf_TotalAmount">Total Amount</label>
+                <input type="number" step="0.01" min="0" id="rf_TotalAmount" name="TotalAmount" value="<?= tdc_e($oldPharmacy['TotalAmount']) ?>" required></div>
+            <div class="form-group"><label for="rf_AmountPaid">Amount Paid</label>
+                <input type="number" step="0.01" min="0" id="rf_AmountPaid" name="AmountPaid" value="<?= tdc_e($oldPharmacy['AmountPaid']) ?>" required></div>
+            <div class="form-group"><label>Due Balance</label>
+                <div class="due-display" id="rf_DueDisplay">0.00</div></div>
+        </div>
+
+        <div class="form-actions">
+            <a href="reception.php?section=pharmacy" class="btn btn-secondary">Cancel</a>
+            <button type="submit" class="btn btn-primary">Save Pharmacy Bill</button>
+        </div>
+    </form>
+
+    <?php endif; ?>
+    <?php endif; ?>
+
+<?php endif; ?>
+
+</main>
+
+<div id="js-toast" role="alert" aria-live="assertive">
+    <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.03-9.78a.75.75 0 00-1.06-1.06L8.75 10.44l-1.72-1.72a.75.75 0 00-1.06 1.06l2.25 2.25a.75.75 0 001.06 0l4.75-4.75z" clip-rule="evenodd"/></svg>
+    <span id="js-toast-msg"></span>
+</div>
+
+<script>
+(function(){
+    const nav = document.getElementById('topnav');
+    const items = Array.from(nav.querySelectorAll('.nav-item[data-menu]'));
+    function closeAll(except){ items.forEach(function(item){ if(item !== except){ item.classList.remove('open'); } }); }
+    items.forEach(function(item){
+        const trigger = item.querySelector('.icon-btn');
+        if(!trigger) return;
+        trigger.addEventListener('click', function(e){
+            e.stopPropagation();
+            const isOpen = item.classList.contains('open');
+            closeAll(item);
+            item.classList.toggle('open', !isOpen);
+        });
+    });
+    document.addEventListener('click', function(){ closeAll(null); });
+    document.addEventListener('keydown', function(e){ if(e.key === 'Escape'){ closeAll(null); } });
+})();
+
+let toastTimer = null;
+function showToast(message){
+    const toast = document.getElementById('js-toast');
+    document.getElementById('js-toast-msg').textContent = message;
+    clearTimeout(toastTimer);
+    toast.classList.add('show');
+    toastTimer = setTimeout(() => { toast.classList.remove('show'); }, 3000);
+}
+
+/**
+ * Lightweight, dependency-free search combobox: filters a small
+ * in-memory patient list as the user types, with click + keyboard
+ * (Up/Down/Enter/Escape) selection. Mirrors the "custom combobox with
+ * real-time filtering and keyboard navigation" pattern already used
+ * elsewhere in this app's order-entry screens.
+ */
+function initPatientCombobox(hiddenIdInput, hiddenLabelInput, searchInput, listEl, patients) {
+    let activeIndex = -1;
+    let currentMatches = [];
+
+    function render(matches) {
+        currentMatches = matches;
+        activeIndex = -1;
+        listEl.innerHTML = '';
+        if (matches.length === 0) {
+            const li = document.createElement('li');
+            li.className = 'combo-empty';
+            li.textContent = 'No matching patients.';
+            listEl.appendChild(li);
+        } else {
+            matches.slice(0, 30).forEach(function(p, idx) {
+                const li = document.createElement('li');
+                li.textContent = p.label;
+                li.dataset.id = p.id;
+                li.addEventListener('mousedown', function(e) {
+                    e.preventDefault();
+                    select(p);
+                });
+                listEl.appendChild(li);
+            });
+        }
+        listEl.hidden = false;
+    }
+
+    function select(p) {
+        hiddenIdInput.value = p.id;
+        hiddenLabelInput.value = p.label;
+        searchInput.value = p.label;
+        listEl.hidden = true;
+    }
+
+    function highlight(delta) {
+        const liList = Array.from(listEl.querySelectorAll('li[data-id]'));
+        if (liList.length === 0) return;
+        activeIndex = (activeIndex + delta + liList.length) % liList.length;
+        liList.forEach(function(li, i){ li.classList.toggle('active', i === activeIndex); });
+        liList[activeIndex].scrollIntoView({ block: 'nearest' });
+    }
+
+    searchInput.addEventListener('input', function() {
+        hiddenIdInput.value = '';
+        const term = searchInput.value.trim().toLowerCase();
+        if (term === '') { listEl.hidden = true; return; }
+        render(patients.filter(function(p){ return p.label.toLowerCase().indexOf(term) !== -1; }));
+    });
+
+    searchInput.addEventListener('focus', function() {
+        if (searchInput.value.trim() !== '' && hiddenIdInput.value === '') {
+            render(patients.filter(function(p){ return p.label.toLowerCase().indexOf(searchInput.value.trim().toLowerCase()) !== -1; }));
+        }
+    });
+
+    searchInput.addEventListener('keydown', function(e) {
+        if (listEl.hidden) return;
+        if (e.key === 'ArrowDown') { e.preventDefault(); highlight(1); }
+        else if (e.key === 'ArrowUp') { e.preventDefault(); highlight(-1); }
+        else if (e.key === 'Enter') {
+            if (activeIndex >= 0 && currentMatches[activeIndex]) { e.preventDefault(); select(currentMatches[activeIndex]); }
+        } else if (e.key === 'Escape') { listEl.hidden = true; }
+    });
+
+    document.addEventListener('click', function(e) {
+        if (!searchInput.contains(e.target) && !listEl.contains(e.target)) { listEl.hidden = true; }
+    });
+}
+
+<?php if ($section === 'patients'): ?>
+(function(){
+    const overlay = document.getElementById('patientModalOverlay');
+    const modalTitle = document.getElementById('patientModalTitle');
+    const form = document.getElementById('patientForm');
+    const fId = document.getElementById('pf_PatientID');
+    const fName = document.getElementById('pf_PatientName');
+    const fPhone = document.getElementById('pf_PatientPhone');
+    const fGender = document.getElementById('pf_Gender');
+    const fAge = document.getElementById('pf_Age');
+    const fDob = document.getElementById('pf_DateOfBirth');
+    const fAddress = document.getElementById('pf_PatientAddress');
+    const fType = document.getElementById('pf_PatientType');
+    const fDoctor = document.getElementById('pf_AllocatedDoctor');
+    const fRemark = document.getElementById('pf_Remark');
+
+    function openModal(){ overlay.classList.add('show'); }
+    function closeModal(){ overlay.classList.remove('show'); }
+
+    document.getElementById('addPatientBtn').addEventListener('click', function(){
+        form.reset();
+        fId.value = '';
+        modalTitle.textContent = 'Register Patient';
+        openModal();
+    });
+
+    document.querySelectorAll('.edit-patient-btn').forEach(function(btn){
+        btn.addEventListener('click', function(){
+            form.reset();
+            fId.value = btn.dataset.id;
+            fName.value = btn.dataset.name;
+            fPhone.value = btn.dataset.phone;
+            fAddress.value = btn.dataset.address;
+            fGender.value = btn.dataset.gender;
+            fAge.value = btn.dataset.age;
+            fDob.value = btn.dataset.dob;
+            fType.value = btn.dataset.type;
+            fDoctor.value = btn.dataset.doctor;
+            fRemark.value = btn.dataset.remark;
+            modalTitle.textContent = 'Edit Patient';
+            openModal();
+        });
+    });
+
+    document.getElementById('patientModalCloseBtn').addEventListener('click', closeModal);
+    document.getElementById('patientModalCancelBtn').addEventListener('click', closeModal);
+    overlay.addEventListener('click', function(e){ if (e.target === overlay) closeModal(); });
+    document.addEventListener('keydown', function(e){ if (e.key === 'Escape') closeModal(); });
+
+    <?php if (!empty($errors) && $_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['form_action'] ?? 'save') === 'save'): ?>
+    fId.value = <?= json_encode($oldPatient['PatientID']) ?>;
+    fName.value = <?= json_encode($oldPatient['PatientName']) ?>;
+    fPhone.value = <?= json_encode($oldPatient['PatientPhone']) ?>;
+    fAddress.value = <?= json_encode($oldPatient['PatientAddress']) ?>;
+    fGender.value = <?= json_encode($oldPatient['Gender']) ?>;
+    fAge.value = <?= json_encode($oldPatient['Age']) ?>;
+    fDob.value = <?= json_encode($oldPatient['DateOfBirth']) ?>;
+    fType.value = <?= json_encode($oldPatient['PatientType']) ?>;
+    fDoctor.value = <?= json_encode($oldPatient['AllocatedDoctor']) ?>;
+    fRemark.value = <?= json_encode($oldPatient['Remark']) ?>;
+    modalTitle.textContent = fId.value ? 'Edit Patient' : 'Register Patient';
+    openModal();
+    <?php endif; ?>
+
+    <?php if ($justSaved || $justDeleted || $justVisited): ?>
+    showToast(<?= $justSaved ? json_encode('Patient saved successfully.') : ($justDeleted ? json_encode('Patient deleted successfully.') : json_encode('Visit recorded successfully.')) ?>);
+    if (window.history.replaceState) { window.history.replaceState({}, document.title, 'reception.php?section=patients'); }
+    <?php endif; ?>
+})();
+<?php endif; ?>
+
+<?php if ($section === 'laboratory'): ?>
+(function(){
+    const patients = <?= json_encode($patientOptions, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>;
+    const overlay = document.getElementById('labModalOverlay');
+    const modalTitle = document.getElementById('labModalTitle');
+    const form = document.getElementById('labForm');
+    const fId = document.getElementById('lf_LaboratoryID');
+    const fPatientId = document.getElementById('lf_PatientID');
+    const fPatientLabel = document.getElementById('lf_PatientLabel');
+    const fPatientSearch = document.getElementById('lf_PatientSearch');
+    const fPatientList = document.getElementById('lf_PatientList');
+    const fTestName = document.getElementById('lf_TestName');
+    const fDescription = document.getElementById('lf_Description');
+    const fPrice = document.getElementById('lf_Price');
+    const fIsAvailable = document.getElementById('lf_IsAvailable');
+    const fResult = document.getElementById('lf_Result');
+    const fResultDate = document.getElementById('lf_ResultDate');
+    const fPaymentStatus = document.getElementById('lf_PaymentStatus');
+
+    initPatientCombobox(fPatientId, fPatientLabel, fPatientSearch, fPatientList, patients);
+
+    function openModal(){ overlay.classList.add('show'); }
+    function closeModal(){ overlay.classList.remove('show'); }
+
+    document.getElementById('addLabBtn').addEventListener('click', function(){
+        form.reset();
+        fId.value = ''; fPatientId.value = ''; fPatientLabel.value = ''; fPatientSearch.value = '';
+        fIsAvailable.checked = true;
+        modalTitle.textContent = 'New Lab Bill';
+        openModal();
+    });
+
+    document.querySelectorAll('.edit-lab-btn').forEach(function(btn){
+        btn.addEventListener('click', function(){
+            form.reset();
+            fId.value = btn.dataset.id;
+            fPatientId.value = btn.dataset.patientid;
+            fPatientLabel.value = btn.dataset.patientlabel;
+            fPatientSearch.value = btn.dataset.patientlabel;
+            fTestName.value = btn.dataset.testname;
+            fDescription.value = btn.dataset.description;
+            fPrice.value = btn.dataset.price;
+            fIsAvailable.checked = btn.dataset.isavailable === '1';
+            fResult.value = btn.dataset.result;
+            fResultDate.value = btn.dataset.resultdate;
+            fPaymentStatus.value = btn.dataset.paymentstatus;
+            modalTitle.textContent = 'Edit Lab Bill';
+            openModal();
+        });
+    });
+
+    document.getElementById('labModalCloseBtn').addEventListener('click', closeModal);
+    document.getElementById('labModalCancelBtn').addEventListener('click', closeModal);
+    overlay.addEventListener('click', function(e){ if (e.target === overlay) closeModal(); });
+    document.addEventListener('keydown', function(e){ if (e.key === 'Escape') closeModal(); });
+
+    <?php if (!empty($errors) && $_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['form_action'] ?? 'save') === 'save'): ?>
+    fId.value = <?= json_encode($oldLab['LaboratoryID']) ?>;
+    fPatientId.value = <?= json_encode($oldLab['PatientID']) ?>;
+    fPatientLabel.value = <?= json_encode($oldLab['PatientLabel']) ?>;
+    fPatientSearch.value = <?= json_encode($oldLab['PatientLabel']) ?>;
+    fTestName.value = <?= json_encode($oldLab['TestName']) ?>;
+    fDescription.value = <?= json_encode($oldLab['Description']) ?>;
+    fPrice.value = <?= json_encode($oldLab['Price']) ?>;
+    fIsAvailable.checked = <?= json_encode($oldLab['IsAvailable'] === '1') ?>;
+    fResult.value = <?= json_encode($oldLab['Result']) ?>;
+    fResultDate.value = <?= json_encode($oldLab['ResultDate']) ?>;
+    fPaymentStatus.value = <?= json_encode($oldLab['PaymentStatus']) ?>;
+    modalTitle.textContent = fId.value ? 'Edit Lab Bill' : 'New Lab Bill';
+    openModal();
+    <?php endif; ?>
+
+    <?php if ($justSaved || $justDeleted): ?>
+    showToast(<?= $justSaved ? json_encode('Lab bill saved successfully.') : json_encode('Lab bill deleted successfully.') ?>);
+    if (window.history.replaceState) { window.history.replaceState({}, document.title, 'reception.php?section=laboratory'); }
+    <?php endif; ?>
+})();
+<?php endif; ?>
+
+<?php if ($section === 'pharmacy'): ?>
+(function(){
+    <?php if ($justSaved || $justDeleted): ?>
+    showToast(<?= $justSaved ? json_encode('Pharmacy bill saved successfully.') : json_encode('Pharmacy bill deleted successfully.') ?>);
+    if (window.history.replaceState) { window.history.replaceState({}, document.title, 'reception.php?section=pharmacy'); }
+    <?php endif; ?>
+
+    <?php if ($pharmacyShowForm): ?>
+    const patients = <?= json_encode($patientOptions, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>;
+    initPatientCombobox(
+        document.getElementById('rf_PatientID'),
+        document.getElementById('rf_PatientLabel'),
+        document.getElementById('rf_PatientSearch'),
+        document.getElementById('rf_PatientList'),
+        patients
+    );
+
+    const tbody = document.getElementById('lineItemsBody');
+    const rowTemplate = tbody.querySelector('.line-item-row').cloneNode(true);
+    rowTemplate.querySelectorAll('input').forEach(function(i){ i.value = i.type === 'number' && i.name === 'Quantity[]' ? '1' : ''; });
+
+    function renumber(){
+        tbody.querySelectorAll('.line-item-row').forEach(function(row, i){
+            row.querySelector('.line-no').textContent = i + 1;
+        });
+    }
+    function bindRemove(row){
+        row.querySelector('.remove-line-btn').addEventListener('click', function(){
+            if (tbody.querySelectorAll('.line-item-row').length > 1) {
+                row.remove();
+                renumber();
+            }
+        });
+    }
+    tbody.querySelectorAll('.line-item-row').forEach(bindRemove);
+
+    document.getElementById('addLineBtn').addEventListener('click', function(){
+        const row = rowTemplate.cloneNode(true);
+        bindRemove(row);
+        tbody.appendChild(row);
+        renumber();
+    });
+
+    const totalInput = document.getElementById('rf_TotalAmount');
+    const paidInput = document.getElementById('rf_AmountPaid');
+    const dueDisplay = document.getElementById('rf_DueDisplay');
+    function recalcDue(){
+        const total = parseFloat(totalInput.value) || 0;
+        const paid = parseFloat(paidInput.value) || 0;
+        dueDisplay.textContent = (total - paid).toFixed(2);
+    }
+    totalInput.addEventListener('input', recalcDue);
+    paidInput.addEventListener('input', recalcDue);
+    recalcDue();
+    <?php endif; ?>
+})();
+<?php endif; ?>
+</script>
+
+</body>
+</html>
