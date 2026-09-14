@@ -1,0 +1,2153 @@
+<?php
+/**
+ * auth/pages/pharmacy.php
+ * ---------------------------------------------------------------------
+ * Tarey Derma Clinic — Pharmacy Operations (POS, Purchases, Inventory)
+ * ---------------------------------------------------------------------
+ * Three related subsystems, matching the "pharmacy.php = POS, Purchases,
+ * Inventory" grouping used across the app's navigation:
+ *
+ *   1. Point of Sale  -> PharmacySales table (multi-line, one register
+ *      sale per bill, grouped like Prescriptions: "POS000001-01", ...)
+ *   2. Purchases       -> Purchases table (multi-line purchase orders
+ *      from a supplier, grouped the same way: "PO000001-01", ...)
+ *   3. Inventory       -> Inventory table (single-entity CRUD, plus the
+ *      automatic stock movements driven by #1 and #2)
+ *
+ * Design decisions (see chat reply for full rationale):
+ *   - PharmacySales has no catalog table in the original schema; it is
+ *     introduced here (migration required — see chat reply) using the
+ *     same bill-grouping-by-ID-prefix convention as Prescriptions.
+ *   - Purchases.SupplierID has no Suppliers table to join against, so
+ *     it is resolved by matching SupplierName against prior purchases
+ *     (case-insensitive), falling back to the next integer.
+ *   - Sales and Purchase Orders are append-only: create or void, never
+ *     edit-in-place, because both move real Inventory stock. Voiding
+ *     reverses the exact stock movement; a Purchase Order void is
+ *     refused if reversing it would drive any linked item negative.
+ *   - Inventory stock decrements on sale use an atomic, race-safe
+ *     conditional UPDATE (`WHERE QuantityInStock >= :qty`) rather than
+ *     a check-then-write, so two concurrent sales can never oversell
+ *     the same item.
+ *
+ * Security controls (same posture as home.php / reception.php):
+ *   - Secure, strict-mode session cookies (HttpOnly, SameSite=Strict,
+ *     Secure when served over HTTPS)
+ *   - Defensive headers: clickjacking, MIME-sniffing, referrer leakage
+ *   - no-store caching so authenticated markup is never cached
+ *   - Session gate: unauthenticated requests never reach the markup
+ *   - Role gate: only 'superuser' and 'pharmacyuser' may access this
+ *     page at all (financial + stock data)
+ *   - CSRF-token-checked POST handlers, rotated on every submit
+ *   - Prepared statements only — no string-built SQL from user input
+ *   - Post/Redirect/Get on every successful write
+ *   - All session/user-derived output escaped before hitting HTML
+ * ---------------------------------------------------------------------
+ */
+declare(strict_types=1);
+
+// =======================================================================
+// SECTION 1 — Session bootstrap & defensive headers
+// =======================================================================
+ini_set('session.use_strict_mode', '1');
+session_set_cookie_params([
+    'lifetime' => 0,
+    'path'     => '/',
+    'domain'   => '',
+    'secure'   => !empty($_SERVER['HTTPS']),
+    'httponly' => true,
+    'samesite' => 'Strict',
+]);
+session_start();
+
+header('X-Frame-Options: DENY');
+header('X-Content-Type-Options: nosniff');
+header('Referrer-Policy: strict-origin-when-cross-origin');
+header('Cache-Control: no-store, no-cache, must-revalidate');
+
+// =======================================================================
+// SECTION 2 — Reference data & shared constants
+// =======================================================================
+const ALLOWED_SECTIONS       = ['pos', 'purchases', 'inventory'];
+const ALLOWED_PHARMACY_ROLES = ['superuser', 'pharmacyuser'];
+
+/**
+ * Primary navigation — single source of truth, shared shape with
+ * home.php / reception.php / doctors.php / patients.php / settings.php.
+ */
+const NAV_ITEMS = [
+    [
+        'href'  => 'home.php',
+        'label' => 'Dashboard',
+        'icon'  => '<path d="M3 4a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H4a1 1 0 01-1-1V4zm0 8a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H4a1 1 0 01-1-1v-4zm8-8a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1V4zm0 8a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z"/>',
+    ],
+    [
+        'href'  => 'reception.php',
+        'label' => 'Reception',
+        'icon'  => '<path d="M10 2a1 1 0 011 1v1.06A6.002 6.002 0 0116 10v3l1.3 2.6a1 1 0 01-.9 1.4H3.6a1 1 0 01-.9-1.4L4 13v-3a6.002 6.002 0 015-5.94V3a1 1 0 011-1zM8 18a2 2 0 004 0H8z"/>',
+    ],
+    [
+        'href'  => 'doctors.php',
+        'label' => 'Doctors',
+        'icon'  => '<path d="M7 2a1 1 0 00-1 1v3a1 1 0 002 0V4h4v2a1 1 0 002 0V3a1 1 0 00-1-1H7zM6 8a1 1 0 00-1 1v3a5 5 0 0010 0V9a1 1 0 10-2 0v3a3 3 0 11-6 0V9a1 1 0 00-1-1zm8 8a2 2 0 11-4 0h4z"/>',
+    ],
+    [
+        'href'  => 'patients.php',
+        'label' => 'Patients',
+        'icon'  => '<path d="M10 2a3 3 0 100 6 3 3 0 000-6zM4 17a6 6 0 1112 0v1H4v-1z"/>',
+    ],
+    [
+        'href'  => 'laboratory.php',
+        'label' => 'Laboratory',
+        'icon'  => '<path d="M8 2a1 1 0 000 2v4.586l-4.243 4.243A2 2 0 005.172 16h9.656a2 2 0 001.415-3.171L12 8.586V4a1 1 0 100-2H8zm2 2h0v5a1 1 0 01-.293.707L7.4 12h5.2l-2.307-2.293A1 1 0 0110 9V4z"/>',
+    ],
+    [
+        'href'  => 'pharmacy.php',
+        'label' => 'Pharmacy',
+        'icon'  => '<path d="M13.657 2.343a4 4 0 00-5.657 0L2.343 8a4 4 0 105.657 5.657l5.657-5.657a4 4 0 000-5.657zM8.5 6.5l5 5-1.5 1.5-5-5 1.5-1.5z"/>',
+    ],
+    [
+        'href'  => 'accounting.php',
+        'label' => 'Accounting',
+        'icon'  => '<path fill-rule="evenodd" d="M4 3a1 1 0 00-1 1v12a1 1 0 001 1h12a1 1 0 001-1V4a1 1 0 00-1-1H4zm2 3h8v2H6V6zm0 4h8v2H6v-2zm0 4h5v2H6v-2z" clip-rule="evenodd"/>',
+    ],
+    [
+        'href'  => 'reports.php',
+        'label' => 'Reports',
+        'icon'  => '<path d="M4 13a1 1 0 011-1h1a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1v-4zm5-5a1 1 0 011-1h1a1 1 0 011 1v9a1 1 0 01-1 1h-1a1 1 0 01-1-1V8zm5-4a1 1 0 011-1h1a1 1 0 011 1v13a1 1 0 01-1 1h-1a1 1 0 01-1-1V4z"/>',
+    ],
+    [
+        'href'  => 'settings.php',
+        'label' => 'Settings',
+        'icon'  => '<path fill-rule="evenodd" d="M8.34 1.804A1 1 0 019.32 1h1.36a1 1 0 01.98.804l.331 1.652a6.993 6.993 0 011.929 1.115l1.598-.54a1 1 0 011.186.447l.68 1.178a1 1 0 01-.223 1.28l-1.281 1.05a7.05 7.05 0 010 2.228l1.28 1.05a1 1 0 01.224 1.28l-.68 1.178a1 1 0 01-1.187.447l-1.598-.54a6.993 6.993 0 01-1.929 1.115l-.33 1.652a1 1 0 01-.98.804H9.32a1 1 0 01-.98-.804l-.331-1.652a6.993 6.993 0 01-1.929-1.115l-1.598.54a1 1 0 01-1.186-.447l-.68-1.178a1 1 0 01.223-1.28l1.281-1.05a7.05 7.05 0 010-2.228l-1.28-1.05a1 1 0 01-.224-1.28l.68-1.178a1 1 0 011.187-.447l1.598.54A6.993 6.993 0 018.01 3.456l.33-1.652zM10 13a3 3 0 100-6 3 3 0 000 6z" clip-rule="evenodd"/>',
+    ],
+];
+
+// =======================================================================
+// SECTION 3 — Pure helper functions (no I/O beyond the given PDO)
+// =======================================================================
+
+/** Escapes a value for safe HTML output. Single source of truth. */
+function tdc_e(?string $value): string
+{
+    return htmlspecialchars((string) $value, ENT_QUOTES, 'UTF-8');
+}
+
+/**
+ * Strips a leading honorific (Dr., Mr., Mrs., Ms., Prof.) and returns
+ * the first remaining token, for a friendlier greeting/avatar.
+ */
+function tdc_display_name(string $legalName): string
+{
+    $titles = ['dr', 'mr', 'mrs', 'ms', 'prof'];
+    $parts  = preg_split('/\s+/', trim($legalName)) ?: [];
+
+    while (!empty($parts) && in_array(strtolower(rtrim($parts[0], '.')), $titles, true)) {
+        array_shift($parts);
+    }
+
+    $remaining = trim(implode(' ', $parts));
+
+    return $remaining !== '' ? $remaining : ($legalName !== '' ? $legalName : 'User');
+}
+
+/** Strict Y-m-d date validator (rejects "2026-02-31" style overflow dates). */
+function tdc_is_valid_date(string $date): bool
+{
+    $d = DateTime::createFromFormat('Y-m-d', $date);
+    return $d !== false && $d->format('Y-m-d') === $date;
+}
+
+/**
+ * Self-contained, CSRF-guarded logout (?logout=1&csrf=...).
+ * Exits the script when a logout is processed; otherwise returns.
+ */
+function tdc_handle_logout(): void
+{
+    if (!isset($_GET['logout'])) {
+        return;
+    }
+
+    $validLogoutToken = !empty($_SESSION['csrf_token'])
+        && hash_equals($_SESSION['csrf_token'], $_GET['csrf'] ?? '');
+
+    if ($validLogoutToken) {
+        $_SESSION = [];
+        if (ini_get('session.use_cookies')) {
+            $cookieParams = session_get_cookie_params();
+            setcookie(
+                session_name(),
+                '',
+                time() - 42000,
+                $cookieParams['path'],
+                $cookieParams['domain'],
+                $cookieParams['secure'],
+                $cookieParams['httponly']
+            );
+        }
+        session_destroy();
+    }
+
+    header('Location: ../auth.php');
+    exit;
+}
+
+/** Redirects (Post/Redirect/Get) back to a section with a one-shot flash flag. */
+function tdc_redirect(string $section, string $flag): void
+{
+    header('Location: pharmacy.php?section=' . urlencode($section) . '&' . $flag . '=1');
+    exit;
+}
+
+/** Runs a scalar query and returns the single value. */
+function tdc_scalar(PDO $pdo, string $sql, array $params = [])
+{
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute($params);
+    return $stmt->fetchColumn();
+}
+
+/**
+ * Generates the next zero-padded reference for a VARCHAR primary key,
+ * e.g. tdc_next_ref($pdo, 'Inventory', 'ItemID', 'ITM') -> "ITM000042".
+ * Table/column are always hardcoded call-site literals — never user input.
+ */
+function tdc_next_ref(PDO $pdo, string $table, string $column, string $prefix, int $pad = 6): string
+{
+    $sql  = "SELECT {$column} FROM {$table} WHERE {$column} LIKE :pattern ORDER BY LENGTH({$column}) DESC, {$column} DESC LIMIT 1";
+    $last = tdc_scalar($pdo, $sql, ['pattern' => $prefix . '%']);
+
+    $next = 1;
+    if ($last !== false && $last !== null) {
+        $next = ((int) substr((string) $last, strlen($prefix))) + 1;
+    }
+
+    return $prefix . str_pad((string) $next, $pad, '0', STR_PAD_LEFT);
+}
+
+/**
+ * Generates the next bill/PO base reference, e.g. "POS000042" or
+ * "PO000042". Individual lines are stored as "{base}-01", "-02", etc.
+ * — the same grouping-by-ID-prefix convention Prescriptions already
+ * uses in reception.php, applied here to PharmacySales and Purchases.
+ */
+function tdc_next_bill_base(PDO $pdo, string $table, string $column, string $prefix): string
+{
+    $last = tdc_scalar(
+        $pdo,
+        "SELECT {$column} FROM {$table} WHERE {$column} LIKE :pattern ORDER BY LENGTH({$column}) DESC, {$column} DESC LIMIT 1",
+        ['pattern' => $prefix . '%']
+    );
+
+    $next = 1;
+    if ($last !== false && $last !== null) {
+        $base = strtok((string) $last, '-');
+        $next = ((int) substr($base, strlen($prefix))) + 1;
+    }
+
+    return $prefix . str_pad((string) $next, 6, '0', STR_PAD_LEFT);
+}
+
+/**
+ * Resolves a SupplierID for a given supplier name. There is no
+ * Suppliers catalog table in this schema, so an existing supplier is
+ * reused by matching SupplierName (case-insensitive) against prior
+ * purchases; otherwise the next available integer id is issued.
+ */
+function tdc_find_or_create_supplier_id(PDO $pdo, string $supplierName): int
+{
+    $existing = tdc_scalar(
+        $pdo,
+        'SELECT SupplierID FROM Purchases WHERE LOWER(SupplierName) = LOWER(:name) ORDER BY PurchaseDate DESC LIMIT 1',
+        ['name' => $supplierName]
+    );
+    if ($existing !== false && $existing !== null) {
+        return (int) $existing;
+    }
+
+    return (int) tdc_scalar($pdo, 'SELECT COALESCE(MAX(SupplierID), 0) FROM Purchases') + 1;
+}
+
+/**
+ * Fetches a stock/price snapshot for a set of Inventory item ids, used
+ * to authoritatively validate a POS cart server-side regardless of
+ * what the client submitted.
+ *
+ * @param string[] $itemIds
+ * @return array<string, array{name:string, price:float, stock:int}>
+ */
+function tdc_fetch_stock_map(PDO $pdo, array $itemIds): array
+{
+    $itemIds = array_values(array_unique(array_filter($itemIds, static fn ($v) => trim((string) $v) !== '')));
+    if (empty($itemIds)) {
+        return [];
+    }
+
+    $placeholders = implode(',', array_fill(0, count($itemIds), '?'));
+    $stmt = $pdo->prepare("SELECT ItemID, ItemName, SellingPrice, QuantityInStock FROM Inventory WHERE ItemID IN ({$placeholders})");
+    $stmt->execute(array_values($itemIds));
+
+    $map = [];
+    foreach ($stmt->fetchAll() as $row) {
+        $map[$row['ItemID']] = [
+            'name'  => $row['ItemName'],
+            'price' => (float) $row['SellingPrice'],
+            'stock' => (int) $row['QuantityInStock'],
+        ];
+    }
+    return $map;
+}
+
+// =======================================================================
+// SECTION 4 — Validation functions
+// =======================================================================
+
+// --- 4A. Inventory -------------------------------------------------------
+
+/** @param array{ItemName:string,Category:string,QuantityInStock:string,SalesUnit:string,SellingPrice:string,ReorderLevel:string,ExpiryDate:string} $input */
+function tdc_validate_inventory_form(array $input): array
+{
+    $errors = [];
+
+    if ($input['ItemName'] === '' || mb_strlen($input['ItemName']) > 150) {
+        $errors[] = 'Item name is required (max 150 characters).';
+    }
+    if ($input['Category'] !== '' && mb_strlen($input['Category']) > 100) {
+        $errors[] = 'Category must be 100 characters or fewer.';
+    }
+    if ($input['QuantityInStock'] === '' || !ctype_digit($input['QuantityInStock'])) {
+        $errors[] = 'Quantity in stock must be a whole number of 0 or more.';
+    }
+    if ($input['SellingPrice'] !== '' && (!is_numeric($input['SellingPrice']) || (float) $input['SellingPrice'] < 0)) {
+        $errors[] = 'Selling price must be a valid non-negative number.';
+    }
+    if ($input['ReorderLevel'] !== '' && !ctype_digit($input['ReorderLevel'])) {
+        $errors[] = 'Reorder level must be a whole number of 0 or more.';
+    }
+    if ($input['ExpiryDate'] !== '' && !tdc_is_valid_date($input['ExpiryDate'])) {
+        $errors[] = 'Expiry date is not a valid date.';
+    }
+
+    return $errors;
+}
+
+// --- 4B. Purchases ---------------------------------------------------------
+
+/** @param array{SupplierName:string,SupplierPhone:string,AmountPaid:string,ItemName:array} $input */
+function tdc_validate_purchase_form(array $input): array
+{
+    $errors = [];
+
+    if ($input['SupplierName'] === '' || mb_strlen($input['SupplierName']) > 150) {
+        $errors[] = 'Supplier name is required (max 150 characters).';
+    }
+    if ($input['SupplierPhone'] !== '' && !preg_match('/^[0-9+\-\s()]{6,20}$/', $input['SupplierPhone'])) {
+        $errors[] = 'Supplier phone number format is invalid.';
+    }
+    if ($input['AmountPaid'] !== '' && (!is_numeric($input['AmountPaid']) || (float) $input['AmountPaid'] < 0)) {
+        $errors[] = 'Amount paid must be a valid non-negative number.';
+    }
+
+    $hasLine = false;
+    foreach ($input['ItemName'] as $i => $name) {
+        $name = trim((string) $name);
+        if ($name === '') {
+            continue;
+        }
+        $hasLine = true;
+        $lineNo  = $i + 1;
+
+        if (mb_strlen($name) > 150) {
+            $errors[] = "Item name at line {$lineNo} is too long (max 150 characters).";
+        }
+
+        $qty = trim((string) ($input['Quantity'][$i] ?? ''));
+        if ($qty === '' || !ctype_digit($qty) || (int) $qty < 1) {
+            $errors[] = "Quantity at line {$lineNo} must be a positive whole number.";
+        }
+
+        $unitPrice = trim((string) ($input['UnitPrice'][$i] ?? ''));
+        if ($unitPrice === '' || !is_numeric($unitPrice) || (float) $unitPrice < 0) {
+            $errors[] = "Unit price at line {$lineNo} must be a valid non-negative number.";
+        }
+
+        $sellingPrice = trim((string) ($input['SellingPrice'][$i] ?? ''));
+        if ($sellingPrice !== '' && (!is_numeric($sellingPrice) || (float) $sellingPrice < 0)) {
+            $errors[] = "Selling price at line {$lineNo} must be a valid non-negative number.";
+        }
+
+        $conversion = trim((string) ($input['ConversionFactor'][$i] ?? ''));
+        if ($conversion !== '' && (!is_numeric($conversion) || (float) $conversion <= 0)) {
+            $errors[] = "Conversion factor at line {$lineNo} must be a positive number.";
+        }
+
+        $expiry = trim((string) ($input['ExpiryDate'][$i] ?? ''));
+        if ($expiry !== '' && !tdc_is_valid_date($expiry)) {
+            $errors[] = "Expiry date at line {$lineNo} is not a valid date.";
+        }
+    }
+    if (!$hasLine) {
+        $errors[] = 'Add at least one item line.';
+    }
+
+    return $errors;
+}
+
+// --- 4C. Point of Sale -----------------------------------------------------
+
+/**
+ * @param array{CustomerPhone:string,AmountPaid:string,ItemID:array,Quantity:array,UnitPrice:array} $input
+ * @param array<string, array{name:string, price:float, stock:int}> $stockByItemId
+ */
+function tdc_validate_pos_form(array $input, array $stockByItemId): array
+{
+    $errors = [];
+
+    if ($input['CustomerPhone'] !== '' && !preg_match('/^[0-9+\-\s()]{6,20}$/', $input['CustomerPhone'])) {
+        $errors[] = 'Customer phone number format is invalid.';
+    }
+    if ($input['AmountPaid'] !== '' && (!is_numeric($input['AmountPaid']) || (float) $input['AmountPaid'] < 0)) {
+        $errors[] = 'Amount paid must be a valid non-negative number.';
+    }
+
+    $hasLine            = false;
+    $requestedQtyByItem = [];
+
+    foreach ($input['ItemID'] as $i => $itemId) {
+        $itemId = trim((string) $itemId);
+        if ($itemId === '') {
+            continue;
+        }
+        $hasLine = true;
+        $lineNo  = $i + 1;
+
+        if (!isset($stockByItemId[$itemId])) {
+            $errors[] = "Line {$lineNo}: selected item no longer exists.";
+            continue;
+        }
+
+        $qty = trim((string) ($input['Quantity'][$i] ?? ''));
+        if ($qty === '' || !ctype_digit($qty) || (int) $qty < 1) {
+            $errors[] = "Line {$lineNo}: quantity must be a positive whole number.";
+            continue;
+        }
+
+        $unitPrice = trim((string) ($input['UnitPrice'][$i] ?? ''));
+        if ($unitPrice === '' || !is_numeric($unitPrice) || (float) $unitPrice < 0) {
+            $errors[] = "Line {$lineNo}: unit price must be a valid non-negative number.";
+        }
+
+        $requestedQtyByItem[$itemId] = ($requestedQtyByItem[$itemId] ?? 0) + (int) $qty;
+    }
+    if (!$hasLine) {
+        $errors[] = 'Add at least one item to the sale.';
+    }
+
+    foreach ($requestedQtyByItem as $itemId => $qty) {
+        if ($qty > $stockByItemId[$itemId]['stock']) {
+            $name  = $stockByItemId[$itemId]['name'];
+            $stock = $stockByItemId[$itemId]['stock'];
+            $errors[] = "\"{$name}\" only has {$stock} in stock (requested {$qty}).";
+        }
+    }
+
+    return $errors;
+}
+
+// =======================================================================
+// SECTION 5 — Persistence functions
+// =======================================================================
+
+// --- 5A. Inventory ---------------------------------------------------------
+
+function tdc_save_inventory_item(PDO $pdo, array $input, bool $isEdit, string $editId): void
+{
+    $params = [
+        'Category'        => $input['Category'] !== '' ? $input['Category'] : null,
+        'ItemName'        => $input['ItemName'],
+        'QuantityInStock' => (int) $input['QuantityInStock'],
+        'SalesUnit'       => $input['SalesUnit'] !== '' ? $input['SalesUnit'] : null,
+        'SellingPrice'    => $input['SellingPrice'] !== '' ? round((float) $input['SellingPrice'], 2) : 0.00,
+        'ReorderLevel'    => $input['ReorderLevel'] !== '' ? (int) $input['ReorderLevel'] : 10,
+        'ExpiryDate'      => $input['ExpiryDate'] !== '' ? $input['ExpiryDate'] : null,
+    ];
+
+    if ($isEdit) {
+        $params['id'] = $editId;
+        $stmt = $pdo->prepare(
+            'UPDATE Inventory SET Category = :Category, ItemName = :ItemName,
+                QuantityInStock = :QuantityInStock, SalesUnit = :SalesUnit,
+                SellingPrice = :SellingPrice, ReorderLevel = :ReorderLevel, ExpiryDate = :ExpiryDate
+             WHERE ItemID = :id'
+        );
+        $stmt->execute($params);
+        return;
+    }
+
+    $params['ItemID'] = tdc_next_ref($pdo, 'Inventory', 'ItemID', 'ITM');
+    $stmt = $pdo->prepare(
+        'INSERT INTO Inventory (ItemID, Category, ItemName, QuantityInStock, SalesUnit, SellingPrice, ReorderLevel, ExpiryDate)
+         VALUES (:ItemID, :Category, :ItemName, :QuantityInStock, :SalesUnit, :SellingPrice, :ReorderLevel, :ExpiryDate)'
+    );
+    $stmt->execute($params);
+}
+
+/** @return string[] error messages; empty on success */
+function tdc_delete_inventory_item(PDO $pdo, string $id): array
+{
+    // App-level referential guard: no FK constraints in this schema, so
+    // we check dependents ourselves before allowing a delete.
+    $saleCount = (int) tdc_scalar($pdo, 'SELECT COUNT(*) FROM PharmacySales WHERE ItemID = :id', ['id' => $id]);
+    $purchaseCount = (int) tdc_scalar(
+        $pdo,
+        'SELECT COUNT(*) FROM Purchases WHERE LOWER(TRIM(ItemName)) = (SELECT LOWER(TRIM(ItemName)) FROM Inventory WHERE ItemID = :id)',
+        ['id' => $id]
+    );
+
+    if ($saleCount > 0 || $purchaseCount > 0) {
+        return ['This item has purchase or sale history and cannot be deleted. Set its stock to 0 instead.'];
+    }
+
+    $stmt = $pdo->prepare('DELETE FROM Inventory WHERE ItemID = :id');
+    $stmt->execute(['id' => $id]);
+    return [];
+}
+
+/**
+ * Adds received stock into Inventory for one purchase-order line,
+ * matching an existing item by name (case-insensitive) or creating a
+ * new catalog entry. Quantity is normalized from purchase units into
+ * sales units via the line's ConversionFactor.
+ */
+function tdc_upsert_inventory_from_purchase(PDO $pdo, array $line, int $supplierId): void
+{
+    $stmt = $pdo->prepare('SELECT ItemID FROM Inventory WHERE LOWER(TRIM(ItemName)) = LOWER(TRIM(:name)) LIMIT 1');
+    $stmt->execute(['name' => $line['ItemName']]);
+    $existingId = $stmt->fetchColumn();
+
+    $addQty = (int) round($line['Quantity'] * $line['ConversionFactor']);
+
+    if ($existingId !== false) {
+        $upd = $pdo->prepare(
+            'UPDATE Inventory SET QuantityInStock = QuantityInStock + :addQty, Category = COALESCE(:Category, Category),
+                SalesUnit = COALESCE(:SalesUnit, SalesUnit), SellingPrice = :SellingPrice,
+                SupplierID = :SupplierID, ExpiryDate = COALESCE(:ExpiryDate, ExpiryDate)
+             WHERE ItemID = :id'
+        );
+        $upd->execute([
+            'addQty'       => $addQty,
+            'Category'     => $line['Category'] !== '' ? $line['Category'] : null,
+            'SalesUnit'    => $line['SalesUnit'] !== '' ? $line['SalesUnit'] : null,
+            'SellingPrice' => $line['SellingPrice'],
+            'SupplierID'   => $supplierId,
+            'ExpiryDate'   => $line['ExpiryDate'] !== '' ? $line['ExpiryDate'] : null,
+            'id'           => $existingId,
+        ]);
+        return;
+    }
+
+    $itemId = tdc_next_ref($pdo, 'Inventory', 'ItemID', 'ITM');
+    $ins = $pdo->prepare(
+        'INSERT INTO Inventory (ItemID, Category, ItemName, QuantityInStock, SalesUnit, SellingPrice, ReorderLevel, ExpiryDate, SupplierID)
+         VALUES (:ItemID, :Category, :ItemName, :QuantityInStock, :SalesUnit, :SellingPrice, 10, :ExpiryDate, :SupplierID)'
+    );
+    $ins->execute([
+        'ItemID'          => $itemId,
+        'Category'        => $line['Category'] !== '' ? $line['Category'] : null,
+        'ItemName'        => $line['ItemName'],
+        'QuantityInStock' => $addQty,
+        'SalesUnit'       => $line['SalesUnit'] !== '' ? $line['SalesUnit'] : null,
+        'SellingPrice'    => $line['SellingPrice'],
+        'ExpiryDate'      => $line['ExpiryDate'] !== '' ? $line['ExpiryDate'] : null,
+        'SupplierID'      => $supplierId,
+    ]);
+}
+
+// --- 5B. Purchases (append-only: create + void) ---------------------------
+
+/** @return string the generated PO base reference, e.g. "PO000042" */
+function tdc_save_purchase(PDO $pdo, array $input): string
+{
+    $supplierId = tdc_find_or_create_supplier_id($pdo, $input['SupplierName']);
+    $base       = tdc_next_bill_base($pdo, 'Purchases', 'PurchaseID', 'PO');
+
+    $lines       = [];
+    $totalAmount = 0.0;
+    foreach ($input['ItemName'] as $i => $name) {
+        $name = trim((string) $name);
+        if ($name === '') {
+            continue;
+        }
+        $qty       = (int) ($input['Quantity'][$i] ?? 0);
+        $unitPrice = round((float) ($input['UnitPrice'][$i] ?? 0), 2);
+        $lineTotal = round($qty * $unitPrice, 2);
+        $totalAmount += $lineTotal;
+
+        $lines[] = [
+            'ItemName'         => $name,
+            'Category'         => trim((string) ($input['Category'][$i] ?? '')),
+            'PurchaseUnit'     => trim((string) ($input['PurchaseUnit'][$i] ?? '')),
+            'ConversionFactor' => trim((string) ($input['ConversionFactor'][$i] ?? '')) !== ''
+                ? (float) $input['ConversionFactor'][$i] : 1.00,
+            'SalesUnit'        => trim((string) ($input['SalesUnit'][$i] ?? '')),
+            'Quantity'         => $qty,
+            'UnitPrice'        => $unitPrice,
+            'SellingPrice'     => trim((string) ($input['SellingPrice'][$i] ?? '')) !== ''
+                ? round((float) $input['SellingPrice'][$i], 2) : $unitPrice,
+            'ExpiryDate'       => trim((string) ($input['ExpiryDate'][$i] ?? '')),
+        ];
+    }
+
+    $amountPaid = round((float) ($input['AmountPaid'] !== '' ? $input['AmountPaid'] : 0), 2);
+    $dueBalance = round($totalAmount - $amountPaid, 2);
+
+    $pdo->beginTransaction();
+    try {
+        $insert = $pdo->prepare(
+            'INSERT INTO Purchases (PurchaseID, SupplierID, SupplierName, SupplierPhone, Category, ItemName,
+                Quantity, MinimumQuantity, PurchaseUnit, ConversionFactor, SalesUnit, UnitPrice, SellingPrice,
+                TotalAmount, AmountPaid, DueBalance)
+             VALUES (:PurchaseID, :SupplierID, :SupplierName, :SupplierPhone, :Category, :ItemName,
+                :Quantity, 10, :PurchaseUnit, :ConversionFactor, :SalesUnit, :UnitPrice, :SellingPrice,
+                :TotalAmount, :AmountPaid, :DueBalance)'
+        );
+
+        $line = 0;
+        foreach ($lines as $l) {
+            $line++;
+            $insert->execute([
+                'PurchaseID'       => $base . '-' . str_pad((string) $line, 2, '0', STR_PAD_LEFT),
+                'SupplierID'       => $supplierId,
+                'SupplierName'     => $input['SupplierName'],
+                'SupplierPhone'    => $input['SupplierPhone'] !== '' ? $input['SupplierPhone'] : null,
+                'Category'         => $l['Category'] !== '' ? $l['Category'] : null,
+                'ItemName'         => $l['ItemName'],
+                'Quantity'         => $l['Quantity'],
+                'PurchaseUnit'     => $l['PurchaseUnit'] !== '' ? $l['PurchaseUnit'] : null,
+                'ConversionFactor' => $l['ConversionFactor'],
+                'SalesUnit'        => $l['SalesUnit'] !== '' ? $l['SalesUnit'] : null,
+                'UnitPrice'        => $l['UnitPrice'],
+                'SellingPrice'     => $l['SellingPrice'],
+                'TotalAmount'      => $totalAmount,
+                'AmountPaid'       => $amountPaid,
+                'DueBalance'       => $dueBalance,
+            ]);
+
+            tdc_upsert_inventory_from_purchase($pdo, $l, $supplierId);
+        }
+
+        $pdo->commit();
+    } catch (Throwable $e) {
+        $pdo->rollBack();
+        throw $e;
+    }
+
+    return $base;
+}
+
+/** @return string[] error messages; empty on success */
+function tdc_void_purchase(PDO $pdo, string $base): array
+{
+    $stmt = $pdo->prepare('SELECT ItemName, Quantity, ConversionFactor FROM Purchases WHERE PurchaseID LIKE :pattern');
+    $stmt->execute(['pattern' => $base . '-%']);
+    $lines = $stmt->fetchAll();
+
+    if (empty($lines)) {
+        return ['Purchase order not found.'];
+    }
+
+    // Guard: refuse to void if reversing would drive any linked item's
+    // stock negative (some of the received stock has already been sold
+    // or adjusted downward elsewhere).
+    foreach ($lines as $l) {
+        $reduceBy = (int) round($l['Quantity'] * $l['ConversionFactor']);
+        $current  = tdc_scalar(
+            $pdo,
+            'SELECT QuantityInStock FROM Inventory WHERE LOWER(TRIM(ItemName)) = LOWER(TRIM(:name)) LIMIT 1',
+            ['name' => $l['ItemName']]
+        );
+        if ($current !== false && (int) $current < $reduceBy) {
+            $name = $l['ItemName'];
+            return ["Cannot void: \"{$name}\" only has {$current} in stock, less than the {$reduceBy} originally received. Adjust inventory manually first."];
+        }
+    }
+
+    $pdo->beginTransaction();
+    try {
+        $reverse = $pdo->prepare('UPDATE Inventory SET QuantityInStock = QuantityInStock - :qty WHERE LOWER(TRIM(ItemName)) = LOWER(TRIM(:name))');
+        foreach ($lines as $l) {
+            $reduceBy = (int) round($l['Quantity'] * $l['ConversionFactor']);
+            $reverse->execute(['qty' => $reduceBy, 'name' => $l['ItemName']]);
+        }
+
+        $del = $pdo->prepare('DELETE FROM Purchases WHERE PurchaseID LIKE :pattern');
+        $del->execute(['pattern' => $base . '-%']);
+
+        $pdo->commit();
+    } catch (Throwable $e) {
+        $pdo->rollBack();
+        throw $e;
+    }
+
+    return [];
+}
+
+// --- 5C. Point of Sale (append-only: create + void) ------------------------
+
+/**
+ * @param array<string, array{name:string, price:float, stock:int}> $stockByItemId
+ * @return string the generated sale base reference, e.g. "POS000042"
+ * @throws RuntimeException if stock changed since validation (race)
+ */
+function tdc_save_sale(PDO $pdo, array $input, array $stockByItemId): string
+{
+    $base = tdc_next_bill_base($pdo, 'PharmacySales', 'SaleID', 'POS');
+
+    $lines       = [];
+    $totalAmount = 0.0;
+    foreach ($input['ItemID'] as $i => $itemId) {
+        $itemId = trim((string) $itemId);
+        if ($itemId === '' || !isset($stockByItemId[$itemId])) {
+            continue;
+        }
+        $qty = (int) ($input['Quantity'][$i] ?? 0);
+        if ($qty < 1) {
+            continue;
+        }
+        $unitPrice = round((float) ($input['UnitPrice'][$i] ?? 0), 2);
+        $lineTotal = round($qty * $unitPrice, 2);
+        $totalAmount += $lineTotal;
+
+        $lines[] = [
+            'ItemID'    => $itemId,
+            'ItemName'  => $stockByItemId[$itemId]['name'],
+            'Quantity'  => $qty,
+            'UnitPrice' => $unitPrice,
+            'LineTotal' => $lineTotal,
+        ];
+    }
+
+    $amountPaid    = round((float) ($input['AmountPaid'] !== '' ? $input['AmountPaid'] : $totalAmount), 2);
+    $dueBalance    = round($totalAmount - $amountPaid, 2);
+    $paymentStatus = $amountPaid <= 0 ? 'Unpaid' : ($amountPaid >= $totalAmount ? 'Paid' : 'Partial');
+
+    $pdo->beginTransaction();
+    try {
+        $insert = $pdo->prepare(
+            'INSERT INTO PharmacySales (SaleID, ItemID, ItemName, Quantity, UnitPrice, LineTotal,
+                TotalAmount, AmountPaid, DueBalance, PaymentStatus, CustomerName, CustomerPhone, SoldBy)
+             VALUES (:SaleID, :ItemID, :ItemName, :Quantity, :UnitPrice, :LineTotal,
+                :TotalAmount, :AmountPaid, :DueBalance, :PaymentStatus, :CustomerName, :CustomerPhone, :SoldBy)'
+        );
+
+        // Atomic, race-safe decrement: the WHERE clause makes this a
+        // no-op (rowCount 0) if concurrent stock movement has already
+        // dropped the item below what this line needs, so two
+        // simultaneous sales can never oversell the same item.
+        $decrement = $pdo->prepare(
+            'UPDATE Inventory SET QuantityInStock = QuantityInStock - :qty
+             WHERE ItemID = :id AND QuantityInStock >= :qtyCheck'
+        );
+
+        $line = 0;
+        foreach ($lines as $l) {
+            $line++;
+            $insert->execute([
+                'SaleID'        => $base . '-' . str_pad((string) $line, 2, '0', STR_PAD_LEFT),
+                'ItemID'        => $l['ItemID'],
+                'ItemName'      => $l['ItemName'],
+                'Quantity'      => $l['Quantity'],
+                'UnitPrice'     => $l['UnitPrice'],
+                'LineTotal'     => $l['LineTotal'],
+                'TotalAmount'   => $totalAmount,
+                'AmountPaid'    => $amountPaid,
+                'DueBalance'    => $dueBalance,
+                'PaymentStatus' => $paymentStatus,
+                'CustomerName'  => $input['CustomerName'] !== '' ? $input['CustomerName'] : null,
+                'CustomerPhone' => $input['CustomerPhone'] !== '' ? $input['CustomerPhone'] : null,
+                'SoldBy'        => $_SESSION['user_id'] ?? null,
+            ]);
+
+            $decrement->execute(['qty' => $l['Quantity'], 'id' => $l['ItemID'], 'qtyCheck' => $l['Quantity']]);
+            if ($decrement->rowCount() === 0) {
+                throw new RuntimeException("Insufficient stock for \"{$l['ItemName']}\" — please refresh and try again.");
+            }
+        }
+
+        $pdo->commit();
+    } catch (Throwable $e) {
+        $pdo->rollBack();
+        throw $e;
+    }
+
+    return $base;
+}
+
+/** @return string[] error messages; empty on success */
+function tdc_void_sale(PDO $pdo, string $base): array
+{
+    $stmt = $pdo->prepare('SELECT ItemID, Quantity FROM PharmacySales WHERE SaleID LIKE :pattern');
+    $stmt->execute(['pattern' => $base . '-%']);
+    $lines = $stmt->fetchAll();
+
+    if (empty($lines)) {
+        return ['Sale not found.'];
+    }
+
+    $pdo->beginTransaction();
+    try {
+        $restock = $pdo->prepare('UPDATE Inventory SET QuantityInStock = QuantityInStock + :qty WHERE ItemID = :id');
+        foreach ($lines as $l) {
+            $restock->execute(['qty' => $l['Quantity'], 'id' => $l['ItemID']]);
+        }
+
+        $del = $pdo->prepare('DELETE FROM PharmacySales WHERE SaleID LIKE :pattern');
+        $del->execute(['pattern' => $base . '-%']);
+
+        $pdo->commit();
+    } catch (Throwable $e) {
+        $pdo->rollBack();
+        throw $e;
+    }
+
+    return [];
+}
+
+// =======================================================================
+// SECTION 6 — Logout (may exit)
+// =======================================================================
+tdc_handle_logout();
+
+// =======================================================================
+// SECTION 7 — Auth gate & role gate
+// =======================================================================
+if (empty($_SESSION['user_id'])) {
+    header('Location: ../auth.php');
+    exit;
+}
+
+if (!in_array($_SESSION['role'] ?? '', ALLOWED_PHARMACY_ROLES, true)) {
+    header('Location: home.php');
+    exit;
+}
+
+require_once __DIR__ . '/../../db.php';
+
+if (empty($_SESSION['csrf_token'])) {
+    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+}
+
+// =======================================================================
+// SECTION 8 — Request-scoped state
+// =======================================================================
+$section = $_GET['section'] ?? null;
+if ($section !== null && !in_array($section, ALLOWED_SECTIONS, true)) {
+    $section = null;
+}
+
+$errors = [];
+
+$oldSale = [
+    'CustomerName' => '', 'CustomerPhone' => '', 'AmountPaid' => '',
+    'ItemID' => [], 'Quantity' => [], 'UnitPrice' => [],
+];
+
+$oldPurchase = [
+    'SupplierName' => '', 'SupplierPhone' => '', 'AmountPaid' => '',
+    'ItemName' => [], 'Category' => [], 'PurchaseUnit' => [], 'ConversionFactor' => [],
+    'SalesUnit' => [], 'Quantity' => [], 'UnitPrice' => [], 'SellingPrice' => [], 'ExpiryDate' => [],
+];
+
+$oldInventory = [
+    'ItemID' => '', 'ItemName' => '', 'Category' => '', 'QuantityInStock' => '',
+    'SalesUnit' => '', 'SellingPrice' => '', 'ReorderLevel' => '10', 'ExpiryDate' => '',
+];
+
+$posShowForm      = false;
+$purchaseShowForm = false;
+
+// =======================================================================
+// SECTION 9 — POST handler (dispatch by section)
+// =======================================================================
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($section, ALLOWED_SECTIONS, true)) {
+
+    if (!hash_equals($_SESSION['csrf_token'], $_POST['csrf_token'] ?? '')) {
+        $errors[] = 'Your session has expired. Please refresh and try again.';
+    } else {
+        $formAction = (string) ($_POST['form_action'] ?? 'save');
+
+        // --- Point of Sale ------------------------------------------
+        if ($section === 'pos') {
+            if ($formAction === 'void') {
+                $base = preg_replace('/[^A-Za-z0-9]/', '', (string) ($_POST['SaleRef'] ?? ''));
+                if ($base === '') {
+                    $errors[] = 'Invalid sale selected.';
+                } else {
+                    try {
+                        $voidErrors = tdc_void_sale($pdo, $base);
+                        if (empty($voidErrors)) {
+                            tdc_redirect('pos', 'voided');
+                        }
+                        $errors = $voidErrors;
+                    } catch (Throwable $e) {
+                        error_log('[PHARMACY][POS] void failed: ' . $e->getMessage());
+                        $errors[] = 'A system error occurred while voiding the sale. Please try again.';
+                    }
+                }
+            } else {
+                $oldSale['CustomerName']  = trim((string) ($_POST['CustomerName'] ?? ''));
+                $oldSale['CustomerPhone'] = trim((string) ($_POST['CustomerPhone'] ?? ''));
+                $oldSale['AmountPaid']    = trim((string) ($_POST['AmountPaid'] ?? ''));
+                $oldSale['ItemID']        = $_POST['ItemID'] ?? [];
+                $oldSale['Quantity']      = $_POST['Quantity'] ?? [];
+                $oldSale['UnitPrice']     = $_POST['UnitPrice'] ?? [];
+
+                $stockByItemId = tdc_fetch_stock_map($pdo, $oldSale['ItemID']);
+                $errors        = tdc_validate_pos_form($oldSale, $stockByItemId);
+                $posShowForm   = true;
+
+                if (empty($errors)) {
+                    try {
+                        $base = tdc_save_sale($pdo, $oldSale, $stockByItemId);
+                        header('Location: pharmacy.php?section=pos&view=' . urlencode($base) . '&success=1');
+                        exit;
+                    } catch (RuntimeException $e) {
+                        $errors[] = $e->getMessage();
+                    } catch (Throwable $e) {
+                        error_log('[PHARMACY][POS] save failed: ' . $e->getMessage());
+                        $errors[] = 'A system error occurred while completing the sale. Please try again.';
+                    }
+                }
+            }
+
+        // --- Purchases -------------------------------------------------
+        } elseif ($section === 'purchases') {
+            if ($formAction === 'void') {
+                $base = preg_replace('/[^A-Za-z0-9]/', '', (string) ($_POST['PORef'] ?? ''));
+                if ($base === '') {
+                    $errors[] = 'Invalid purchase order selected.';
+                } else {
+                    try {
+                        $voidErrors = tdc_void_purchase($pdo, $base);
+                        if (empty($voidErrors)) {
+                            tdc_redirect('purchases', 'voided');
+                        }
+                        $errors = $voidErrors;
+                    } catch (Throwable $e) {
+                        error_log('[PHARMACY][PURCHASES] void failed: ' . $e->getMessage());
+                        $errors[] = 'A system error occurred while voiding the purchase order. Please try again.';
+                    }
+                }
+            } else {
+                $oldPurchase['SupplierName']     = trim((string) ($_POST['SupplierName'] ?? ''));
+                $oldPurchase['SupplierPhone']    = trim((string) ($_POST['SupplierPhone'] ?? ''));
+                $oldPurchase['AmountPaid']       = trim((string) ($_POST['AmountPaid'] ?? ''));
+                $oldPurchase['ItemName']         = $_POST['ItemName'] ?? [];
+                $oldPurchase['Category']         = $_POST['Category'] ?? [];
+                $oldPurchase['PurchaseUnit']     = $_POST['PurchaseUnit'] ?? [];
+                $oldPurchase['ConversionFactor'] = $_POST['ConversionFactor'] ?? [];
+                $oldPurchase['SalesUnit']        = $_POST['SalesUnit'] ?? [];
+                $oldPurchase['Quantity']         = $_POST['Quantity'] ?? [];
+                $oldPurchase['UnitPrice']        = $_POST['UnitPrice'] ?? [];
+                $oldPurchase['SellingPrice']     = $_POST['SellingPrice'] ?? [];
+                $oldPurchase['ExpiryDate']       = $_POST['ExpiryDate'] ?? [];
+
+                $errors            = tdc_validate_purchase_form($oldPurchase);
+                $purchaseShowForm  = true;
+
+                if (empty($errors)) {
+                    try {
+                        $base = tdc_save_purchase($pdo, $oldPurchase);
+                        header('Location: pharmacy.php?section=purchases&view=' . urlencode($base) . '&success=1');
+                        exit;
+                    } catch (Throwable $e) {
+                        error_log('[PHARMACY][PURCHASES] save failed: ' . $e->getMessage());
+                        $errors[] = 'A system error occurred while saving the purchase order. Please try again.';
+                    }
+                }
+            }
+
+        // --- Inventory ---------------------------------------------------
+        } elseif ($section === 'inventory') {
+            if ($formAction === 'delete') {
+                $deleteId = trim((string) ($_POST['ItemID'] ?? ''));
+                $errors   = $deleteId !== '' ? tdc_delete_inventory_item($pdo, $deleteId) : ['Invalid item selected.'];
+                if (empty($errors)) {
+                    tdc_redirect('inventory', 'deleted');
+                }
+            } else {
+                $oldInventory['ItemID']          = trim((string) ($_POST['ItemID'] ?? ''));
+                $oldInventory['ItemName']        = trim((string) ($_POST['ItemName'] ?? ''));
+                $oldInventory['Category']        = trim((string) ($_POST['Category'] ?? ''));
+                $oldInventory['QuantityInStock'] = trim((string) ($_POST['QuantityInStock'] ?? ''));
+                $oldInventory['SalesUnit']       = trim((string) ($_POST['SalesUnit'] ?? ''));
+                $oldInventory['SellingPrice']    = trim((string) ($_POST['SellingPrice'] ?? ''));
+                $oldInventory['ReorderLevel']    = trim((string) ($_POST['ReorderLevel'] ?? ''));
+                $oldInventory['ExpiryDate']      = trim((string) ($_POST['ExpiryDate'] ?? ''));
+
+                $isEdit = $oldInventory['ItemID'] !== '';
+                $errors = tdc_validate_inventory_form($oldInventory);
+
+                if (empty($errors)) {
+                    try {
+                        tdc_save_inventory_item($pdo, $oldInventory, $isEdit, $oldInventory['ItemID']);
+                        tdc_redirect('inventory', 'success');
+                    } catch (PDOException $e) {
+                        error_log('[PHARMACY][INVENTORY] save failed: ' . $e->getMessage());
+                        $errors[] = 'A system error occurred while saving the item. Please try again.';
+                    }
+                }
+            }
+        }
+    }
+
+    // Rotate CSRF token after every POST (success paths already rotated + exited above via header()).
+    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+}
+
+// =======================================================================
+// SECTION 10 — GET data loading for display
+// =======================================================================
+
+// --- 10A. POS ---------------------------------------------------------
+$inventoryForCombo = [];
+$saleSearch         = '';
+$pharmacySales      = [];
+$viewSaleRef        = '';
+$viewSaleLines      = [];
+
+if ($section === 'pos') {
+    $inventoryForCombo = $pdo->query(
+        'SELECT ItemID, ItemName, SellingPrice, QuantityInStock, SalesUnit FROM Inventory
+         WHERE QuantityInStock > 0 ORDER BY ItemName ASC LIMIT 500'
+    )->fetchAll();
+
+    $saleSearch = trim((string) ($_GET['q'] ?? ''));
+    $params     = [];
+    $where      = '';
+    if ($saleSearch !== '') {
+        $where  = 'WHERE CustomerName LIKE :q OR CustomerPhone LIKE :q OR SaleID LIKE :q';
+        $params = ['q' => '%' . $saleSearch . '%'];
+    }
+    $stmt = $pdo->prepare(
+        "SELECT SUBSTRING_INDEX(SaleID, '-', 1) AS SaleRef, MIN(CustomerName) AS CustomerName,
+                MIN(CustomerPhone) AS CustomerPhone, COUNT(*) AS LineCount,
+                MIN(TotalAmount) AS TotalAmount, MIN(AmountPaid) AS AmountPaid,
+                MIN(DueBalance) AS DueBalance, MIN(PaymentStatus) AS PaymentStatus, MIN(SaleDate) AS SaleDate
+         FROM PharmacySales {$where}
+         GROUP BY SaleRef ORDER BY SaleDate DESC LIMIT 200"
+    );
+    $stmt->execute($params);
+    $pharmacySales = $stmt->fetchAll();
+
+    if (empty($errors)) {
+        if (isset($_GET['view'])) {
+            $viewSaleRef = preg_replace('/[^A-Za-z0-9]/', '', (string) $_GET['view']);
+            $stmt = $pdo->prepare('SELECT * FROM PharmacySales WHERE SaleID LIKE :pattern ORDER BY SaleID ASC');
+            $stmt->execute(['pattern' => $viewSaleRef . '-%']);
+            $viewSaleLines = $stmt->fetchAll();
+            if (empty($viewSaleLines)) {
+                $viewSaleRef = ''; // Unknown / stale ref — fall back to the list.
+            }
+        } elseif (isset($_GET['new'])) {
+            $posShowForm = true;
+        }
+    }
+}
+
+// --- 10B. Purchases -----------------------------------------------------
+$itemNamesForDatalist = [];
+$purchaseSearch       = '';
+$purchaseOrders       = [];
+$viewPORef            = '';
+$viewPOLines          = [];
+
+if ($section === 'purchases') {
+    $itemNamesForDatalist = $pdo->query('SELECT DISTINCT ItemName FROM Inventory ORDER BY ItemName ASC LIMIT 500')
+        ->fetchAll(PDO::FETCH_COLUMN);
+
+    $purchaseSearch = trim((string) ($_GET['q'] ?? ''));
+    $params         = [];
+    $where          = '';
+    if ($purchaseSearch !== '') {
+        $where  = 'WHERE SupplierName LIKE :q OR PurchaseID LIKE :q';
+        $params = ['q' => '%' . $purchaseSearch . '%'];
+    }
+    $stmt = $pdo->prepare(
+        "SELECT SUBSTRING_INDEX(PurchaseID, '-', 1) AS PORef, MIN(SupplierName) AS SupplierName,
+                MIN(SupplierPhone) AS SupplierPhone, COUNT(*) AS LineCount,
+                MIN(TotalAmount) AS TotalAmount, MIN(AmountPaid) AS AmountPaid,
+                MIN(DueBalance) AS DueBalance, MIN(PurchaseDate) AS PurchaseDate
+         FROM Purchases {$where}
+         GROUP BY PORef ORDER BY PurchaseDate DESC LIMIT 200"
+    );
+    $stmt->execute($params);
+    $purchaseOrders = $stmt->fetchAll();
+
+    if (empty($errors)) {
+        if (isset($_GET['view'])) {
+            $viewPORef = preg_replace('/[^A-Za-z0-9]/', '', (string) $_GET['view']);
+            $stmt = $pdo->prepare('SELECT * FROM Purchases WHERE PurchaseID LIKE :pattern ORDER BY PurchaseID ASC');
+            $stmt->execute(['pattern' => $viewPORef . '-%']);
+            $viewPOLines = $stmt->fetchAll();
+            if (empty($viewPOLines)) {
+                $viewPORef = ''; // Unknown / stale ref — fall back to the list.
+            }
+        } elseif (isset($_GET['new'])) {
+            $purchaseShowForm = true;
+        }
+    }
+}
+
+// --- 10C. Inventory -------------------------------------------------------
+$inventorySearch = '';
+$lowStockOnly    = false;
+$inventoryItems  = [];
+
+if ($section === 'inventory') {
+    $inventorySearch = trim((string) ($_GET['q'] ?? ''));
+    $lowStockOnly    = isset($_GET['low']);
+
+    $conditions = [];
+    $params     = [];
+    if ($inventorySearch !== '') {
+        $conditions[] = '(ItemName LIKE :q OR Category LIKE :q)';
+        $params['q']  = '%' . $inventorySearch . '%';
+    }
+    if ($lowStockOnly) {
+        $conditions[] = 'QuantityInStock <= ReorderLevel';
+    }
+    $where = $conditions !== [] ? 'WHERE ' . implode(' AND ', $conditions) : '';
+
+    $stmt = $pdo->prepare("SELECT * FROM Inventory {$where} ORDER BY ItemName ASC LIMIT 500");
+    $stmt->execute($params);
+    $inventoryItems = $stmt->fetchAll();
+}
+
+// --- 10D. Hub summary (only computed on the landing page) -----------------
+$hubLowStockCount = 0;
+$hubTodaySales    = 0;
+$hubOpenPOCount   = 0;
+
+if ($section === null) {
+    $hubLowStockCount = (int) tdc_scalar($pdo, 'SELECT COUNT(*) FROM Inventory WHERE QuantityInStock <= ReorderLevel');
+    $hubTodaySales    = (int) tdc_scalar($pdo, "SELECT COUNT(DISTINCT SUBSTRING_INDEX(SaleID, '-', 1)) FROM PharmacySales WHERE DATE(SaleDate) = CURDATE()");
+    $hubOpenPOCount   = (int) tdc_scalar($pdo, "SELECT COUNT(DISTINCT SUBSTRING_INDEX(PurchaseID, '-', 1)) FROM Purchases WHERE DueBalance > 0");
+}
+
+// =======================================================================
+// SECTION 11 — View data
+// =======================================================================
+$legalName     = (string) ($_SESSION['userlegalname'] ?? 'User');
+$displayName   = tdc_display_name($legalName);
+$avatarLetters = strtoupper(substr($displayName, 0, 2));
+$csrfToken     = (string) ($_SESSION['csrf_token'] ?? '');
+$currentPage   = basename((string) ($_SERVER['SCRIPT_NAME'] ?? 'pharmacy.php'));
+
+$justSaved   = isset($_GET['success']);
+$justDeleted = isset($_GET['deleted']);
+$justVoided  = isset($_GET['voided']);
+?>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tarey Derma Clinic</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Google+Sans:ital,opsz,wght@0,17..18,400..700;1,17..18,400..700&display=swap" rel="stylesheet">
+<style>
+    :root{
+        --navy: #2E3192;
+        --navy-30: rgba(46,49,146,0.3);
+        --navy-10: rgba(46,49,146,0.08);
+        --navy-55: rgba(46,49,146,0.55);
+        --orange: #F15A24;
+        --white: #ffffff;
+        --border: 2px solid var(--navy);
+        --on-navy-70: rgba(255,255,255,0.7);
+    }
+    *, *::before, *::after{ box-sizing:border-box; margin:0; padding:0; }
+    body{ font-family:'Google Sans', sans-serif; background:var(--white); color:var(--navy); min-height:100vh; }
+    .app-header{ position:relative; z-index:100; }
+    .nav-item{ position:relative; flex-shrink:0; }
+    .utility-bar{ display:flex; align-items:center; justify-content:space-between; background:var(--navy); padding:8px 24px; }
+    .brand-chip{ background:var(--white); display:flex; align-items:center; padding:5px 14px; flex-shrink:0; }
+    .brand-chip img{ height:30px; width:auto; object-fit:contain; display:block; }
+    .utility-right{ display:flex; align-items:center; gap:2px; }
+    .icon-btn{ appearance:none; background:none; border:2px solid transparent; cursor:pointer; display:flex; align-items:center; justify-content:center; width:38px; height:38px; position:relative; color:var(--on-navy-70); transition:color 0.12s; }
+    .icon-btn:hover{ color:var(--white); }
+    .icon-btn svg{ width:20px; height:20px; stroke:currentColor; fill:none; stroke-width:2; stroke-linecap:round; stroke-linejoin:round; }
+    .icon-btn .badge{ position:absolute; top:6px; right:7px; width:7px; height:7px; background:var(--orange); border:2px solid var(--navy); }
+    .nav-item.open > .icon-btn{ color:var(--orange); }
+    .profile-static{ display:flex; align-items:center; gap:9px; padding:6px 8px; font-family:'Google Sans', sans-serif; color:var(--white); }
+    .avatar{ width:30px; height:30px; flex-shrink:0; background:var(--white); color:var(--navy); display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:700; letter-spacing:0.02em; }
+    .profile-name{ font-size:13.5px; font-weight:600; }
+    .menu-bar{ background:var(--white); padding:0 24px; display:flex; justify-content:safe center; overflow-x:auto; overflow-y:hidden; scrollbar-width:thin; scrollbar-color:var(--navy-30) transparent; }
+    .menu-bar::-webkit-scrollbar{ height:4px; }
+    .menu-bar::-webkit-scrollbar-track{ background:transparent; }
+    .menu-bar::-webkit-scrollbar-thumb{ background:var(--navy-30); border-radius:2px; }
+    .menu-bar::-webkit-scrollbar-thumb:hover{ background:var(--navy-55); }
+    .nav-items{ list-style:none; display:flex; align-items:center; gap:4px; flex-wrap:nowrap; flex-shrink:0; }
+    .nav-link{ appearance:none; background:none; border:none; cursor:pointer; display:flex; align-items:center; gap:7px; font-family:'Google Sans', sans-serif; font-size:13.5px; font-weight:600; letter-spacing:0.01em; color:var(--navy); text-decoration:none; padding:12px; white-space:nowrap; flex-shrink:0; transition:color 0.12s; }
+    .nav-link svg{ width:16px; height:16px; fill:var(--navy-55); flex-shrink:0; transition:fill 0.12s; }
+    .nav-link:hover{ color:var(--orange); }
+    .nav-link:hover svg{ fill:var(--orange); }
+    .nav-item.active > .nav-link{ color:var(--navy); box-shadow:inset 0 -2px 0 var(--orange); }
+    .nav-item.active > .nav-link svg{ fill:var(--navy); }
+    .dropdown-menu{ position:absolute; top:calc(100% + 6px); left:0; min-width:220px; background:var(--white); border:var(--border); display:none; flex-direction:column; padding:6px 0; }
+    .nav-item.open > .dropdown-menu{ display:flex; }
+    .dropdown-menu a{ display:block; text-decoration:none; color:var(--navy); font-size:13.5px; font-weight:500; padding:9px 16px; transition:background 0.12s, color 0.12s; }
+    .dropdown-menu a:hover{ background:var(--navy-10); color:var(--orange); }
+    .notif-menu{ right:0; left:auto; min-width:260px; }
+    .notif-menu .notif-title{ padding:10px 16px 8px; font-size:12px; font-weight:700; letter-spacing:0.04em; text-transform:uppercase; color:var(--navy-55); }
+    .notif-empty{ padding:20px 16px 22px; font-size:13px; color:var(--navy-55); text-align:center; }
+    .page-body{ padding:40px 32px; }
+    .welcome-eyebrow{ font-size:11px; font-weight:600; letter-spacing:0.08em; text-transform:uppercase; color:var(--navy-55); margin-bottom:8px; }
+    .welcome-title{ font-size:26px; font-weight:700; color:var(--navy); }
+    .welcome-sub{ font-size:14px; color:var(--navy-55); margin-top:6px; margin-bottom:28px; }
+
+    .error-msg{ display:flex; flex-direction:column; gap:4px; background:var(--white); border:2px solid var(--navy); color:var(--navy); font-size:13px; font-weight:500; padding:14px 16px; margin-bottom:24px; max-width:1200px; }
+    .error-msg .error-title{ display:flex; align-items:center; gap:8px; font-weight:700; }
+    .error-msg svg{ width:16px; height:16px; flex-shrink:0; }
+    .error-msg ul{ list-style:none; padding-left:24px; }
+    .error-msg li::before{ content:"— "; }
+
+    .form-group{ display:flex; flex-direction:column; }
+    .form-group label{ font-size:11px; font-weight:600; letter-spacing:0.06em; text-transform:uppercase; color:var(--navy); margin-bottom:6px; }
+    .form-group input, .form-group select, .form-group textarea{ width:100%; padding:11px 12px; border:2px solid rgba(46,49,146,0.3); font-size:14px; font-family:'Google Sans', sans-serif; color:var(--navy); background:var(--white); outline:none; transition:border-color 0.15s; }
+    .form-group input::placeholder{ color:rgba(46,49,146,0.45); }
+    .form-group input:focus, .form-group select:focus, .form-group textarea:focus{ border-color:var(--orange); }
+    .form-group select{ cursor:pointer; }
+    .form-row{ display:flex; gap:16px; flex-wrap:wrap; }
+    .form-row .form-group{ flex:1; min-width:180px; }
+    .checkbox-row{ display:flex; align-items:center; gap:8px; }
+    .checkbox-row input{ width:auto; }
+    .btn{ padding:11px 22px; font-size:14px; font-weight:600; border:2px solid var(--navy); cursor:pointer; letter-spacing:0.02em; transition:background 0.12s, color 0.12s, border-color 0.12s; text-decoration:none; display:inline-flex; align-items:center; gap:6px; }
+    .btn-primary{ background:var(--navy); color:var(--white); }
+    .btn-primary:hover{ background:var(--orange); border-color:var(--orange); }
+    .btn-secondary{ background:var(--white); color:var(--navy); }
+    .btn-secondary:hover{ color:var(--orange); border-color:var(--orange); }
+
+    .setup-grid{ display:grid; grid-template-columns:repeat(3, minmax(220px,1fr)); gap:20px; max-width:920px; }
+    .setup-card{ display:flex; align-items:flex-start; gap:14px; padding:20px; border:2px solid var(--navy); text-decoration:none; color:var(--navy); transition:background 0.12s, border-color 0.12s; }
+    .setup-card:hover{ background:var(--navy-10); border-color:var(--orange); }
+    .setup-card .setup-icon{ width:32px; height:32px; flex-shrink:0; color:var(--navy-55); }
+    .setup-card .setup-icon svg{ width:100%; height:100%; fill:none; stroke:currentColor; stroke-width:1.6; }
+    .setup-card-title{ font-size:14.5px; font-weight:700; color:var(--navy); margin-bottom:4px; }
+    .setup-card-desc{ font-size:12.5px; color:var(--navy-55); }
+
+    .back-link{ display:inline-flex; align-items:center; gap:6px; font-size:13px; font-weight:600; color:var(--navy-55); text-decoration:none; margin-bottom:16px; }
+    .back-link:hover{ color:var(--orange); }
+
+    .section-toolbar{ display:flex; align-items:center; justify-content:space-between; gap:12px; max-width:1200px; margin-bottom:16px; flex-wrap:wrap; }
+    .filter-box{ display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+    .filter-box input{ padding:10px 12px; border:2px solid rgba(46,49,146,0.3); font-size:13.5px; font-family:'Google Sans',sans-serif; color:var(--navy); min-width:220px; }
+    .filter-box input:focus{ outline:none; border-color:var(--orange); }
+    .filter-box label{ font-size:12.5px; font-weight:600; color:var(--navy-55); display:flex; align-items:center; gap:6px; white-space:nowrap; }
+
+    .data-table-wrap{ max-width:1200px; border:2px solid var(--navy); overflow-x:auto; }
+    .data-table{ width:100%; border-collapse:collapse; }
+    .data-table th, .data-table td{ padding:12px 14px; font-size:13px; text-align:left; border-bottom:1px solid var(--navy-30); white-space:nowrap; }
+    .data-table th{ background:var(--navy-10); font-weight:700; text-transform:uppercase; font-size:11px; letter-spacing:.05em; color:var(--navy); }
+    .data-table tbody tr:last-child td{ border-bottom:none; }
+    .data-table tbody tr:hover{ background:var(--navy-10); }
+    .empty-row td{ text-align:center; padding:28px; color:var(--navy-55); }
+
+    .status-badge{ display:inline-block; padding:3px 9px; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.03em; border:1.5px solid var(--navy); color:var(--navy); white-space:nowrap; }
+    .status-badge.warn{ border-color:var(--orange); color:var(--orange); }
+    .status-badge.danger{ border-color:#c0392b; color:#c0392b; }
+
+    .row-actions{ display:flex; gap:8px; flex-wrap:wrap; }
+    .row-actions form{ display:inline; }
+    .btn-sm{ padding:6px 12px; font-size:12px; font-weight:600; border:2px solid var(--navy); cursor:pointer; background:var(--white); color:var(--navy); text-decoration:none; display:inline-flex; align-items:center; }
+    .btn-sm:hover{ background:var(--orange); border-color:var(--orange); color:var(--white); }
+    .btn-sm.danger{ border-color:#c0392b; color:#c0392b; }
+    .btn-sm.danger:hover{ background:#c0392b; border-color:#c0392b; color:var(--white); }
+
+    .combo{ position:relative; }
+    .combo-list{ position:absolute; top:calc(100% + 4px); left:0; right:0; max-height:220px; overflow-y:auto; background:var(--white); border:2px solid var(--navy); list-style:none; z-index:50; }
+    .combo-list li{ padding:9px 12px; font-size:13px; cursor:pointer; }
+    .combo-list li:hover, .combo-list li.active{ background:var(--navy-10); color:var(--orange); }
+    .combo-empty{ padding:9px 12px; font-size:12.5px; color:var(--navy-55); }
+
+    .line-items-wrap{ max-width:1200px; border:2px solid var(--navy); overflow-x:auto; margin-bottom:16px; }
+    .line-items{ width:100%; border-collapse:collapse; min-width:960px; }
+    .line-items th, .line-items td{ padding:8px 10px; border-bottom:1px solid var(--navy-30); vertical-align:top; }
+    .line-items th{ background:var(--navy-10); font-size:11px; text-transform:uppercase; letter-spacing:.04em; text-align:left; }
+    .line-items input{ width:100%; padding:7px 8px; border:1.5px solid rgba(46,49,146,0.3); font-size:13px; font-family:'Google Sans',sans-serif; color:var(--navy); }
+    .line-items input:focus{ outline:none; border-color:var(--orange); }
+    .remove-line-btn{ background:none; border:none; color:#c0392b; cursor:pointer; font-size:20px; line-height:1; padding:4px; }
+    .add-line-btn{ margin-bottom:20px; }
+    .totals-row{ display:flex; gap:20px; flex-wrap:wrap; max-width:1200px; margin-bottom:20px; }
+    .totals-row .form-group{ min-width:180px; flex:0 1 200px; }
+    .due-display{ font-weight:700; font-size:15px; color:var(--navy); padding:11px 0; }
+    .form-actions{ display:flex; gap:10px; max-width:1200px; }
+
+    .info-grid{ display:grid; grid-template-columns:repeat(auto-fill, minmax(180px, 1fr)); gap:18px 24px; max-width:1200px; margin-bottom:32px; padding:24px; border:2px solid var(--navy); }
+    .info-field .info-label{ font-size:11px; font-weight:700; letter-spacing:0.06em; text-transform:uppercase; color:var(--navy-55); margin-bottom:4px; }
+    .info-field .info-value{ font-size:14.5px; font-weight:600; color:var(--navy); word-break:break-word; }
+    .subsection-title{ font-size:16px; font-weight:700; color:var(--navy); margin-bottom:12px; }
+
+    .modal-overlay{ position:fixed; inset:0; background:rgba(46,49,146,0.35); display:none; align-items:center; justify-content:center; z-index:1000; padding:20px; }
+    .modal-overlay.show{ display:flex; }
+    .modal-box{ background:var(--white); border:2px solid var(--navy); width:100%; max-width:520px; max-height:90vh; overflow-y:auto; }
+    .modal-head{ display:flex; align-items:center; justify-content:space-between; padding:18px 22px; border-bottom:2px solid var(--navy); }
+    .modal-head h3{ font-size:16px; font-weight:700; color:var(--navy); }
+    .modal-close{ appearance:none; background:none; border:none; cursor:pointer; color:var(--navy-55); width:26px; height:26px; }
+    .modal-close:hover{ color:var(--orange); }
+    .modal-close svg{ width:100%; height:100%; }
+    .modal-body{ padding:22px; }
+    .modal-body .form-group{ margin-bottom:16px; }
+    .modal-actions{ display:flex; justify-content:flex-end; gap:10px; margin-top:6px; }
+
+    #js-toast{ position:fixed; bottom:28px; left:50%; transform:translateX(-50%) translateY(20px); display:flex; align-items:center; gap:8px; background:var(--white); border:2px solid var(--navy); color:var(--navy); font-size:13px; font-weight:500; padding:10px 18px; white-space:nowrap; z-index:9999; opacity:0; pointer-events:none; transition:opacity 0.2s ease, transform 0.2s ease; }
+    #js-toast svg{ width:16px; height:16px; flex-shrink:0; }
+    #js-toast.show{ opacity:1; transform:translateX(-50%) translateY(0); }
+
+    .logout-fab{ position:fixed; bottom:20px; right:20px; width:40px; height:40px; border-radius:50%; display:flex; align-items:center; justify-content:center; background:var(--navy); border:2px solid var(--white); cursor:pointer; text-decoration:none; z-index:9999; box-shadow:0 2px 6px rgba(46,49,146,0.35); transition:transform 0.15s ease, background 0.15s ease, box-shadow 0.15s ease; }
+    .logout-fab svg{ width:18px; height:18px; stroke:var(--white); fill:none; stroke-width:2; stroke-linecap:round; stroke-linejoin:round; transition:stroke 0.15s ease; }
+    .logout-fab:hover{ background:var(--orange); transform:scale(1.08); box-shadow:0 4px 10px rgba(241,90,36,0.4); }
+    .logout-fab:active{ transform:scale(0.96); }
+    .logout-fab:focus-visible{ outline:2px solid var(--orange); outline-offset:3px; }
+    .logout-fab::after{ content:'Log Out'; position:absolute; bottom:calc(100% + 8px); right:0; background:var(--navy); color:var(--white); font-family:'Google Sans', sans-serif; font-size:12px; font-weight:600; padding:6px 10px; white-space:nowrap; opacity:0; visibility:hidden; transform:translateY(4px); transition:opacity 0.15s ease, transform 0.15s ease, visibility 0.15s ease; pointer-events:none; }
+    .logout-fab:hover::after, .logout-fab:focus-visible::after{ opacity:1; visibility:visible; transform:translateY(0); }
+
+    @media print{
+        .app-header, .logout-fab, #js-toast, .no-print{ display:none !important; }
+        .page-body{ padding:0; }
+        .info-grid, .data-table-wrap{ max-width:100%; }
+    }
+</style>
+</head>
+<body>
+
+<header class="app-header" id="topnav">
+    <div class="utility-bar">
+        <div class="brand-chip">
+            <img src="../uploads/tareydermacliniclogo.png" alt="Tarey Derma Clinic Logo">
+        </div>
+        <div class="utility-right">
+            <div class="nav-item" data-menu="notifications">
+                <button type="button" class="icon-btn" aria-label="Notifications">
+                    <svg viewBox="0 0 24 24"><path d="M18 16v-5a6 6 0 10-12 0v5l-2 2v1h16v-1l-2-2z"/><path d="M9.5 21a2.5 2.5 0 005 0"/></svg>
+                    <span class="badge"></span>
+                </button>
+                <div class="dropdown-menu notif-menu">
+                    <div class="notif-title">Notifications</div>
+                    <div class="notif-empty">You're all caught up.</div>
+                </div>
+            </div>
+            <div class="profile-static">
+                <div class="avatar"><?= tdc_e($avatarLetters) ?></div>
+                <span class="profile-name"><?= tdc_e($displayName) ?></span>
+            </div>
+        </div>
+    </div>
+
+    <nav class="menu-bar">
+        <ul class="nav-items">
+            <?php foreach (NAV_ITEMS as $item): ?>
+                <li class="nav-item<?= $item['href'] === $currentPage ? ' active' : '' ?>">
+                    <a href="<?= tdc_e($item['href']) ?>" class="nav-link">
+                        <svg viewBox="0 0 20 20"><?= $item['icon'] ?></svg>
+                        <span><?= tdc_e($item['label']) ?></span>
+                    </a>
+                </li>
+            <?php endforeach; ?>
+        </ul>
+    </nav>
+
+    <a href="?logout=1&csrf=<?= urlencode($csrfToken) ?>" class="logout-fab" aria-label="Log Out">
+        <svg viewBox="0 0 20 20"><path d="M8 3H5a2 2 0 00-2 2v10a2 2 0 002 2h3"/><path d="M13 6l4 4-4 4"/><path d="M7 10h10"/></svg>
+    </a>
+</header>
+
+<main class="page-body">
+
+<?php if ($section === null): ?>
+
+    <div class="welcome-eyebrow">Pharmacy</div>
+    <div class="welcome-title">Pharmacy Operations</div>
+    <div class="welcome-sub">Point of sale, supplier purchases, and stock management.</div>
+
+    <div class="setup-grid">
+        <a href="pharmacy.php?section=pos" class="setup-card">
+            <div class="setup-icon"><svg viewBox="0 0 24 24"><path d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293A1 1 0 005.414 17H17"/><circle cx="9" cy="20" r="1"/><circle cx="17" cy="20" r="1"/></svg></div>
+            <div>
+                <div class="setup-card-title">Point of Sale</div>
+                <div class="setup-card-desc"><?= $hubTodaySales ?> sale<?= $hubTodaySales === 1 ? '' : 's' ?> today</div>
+            </div>
+        </a>
+        <a href="pharmacy.php?section=purchases" class="setup-card">
+            <div class="setup-icon"><svg viewBox="0 0 24 24"><path d="M20 7h-3V6a4 4 0 00-8 0v1H6a1 1 0 00-1 1v11a2 2 0 002 2h10a2 2 0 002-2V8a1 1 0 00-1-1zM9 6a3 3 0 016 0v1H9V6z"/></svg></div>
+            <div>
+                <div class="setup-card-title">Purchases</div>
+                <div class="setup-card-desc"><?= $hubOpenPOCount ?> order<?= $hubOpenPOCount === 1 ? '' : 's' ?> with a balance due</div>
+            </div>
+        </a>
+        <a href="pharmacy.php?section=inventory" class="setup-card">
+            <div class="setup-icon"><svg viewBox="0 0 24 24"><path d="M3 7l9-4 9 4-9 4-9-4zm0 0v10l9 4 9-4V7"/><path d="M12 11v10"/></svg></div>
+            <div>
+                <div class="setup-card-title">Inventory</div>
+                <div class="setup-card-desc"><?= $hubLowStockCount ?> item<?= $hubLowStockCount === 1 ? '' : 's' ?> low on stock</div>
+            </div>
+        </a>
+    </div>
+
+<?php else: ?>
+
+    <a href="pharmacy.php" class="back-link no-print">&larr; Back to Pharmacy</a>
+
+    <?php if (!empty($errors)): ?>
+    <div class="error-msg">
+        <div class="error-title">
+            <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm-.75-4.75a.75.75 0 001.5 0v-4.5a.75.75 0 00-1.5 0v4.5zm.75-7a.75.75 0 100 1.5.75.75 0 000-1.5z" clip-rule="evenodd"/></svg>
+            Please fix the following:
+        </div>
+        <ul>
+            <?php foreach ($errors as $err): ?><li><?= tdc_e($err) ?></li><?php endforeach; ?>
+        </ul>
+    </div>
+    <?php endif; ?>
+
+    <?php // ============================================================
+          // POINT OF SALE
+          // ============================================================ ?>
+    <?php if ($section === 'pos'): ?>
+
+        <?php if ($viewSaleRef !== ''): ?>
+        <?php $head = $viewSaleLines[0]; ?>
+        <div class="welcome-title">Sale Receipt — <?= tdc_e($viewSaleRef) ?></div>
+        <div class="welcome-sub"><?= tdc_e(date('Y-m-d H:i', strtotime((string) $head['SaleDate']))) ?></div>
+
+        <div class="info-grid">
+            <div class="info-field"><div class="info-label">Customer</div><div class="info-value"><?= tdc_e($head['CustomerName'] ?: 'Walk-in') ?></div></div>
+            <div class="info-field"><div class="info-label">Phone</div><div class="info-value"><?= tdc_e($head['CustomerPhone'] ?: '—') ?></div></div>
+            <div class="info-field"><div class="info-label">Payment Status</div><div class="info-value"><span class="status-badge<?= $head['PaymentStatus'] === 'Unpaid' ? ' danger' : ($head['PaymentStatus'] === 'Partial' ? ' warn' : '') ?>"><?= tdc_e($head['PaymentStatus']) ?></span></div></div>
+            <div class="info-field"><div class="info-label">Total</div><div class="info-value"><?= number_format((float) $head['TotalAmount'], 2) ?></div></div>
+            <div class="info-field"><div class="info-label">Paid</div><div class="info-value"><?= number_format((float) $head['AmountPaid'], 2) ?></div></div>
+            <div class="info-field"><div class="info-label">Due</div><div class="info-value"><?= number_format((float) $head['DueBalance'], 2) ?></div></div>
+        </div>
+
+        <div class="subsection-title">Items</div>
+        <div class="data-table-wrap" style="margin-bottom:24px;">
+            <table class="data-table">
+                <thead><tr><th>Item</th><th>Quantity</th><th>Unit Price</th><th>Line Total</th></tr></thead>
+                <tbody>
+                    <?php foreach ($viewSaleLines as $l): ?>
+                    <tr>
+                        <td><?= tdc_e($l['ItemName']) ?></td>
+                        <td><?= (int) $l['Quantity'] ?></td>
+                        <td><?= number_format((float) $l['UnitPrice'], 2) ?></td>
+                        <td><?= number_format((float) $l['LineTotal'], 2) ?></td>
+                    </tr>
+                    <?php endforeach; ?>
+                </tbody>
+            </table>
+        </div>
+
+        <div class="row-actions no-print">
+            <button type="button" class="btn btn-secondary" onclick="window.print()">Print Receipt</button>
+            <form method="POST" action="pharmacy.php?section=pos" onsubmit="return confirm('Void this sale? Stock will be restored. This cannot be undone.');">
+                <input type="hidden" name="csrf_token" value="<?= tdc_e($csrfToken) ?>">
+                <input type="hidden" name="form_action" value="void">
+                <input type="hidden" name="SaleRef" value="<?= tdc_e($viewSaleRef) ?>">
+                <button type="submit" class="btn-sm danger">Void Sale</button>
+            </form>
+        </div>
+
+        <?php elseif ($posShowForm): ?>
+
+        <div class="welcome-title">New Sale</div>
+        <div class="welcome-sub">Search for items, set quantities, and take payment.</div>
+
+        <form id="saleForm" method="POST" action="pharmacy.php?section=pos">
+            <input type="hidden" name="csrf_token" value="<?= tdc_e($csrfToken) ?>">
+            <input type="hidden" name="form_action" value="save">
+
+            <div class="form-row" style="max-width:1200px;margin-bottom:16px;">
+                <div class="form-group"><label for="sf_CustomerName">Customer Name (optional)</label>
+                    <input type="text" id="sf_CustomerName" name="CustomerName" value="<?= tdc_e($oldSale['CustomerName']) ?>" placeholder="Walk-in"></div>
+                <div class="form-group"><label for="sf_CustomerPhone">Customer Phone (optional)</label>
+                    <input type="text" id="sf_CustomerPhone" name="CustomerPhone" value="<?= tdc_e($oldSale['CustomerPhone']) ?>"></div>
+            </div>
+
+            <div class="line-items-wrap">
+                <table class="line-items" id="lineItemsTable">
+                    <thead><tr><th style="width:40px;">#</th><th>Item</th><th style="width:110px;">Qty</th><th style="width:130px;">Unit Price</th><th style="width:130px;">Line Total</th><th style="width:36px;"></th></tr></thead>
+                    <tbody id="lineItemsBody">
+                    <?php
+                    $saleLineCount = max(1, count($oldSale['ItemID']));
+                    for ($i = 0; $i < $saleLineCount; $i++):
+                        $itemId = $oldSale['ItemID'][$i] ?? '';
+                        $label  = '';
+                        foreach ($inventoryForCombo as $it) {
+                            if ((string) $it['ItemID'] === (string) $itemId) {
+                                $label = $it['ItemName'] . ' (' . (int) $it['QuantityInStock'] . ' in stock)';
+                                break;
+                            }
+                        }
+                    ?>
+                        <tr class="line-item-row">
+                            <td class="line-no"><?= $i + 1 ?></td>
+                            <td>
+                                <div class="combo" data-combo>
+                                    <input type="hidden" name="ItemID[]" class="item-id-input" value="<?= tdc_e((string) $itemId) ?>">
+                                    <input type="text" class="combo-input item-search-input" placeholder="Search item..." autocomplete="off" value="<?= tdc_e($label) ?>">
+                                    <ul class="combo-list item-combo-list" hidden></ul>
+                                </div>
+                            </td>
+                            <td><input type="number" min="1" name="Quantity[]" class="qty-input" value="<?= tdc_e($oldSale['Quantity'][$i] ?? '1') ?>"></td>
+                            <td><input type="number" step="0.01" min="0" name="UnitPrice[]" class="price-input" value="<?= tdc_e($oldSale['UnitPrice'][$i] ?? '') ?>"></td>
+                            <td class="line-total-display">0.00</td>
+                            <td><button type="button" class="remove-line-btn" title="Remove line">&times;</button></td>
+                        </tr>
+                    <?php endfor; ?>
+                    </tbody>
+                </table>
+            </div>
+            <button type="button" class="btn btn-secondary add-line-btn" id="addLineBtn">+ Add Item</button>
+
+            <div class="totals-row">
+                <div class="form-group"><label>Total</label><div class="due-display" id="sf_TotalDisplay">0.00</div></div>
+                <div class="form-group"><label for="sf_AmountPaid">Amount Paid</label>
+                    <input type="number" step="0.01" min="0" id="sf_AmountPaid" name="AmountPaid" value="<?= tdc_e($oldSale['AmountPaid']) ?>" placeholder="Defaults to full total"></div>
+                <div class="form-group"><label>Due</label><div class="due-display" id="sf_DueDisplay">0.00</div></div>
+            </div>
+
+            <div class="form-actions">
+                <a href="pharmacy.php?section=pos" class="btn btn-secondary">Cancel</a>
+                <button type="submit" class="btn btn-primary">Complete Sale</button>
+            </div>
+        </form>
+
+        <?php else: ?>
+
+        <div class="welcome-title">Point of Sale</div>
+        <div class="welcome-sub">Over-the-counter sales, drawn directly from Inventory stock.</div>
+
+        <div class="section-toolbar">
+            <form method="GET" action="pharmacy.php" class="filter-box">
+                <input type="hidden" name="section" value="pos">
+                <input type="text" name="q" placeholder="Search by customer or ref..." value="<?= tdc_e($saleSearch) ?>">
+                <button type="submit" class="btn btn-secondary">Search</button>
+            </form>
+            <a href="pharmacy.php?section=pos&new=1" class="btn btn-primary">+ New Sale</a>
+        </div>
+
+        <div class="data-table-wrap">
+            <table class="data-table">
+                <thead><tr><th>Sale Ref</th><th>Customer</th><th>Items</th><th>Total</th><th>Paid</th><th>Due</th><th>Status</th><th>Date</th><th>Actions</th></tr></thead>
+                <tbody>
+                    <?php if (empty($pharmacySales)): ?>
+                    <tr class="empty-row"><td colspan="9">No sales found<?= $saleSearch !== '' ? ' for "' . tdc_e($saleSearch) . '"' : '' ?>.</td></tr>
+                    <?php else: foreach ($pharmacySales as $s): ?>
+                    <tr>
+                        <td><?= tdc_e($s['SaleRef']) ?></td>
+                        <td><?= tdc_e($s['CustomerName'] ?: 'Walk-in') ?></td>
+                        <td><?= (int) $s['LineCount'] ?></td>
+                        <td><?= number_format((float) $s['TotalAmount'], 2) ?></td>
+                        <td><?= number_format((float) $s['AmountPaid'], 2) ?></td>
+                        <td><span class="status-badge<?= (float) $s['DueBalance'] > 0 ? ' danger' : '' ?>"><?= number_format((float) $s['DueBalance'], 2) ?></span></td>
+                        <td><span class="status-badge<?= $s['PaymentStatus'] === 'Unpaid' ? ' danger' : ($s['PaymentStatus'] === 'Partial' ? ' warn' : '') ?>"><?= tdc_e($s['PaymentStatus']) ?></span></td>
+                        <td><?= tdc_e(date('Y-m-d', strtotime((string) $s['SaleDate']))) ?></td>
+                        <td>
+                            <div class="row-actions">
+                                <a href="pharmacy.php?section=pos&view=<?= urlencode($s['SaleRef']) ?>" class="btn-sm">View</a>
+                                <form method="POST" action="pharmacy.php?section=pos" onsubmit="return confirm('Void this sale? Stock will be restored. This cannot be undone.');">
+                                    <input type="hidden" name="csrf_token" value="<?= tdc_e($csrfToken) ?>">
+                                    <input type="hidden" name="form_action" value="void">
+                                    <input type="hidden" name="SaleRef" value="<?= tdc_e($s['SaleRef']) ?>">
+                                    <button type="submit" class="btn-sm danger">Void</button>
+                                </form>
+                            </div>
+                        </td>
+                    </tr>
+                    <?php endforeach; endif; ?>
+                </tbody>
+            </table>
+        </div>
+
+        <?php endif; ?>
+
+    <?php // ============================================================
+          // PURCHASES
+          // ============================================================ ?>
+    <?php elseif ($section === 'purchases'): ?>
+
+        <?php if ($viewPORef !== ''): ?>
+        <?php $head = $viewPOLines[0]; ?>
+        <div class="welcome-title">Purchase Order — <?= tdc_e($viewPORef) ?></div>
+        <div class="welcome-sub"><?= tdc_e(date('Y-m-d H:i', strtotime((string) $head['PurchaseDate']))) ?></div>
+
+        <div class="info-grid">
+            <div class="info-field"><div class="info-label">Supplier</div><div class="info-value"><?= tdc_e($head['SupplierName']) ?></div></div>
+            <div class="info-field"><div class="info-label">Phone</div><div class="info-value"><?= tdc_e($head['SupplierPhone'] ?: '—') ?></div></div>
+            <div class="info-field"><div class="info-label">Total</div><div class="info-value"><?= number_format((float) $head['TotalAmount'], 2) ?></div></div>
+            <div class="info-field"><div class="info-label">Paid</div><div class="info-value"><?= number_format((float) $head['AmountPaid'], 2) ?></div></div>
+            <div class="info-field"><div class="info-label">Due</div><div class="info-value"><?= number_format((float) $head['DueBalance'], 2) ?></div></div>
+        </div>
+
+        <div class="subsection-title">Items Received</div>
+        <div class="data-table-wrap" style="margin-bottom:24px;">
+            <table class="data-table">
+                <thead><tr><th>Item</th><th>Category</th><th>Qty</th><th>Unit</th><th>Unit Cost</th><th>Selling Price</th><th>Expiry</th></tr></thead>
+                <tbody>
+                    <?php foreach ($viewPOLines as $l): ?>
+                    <tr>
+                        <td><?= tdc_e($l['ItemName']) ?></td>
+                        <td><?= tdc_e($l['Category'] ?: '—') ?></td>
+                        <td><?= (int) $l['Quantity'] ?></td>
+                        <td><?= tdc_e($l['PurchaseUnit'] ?: '—') ?></td>
+                        <td><?= number_format((float) $l['UnitPrice'], 2) ?></td>
+                        <td><?= number_format((float) $l['SellingPrice'], 2) ?></td>
+                        <td><?= tdc_e($l['ExpiryDate'] ? date('Y-m-d', strtotime((string) $l['ExpiryDate'])) : '—') ?></td>
+                    </tr>
+                    <?php endforeach; ?>
+                </tbody>
+            </table>
+        </div>
+
+        <div class="row-actions no-print">
+            <button type="button" class="btn btn-secondary" onclick="window.print()">Print</button>
+            <form method="POST" action="pharmacy.php?section=purchases" onsubmit="return confirm('Void this purchase order? Stock added by it will be reversed. This cannot be undone.');">
+                <input type="hidden" name="csrf_token" value="<?= tdc_e($csrfToken) ?>">
+                <input type="hidden" name="form_action" value="void">
+                <input type="hidden" name="PORef" value="<?= tdc_e($viewPORef) ?>">
+                <button type="submit" class="btn-sm danger">Void Purchase Order</button>
+            </form>
+        </div>
+
+        <?php elseif ($purchaseShowForm): ?>
+
+        <div class="welcome-title">New Purchase Order</div>
+        <div class="welcome-sub">Receiving stock from a supplier updates Inventory automatically.</div>
+
+        <datalist id="existingItemNames">
+            <?php foreach ($itemNamesForDatalist as $name): ?><option value="<?= tdc_e($name) ?>"><?php endforeach; ?>
+        </datalist>
+
+        <form id="purchaseForm" method="POST" action="pharmacy.php?section=purchases">
+            <input type="hidden" name="csrf_token" value="<?= tdc_e($csrfToken) ?>">
+            <input type="hidden" name="form_action" value="save">
+
+            <div class="form-row" style="max-width:1200px;margin-bottom:16px;">
+                <div class="form-group"><label for="pof_SupplierName">Supplier Name</label>
+                    <input type="text" id="pof_SupplierName" name="SupplierName" value="<?= tdc_e($oldPurchase['SupplierName']) ?>" required></div>
+                <div class="form-group"><label for="pof_SupplierPhone">Supplier Phone</label>
+                    <input type="text" id="pof_SupplierPhone" name="SupplierPhone" value="<?= tdc_e($oldPurchase['SupplierPhone']) ?>"></div>
+            </div>
+
+            <div class="line-items-wrap">
+                <table class="line-items" id="lineItemsTable">
+                    <thead><tr><th style="width:40px;">#</th><th>Item Name</th><th>Category</th><th style="width:80px;">Qty</th><th>Purchase Unit</th><th style="width:90px;">Conv.</th><th>Sales Unit</th><th style="width:100px;">Unit Cost</th><th style="width:100px;">Sell Price</th><th style="width:130px;">Expiry</th><th style="width:36px;"></th></tr></thead>
+                    <tbody id="lineItemsBody">
+                    <?php
+                    $poLineCount = max(1, count($oldPurchase['ItemName']));
+                    for ($i = 0; $i < $poLineCount; $i++):
+                    ?>
+                        <tr class="line-item-row">
+                            <td class="line-no"><?= $i + 1 ?></td>
+                            <td><input type="text" list="existingItemNames" name="ItemName[]" value="<?= tdc_e($oldPurchase['ItemName'][$i] ?? '') ?>" placeholder="e.g. Paracetamol 500mg"></td>
+                            <td><input type="text" name="Category[]" value="<?= tdc_e($oldPurchase['Category'][$i] ?? '') ?>" placeholder="e.g. Analgesic"></td>
+                            <td><input type="number" min="1" name="Quantity[]" value="<?= tdc_e($oldPurchase['Quantity'][$i] ?? '') ?>"></td>
+                            <td><input type="text" name="PurchaseUnit[]" value="<?= tdc_e($oldPurchase['PurchaseUnit'][$i] ?? '') ?>" placeholder="e.g. Box"></td>
+                            <td><input type="number" step="0.01" min="0.01" name="ConversionFactor[]" value="<?= tdc_e($oldPurchase['ConversionFactor'][$i] ?? '1.00') ?>"></td>
+                            <td><input type="text" name="SalesUnit[]" value="<?= tdc_e($oldPurchase['SalesUnit'][$i] ?? '') ?>" placeholder="e.g. Tablet"></td>
+                            <td><input type="number" step="0.01" min="0" name="UnitPrice[]" value="<?= tdc_e($oldPurchase['UnitPrice'][$i] ?? '') ?>"></td>
+                            <td><input type="number" step="0.01" min="0" name="SellingPrice[]" value="<?= tdc_e($oldPurchase['SellingPrice'][$i] ?? '') ?>"></td>
+                            <td><input type="date" name="ExpiryDate[]" value="<?= tdc_e($oldPurchase['ExpiryDate'][$i] ?? '') ?>"></td>
+                            <td><button type="button" class="remove-line-btn" title="Remove line">&times;</button></td>
+                        </tr>
+                    <?php endfor; ?>
+                    </tbody>
+                </table>
+            </div>
+            <button type="button" class="btn btn-secondary add-line-btn" id="addLineBtn">+ Add Item</button>
+
+            <div class="totals-row">
+                <div class="form-group"><label>Total Cost</label><div class="due-display" id="pof_TotalDisplay">0.00</div></div>
+                <div class="form-group"><label for="pof_AmountPaid">Amount Paid to Supplier</label>
+                    <input type="number" step="0.01" min="0" id="pof_AmountPaid" name="AmountPaid" value="<?= tdc_e($oldPurchase['AmountPaid']) ?>"></div>
+                <div class="form-group"><label>Due to Supplier</label><div class="due-display" id="pof_DueDisplay">0.00</div></div>
+            </div>
+
+            <div class="form-actions">
+                <a href="pharmacy.php?section=purchases" class="btn btn-secondary">Cancel</a>
+                <button type="submit" class="btn btn-primary">Save Purchase Order</button>
+            </div>
+        </form>
+
+        <?php else: ?>
+
+        <div class="welcome-title">Purchases</div>
+        <div class="welcome-sub">Purchase orders from suppliers. Saving one adds the received stock to Inventory.</div>
+
+        <div class="section-toolbar">
+            <form method="GET" action="pharmacy.php" class="filter-box">
+                <input type="hidden" name="section" value="purchases">
+                <input type="text" name="q" placeholder="Search by supplier or ref..." value="<?= tdc_e($purchaseSearch) ?>">
+                <button type="submit" class="btn btn-secondary">Search</button>
+            </form>
+            <a href="pharmacy.php?section=purchases&new=1" class="btn btn-primary">+ New Purchase Order</a>
+        </div>
+
+        <div class="data-table-wrap">
+            <table class="data-table">
+                <thead><tr><th>PO Ref</th><th>Supplier</th><th>Items</th><th>Total</th><th>Paid</th><th>Due</th><th>Date</th><th>Actions</th></tr></thead>
+                <tbody>
+                    <?php if (empty($purchaseOrders)): ?>
+                    <tr class="empty-row"><td colspan="8">No purchase orders found<?= $purchaseSearch !== '' ? ' for "' . tdc_e($purchaseSearch) . '"' : '' ?>.</td></tr>
+                    <?php else: foreach ($purchaseOrders as $po): ?>
+                    <tr>
+                        <td><?= tdc_e($po['PORef']) ?></td>
+                        <td><?= tdc_e($po['SupplierName']) ?></td>
+                        <td><?= (int) $po['LineCount'] ?></td>
+                        <td><?= number_format((float) $po['TotalAmount'], 2) ?></td>
+                        <td><?= number_format((float) $po['AmountPaid'], 2) ?></td>
+                        <td><span class="status-badge<?= (float) $po['DueBalance'] > 0 ? ' danger' : '' ?>"><?= number_format((float) $po['DueBalance'], 2) ?></span></td>
+                        <td><?= tdc_e(date('Y-m-d', strtotime((string) $po['PurchaseDate']))) ?></td>
+                        <td>
+                            <div class="row-actions">
+                                <a href="pharmacy.php?section=purchases&view=<?= urlencode($po['PORef']) ?>" class="btn-sm">View</a>
+                                <form method="POST" action="pharmacy.php?section=purchases" onsubmit="return confirm('Void this purchase order? Stock added by it will be reversed. This cannot be undone.');">
+                                    <input type="hidden" name="csrf_token" value="<?= tdc_e($csrfToken) ?>">
+                                    <input type="hidden" name="form_action" value="void">
+                                    <input type="hidden" name="PORef" value="<?= tdc_e($po['PORef']) ?>">
+                                    <button type="submit" class="btn-sm danger">Void</button>
+                                </form>
+                            </div>
+                        </td>
+                    </tr>
+                    <?php endforeach; endif; ?>
+                </tbody>
+            </table>
+        </div>
+
+        <?php endif; ?>
+
+    <?php // ============================================================
+          // INVENTORY
+          // ============================================================ ?>
+    <?php elseif ($section === 'inventory'): ?>
+
+        <div class="welcome-title">Inventory</div>
+        <div class="welcome-sub">Stock levels, pricing, and reorder thresholds for pharmacy items.</div>
+
+        <div class="section-toolbar">
+            <form method="GET" action="pharmacy.php" class="filter-box">
+                <input type="hidden" name="section" value="inventory">
+                <input type="text" name="q" placeholder="Search by name or category..." value="<?= tdc_e($inventorySearch) ?>">
+                <label><input type="checkbox" name="low" value="1" <?= $lowStockOnly ? 'checked' : '' ?> onchange="this.form.submit()"> Low stock only</label>
+                <button type="submit" class="btn btn-secondary">Search</button>
+            </form>
+            <button type="button" id="addItemBtn" class="btn btn-primary">+ Add Item</button>
+        </div>
+
+        <div class="data-table-wrap">
+            <table class="data-table">
+                <thead><tr><th>Item ID</th><th>Category</th><th>Name</th><th>Stock</th><th>Unit</th><th>Selling Price</th><th>Reorder Level</th><th>Expiry</th><th>Actions</th></tr></thead>
+                <tbody>
+                    <?php if (empty($inventoryItems)): ?>
+                    <tr class="empty-row"><td colspan="9">No inventory items found<?= $inventorySearch !== '' ? ' for "' . tdc_e($inventorySearch) . '"' : '' ?>.</td></tr>
+                    <?php else: foreach ($inventoryItems as $item):
+                        $isLow = (int) $item['QuantityInStock'] <= (int) $item['ReorderLevel'];
+                        $expiryTs = $item['ExpiryDate'] ? strtotime((string) $item['ExpiryDate']) : null;
+                        $isExpired = $expiryTs !== null && $expiryTs < strtotime('today');
+                        $isExpiringSoon = $expiryTs !== null && !$isExpired && $expiryTs <= strtotime('+30 days');
+                    ?>
+                    <tr>
+                        <td><?= tdc_e($item['ItemID']) ?></td>
+                        <td><?= tdc_e($item['Category'] ?: '—') ?></td>
+                        <td><?= tdc_e($item['ItemName']) ?></td>
+                        <td><?= (int) $item['QuantityInStock'] ?> <?php if ($isLow): ?><span class="status-badge danger">Low</span><?php endif; ?></td>
+                        <td><?= tdc_e($item['SalesUnit'] ?: '—') ?></td>
+                        <td><?= number_format((float) $item['SellingPrice'], 2) ?></td>
+                        <td><?= (int) $item['ReorderLevel'] ?></td>
+                        <td>
+                            <?= $item['ExpiryDate'] ? tdc_e(date('Y-m-d', $expiryTs)) : '—' ?>
+                            <?php if ($isExpired): ?><span class="status-badge danger">Expired</span>
+                            <?php elseif ($isExpiringSoon): ?><span class="status-badge warn">Expiring Soon</span><?php endif; ?>
+                        </td>
+                        <td>
+                            <div class="row-actions">
+                                <button type="button" class="btn-sm edit-item-btn"
+                                    data-id="<?= tdc_e($item['ItemID']) ?>"
+                                    data-name="<?= tdc_e($item['ItemName']) ?>"
+                                    data-category="<?= tdc_e((string) $item['Category']) ?>"
+                                    data-stock="<?= tdc_e((string) $item['QuantityInStock']) ?>"
+                                    data-unit="<?= tdc_e((string) $item['SalesUnit']) ?>"
+                                    data-price="<?= tdc_e((string) $item['SellingPrice']) ?>"
+                                    data-reorder="<?= tdc_e((string) $item['ReorderLevel']) ?>"
+                                    data-expiry="<?= tdc_e((string) $item['ExpiryDate']) ?>">Edit</button>
+                                <form method="POST" action="pharmacy.php?section=inventory" onsubmit="return confirm('Delete this item? This cannot be undone.');">
+                                    <input type="hidden" name="csrf_token" value="<?= tdc_e($csrfToken) ?>">
+                                    <input type="hidden" name="form_action" value="delete">
+                                    <input type="hidden" name="ItemID" value="<?= tdc_e($item['ItemID']) ?>">
+                                    <button type="submit" class="btn-sm danger">Delete</button>
+                                </form>
+                            </div>
+                        </td>
+                    </tr>
+                    <?php endforeach; endif; ?>
+                </tbody>
+            </table>
+        </div>
+
+        <div class="modal-overlay" id="itemModalOverlay">
+            <div class="modal-box">
+                <div class="modal-head">
+                    <h3 id="itemModalTitle">Add Item</h3>
+                    <button type="button" class="modal-close" id="itemModalCloseBtn" aria-label="Close">
+                        <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"/></svg>
+                    </button>
+                </div>
+                <form id="itemForm" method="POST" action="pharmacy.php?section=inventory">
+                    <div class="modal-body">
+                        <input type="hidden" name="csrf_token" value="<?= tdc_e($csrfToken) ?>">
+                        <input type="hidden" name="form_action" value="save">
+                        <input type="hidden" name="ItemID" id="if_ItemID" value="">
+
+                        <div class="form-group"><label for="if_ItemName">Item Name</label>
+                            <input type="text" id="if_ItemName" name="ItemName" required></div>
+
+                        <div class="form-row">
+                            <div class="form-group"><label for="if_Category">Category</label>
+                                <input type="text" id="if_Category" name="Category"></div>
+                            <div class="form-group"><label for="if_SalesUnit">Sales Unit</label>
+                                <input type="text" id="if_SalesUnit" name="SalesUnit" placeholder="e.g. Tablet"></div>
+                        </div>
+
+                        <div class="form-row">
+                            <div class="form-group"><label for="if_QuantityInStock">Quantity In Stock</label>
+                                <input type="number" min="0" id="if_QuantityInStock" name="QuantityInStock" required></div>
+                            <div class="form-group"><label for="if_ReorderLevel">Reorder Level</label>
+                                <input type="number" min="0" id="if_ReorderLevel" name="ReorderLevel" value="10"></div>
+                        </div>
+
+                        <div class="form-row">
+                            <div class="form-group"><label for="if_SellingPrice">Selling Price</label>
+                                <input type="number" step="0.01" min="0" id="if_SellingPrice" name="SellingPrice"></div>
+                            <div class="form-group"><label for="if_ExpiryDate">Expiry Date</label>
+                                <input type="date" id="if_ExpiryDate" name="ExpiryDate"></div>
+                        </div>
+
+                        <div class="modal-actions">
+                            <button type="button" class="btn btn-secondary" id="itemModalCancelBtn">Cancel</button>
+                            <button type="submit" class="btn btn-primary">Save Item</button>
+                        </div>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+    <?php endif; ?>
+
+<?php endif; ?>
+
+</main>
+
+<div id="js-toast" role="alert" aria-live="assertive">
+    <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.03-9.78a.75.75 0 00-1.06-1.06L8.75 10.44l-1.72-1.72a.75.75 0 00-1.06 1.06l2.25 2.25a.75.75 0 001.06 0l4.75-4.75z" clip-rule="evenodd"/></svg>
+    <span id="js-toast-msg"></span>
+</div>
+
+<script>
+(function(){
+    const nav = document.getElementById('topnav');
+    const items = Array.from(nav.querySelectorAll('.nav-item[data-menu]'));
+    function closeAll(except){ items.forEach(function(item){ if(item !== except){ item.classList.remove('open'); } }); }
+    items.forEach(function(item){
+        const trigger = item.querySelector('.icon-btn');
+        if(!trigger) return;
+        trigger.addEventListener('click', function(e){
+            e.stopPropagation();
+            const isOpen = item.classList.contains('open');
+            closeAll(item);
+            item.classList.toggle('open', !isOpen);
+        });
+    });
+    document.addEventListener('click', function(){ closeAll(null); });
+    document.addEventListener('keydown', function(e){ if(e.key === 'Escape'){ closeAll(null); } });
+})();
+
+let toastTimer = null;
+function showToast(message){
+    const toast = document.getElementById('js-toast');
+    document.getElementById('js-toast-msg').textContent = message;
+    clearTimeout(toastTimer);
+    toast.classList.add('show');
+    toastTimer = setTimeout(() => { toast.classList.remove('show'); }, 3000);
+}
+
+/**
+ * Generic search combobox: filters an in-memory option list as the
+ * user types, with click + keyboard (Up/Down/Enter/Escape) selection.
+ * onSelect receives the matched option object for callers that need
+ * to auto-fill related fields (e.g. POS auto-filling price/stock).
+ */
+function initComboBox(hiddenIdInput, searchInput, listEl, options, onSelect){
+    let activeIndex = -1;
+    let currentMatches = [];
+
+    function render(matches){
+        currentMatches = matches;
+        activeIndex = -1;
+        listEl.innerHTML = '';
+        if (matches.length === 0){
+            const li = document.createElement('li');
+            li.className = 'combo-empty';
+            li.textContent = 'No matching items.';
+            listEl.appendChild(li);
+        } else {
+            matches.slice(0, 30).forEach(function(opt){
+                const li = document.createElement('li');
+                li.textContent = opt.label;
+                li.addEventListener('mousedown', function(e){ e.preventDefault(); select(opt); });
+                listEl.appendChild(li);
+            });
+        }
+        listEl.hidden = false;
+    }
+
+    function select(opt){
+        hiddenIdInput.value = opt.id;
+        searchInput.value = opt.label;
+        listEl.hidden = true;
+        if (typeof onSelect === 'function') onSelect(opt);
+    }
+
+    function highlight(delta){
+        const liList = Array.from(listEl.querySelectorAll('li:not(.combo-empty)'));
+        if (liList.length === 0) return;
+        activeIndex = (activeIndex + delta + liList.length) % liList.length;
+        liList.forEach(function(li, i){ li.classList.toggle('active', i === activeIndex); });
+        liList[activeIndex].scrollIntoView({ block: 'nearest' });
+    }
+
+    searchInput.addEventListener('input', function(){
+        hiddenIdInput.value = '';
+        const term = searchInput.value.trim().toLowerCase();
+        if (term === ''){ listEl.hidden = true; return; }
+        render(options.filter(function(o){ return o.label.toLowerCase().indexOf(term) !== -1; }));
+    });
+
+    searchInput.addEventListener('focus', function(){
+        if (searchInput.value.trim() !== '' && hiddenIdInput.value === ''){
+            render(options.filter(function(o){ return o.label.toLowerCase().indexOf(searchInput.value.trim().toLowerCase()) !== -1; }));
+        }
+    });
+
+    searchInput.addEventListener('keydown', function(e){
+        if (listEl.hidden) return;
+        if (e.key === 'ArrowDown'){ e.preventDefault(); highlight(1); }
+        else if (e.key === 'ArrowUp'){ e.preventDefault(); highlight(-1); }
+        else if (e.key === 'Enter'){
+            if (activeIndex >= 0 && currentMatches[activeIndex]){ e.preventDefault(); select(currentMatches[activeIndex]); }
+        } else if (e.key === 'Escape'){ listEl.hidden = true; }
+    });
+
+    document.addEventListener('click', function(e){
+        if (!searchInput.contains(e.target) && !listEl.contains(e.target)) listEl.hidden = true;
+    });
+}
+
+<?php if ($section === 'pos' && $posShowForm): ?>
+(function(){
+    const items = <?= json_encode(array_map(static function ($it) {
+        return [
+            'id'    => $it['ItemID'],
+            'label' => $it['ItemName'] . ' (' . (int) $it['QuantityInStock'] . ' in stock)',
+            'price' => (float) $it['SellingPrice'],
+            'stock' => (int) $it['QuantityInStock'],
+        ];
+    }, $inventoryForCombo), JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>;
+
+    const tbody = document.getElementById('lineItemsBody');
+
+    function wireRow(row){
+        const hiddenId  = row.querySelector('.item-id-input');
+        const search    = row.querySelector('.item-search-input');
+        const list      = row.querySelector('.item-combo-list');
+        const qtyInput  = row.querySelector('.qty-input');
+        const priceInput = row.querySelector('.price-input');
+
+        initComboBox(hiddenId, search, list, items, function(opt){
+            priceInput.value = opt.price.toFixed(2);
+            qtyInput.max = opt.stock;
+            if (parseInt(qtyInput.value || '1', 10) > opt.stock) qtyInput.value = opt.stock;
+            recalcAll();
+        });
+
+        [qtyInput, priceInput].forEach(function(el){ el.addEventListener('input', recalcAll); });
+
+        row.querySelector('.remove-line-btn').addEventListener('click', function(){
+            if (tbody.querySelectorAll('.line-item-row').length > 1){ row.remove(); renumber(); recalcAll(); }
+        });
+    }
+
+    function renumber(){
+        tbody.querySelectorAll('.line-item-row').forEach(function(row, i){ row.querySelector('.line-no').textContent = i + 1; });
+    }
+
+    function recalcAll(){
+        let total = 0;
+        tbody.querySelectorAll('.line-item-row').forEach(function(row){
+            const qty = parseFloat(row.querySelector('.qty-input').value) || 0;
+            const price = parseFloat(row.querySelector('.price-input').value) || 0;
+            const lineTotal = qty * price;
+            row.querySelector('.line-total-display').textContent = lineTotal.toFixed(2);
+            total += lineTotal;
+        });
+        document.getElementById('sf_TotalDisplay').textContent = total.toFixed(2);
+        const paidInput = document.getElementById('sf_AmountPaid');
+        const paid = paidInput.value !== '' ? (parseFloat(paidInput.value) || 0) : total;
+        document.getElementById('sf_DueDisplay').textContent = (total - paid).toFixed(2);
+    }
+
+    tbody.querySelectorAll('.line-item-row').forEach(wireRow);
+    document.getElementById('sf_AmountPaid').addEventListener('input', recalcAll);
+
+    document.getElementById('addLineBtn').addEventListener('click', function(){
+        const template = tbody.querySelector('.line-item-row').cloneNode(true);
+        template.querySelector('.item-id-input').value = '';
+        template.querySelector('.item-search-input').value = '';
+        template.querySelector('.qty-input').value = '1';
+        template.querySelector('.qty-input').removeAttribute('max');
+        template.querySelector('.price-input').value = '';
+        template.querySelector('.line-total-display').textContent = '0.00';
+        tbody.appendChild(template);
+        wireRow(template);
+        renumber();
+    });
+
+    recalcAll();
+})();
+<?php endif; ?>
+
+<?php if ($section === 'purchases' && $purchaseShowForm): ?>
+(function(){
+    const tbody = document.getElementById('lineItemsBody');
+
+    function renumber(){
+        tbody.querySelectorAll('.line-item-row').forEach(function(row, i){ row.querySelector('.line-no').textContent = i + 1; });
+    }
+
+    function recalcAll(){
+        let total = 0;
+        tbody.querySelectorAll('.line-item-row').forEach(function(row){
+            const qty = parseFloat(row.querySelector('input[name="Quantity[]"]').value) || 0;
+            const price = parseFloat(row.querySelector('input[name="UnitPrice[]"]').value) || 0;
+            total += qty * price;
+        });
+        document.getElementById('pof_TotalDisplay').textContent = total.toFixed(2);
+        const paidInput = document.getElementById('pof_AmountPaid');
+        const paid = parseFloat(paidInput.value) || 0;
+        document.getElementById('pof_DueDisplay').textContent = (total - paid).toFixed(2);
+    }
+
+    function bindRemove(row){
+        row.querySelector('.remove-line-btn').addEventListener('click', function(){
+            if (tbody.querySelectorAll('.line-item-row').length > 1){ row.remove(); renumber(); recalcAll(); }
+        });
+    }
+    function bindRecalc(row){
+        row.querySelectorAll('input[name="Quantity[]"], input[name="UnitPrice[]"]').forEach(function(el){
+            el.addEventListener('input', recalcAll);
+        });
+    }
+
+    tbody.querySelectorAll('.line-item-row').forEach(function(row){ bindRemove(row); bindRecalc(row); });
+    document.getElementById('pof_AmountPaid').addEventListener('input', recalcAll);
+
+    document.getElementById('addLineBtn').addEventListener('click', function(){
+        const template = tbody.querySelector('.line-item-row').cloneNode(true);
+        template.querySelectorAll('input').forEach(function(i){
+            i.value = i.name === 'ConversionFactor[]' ? '1.00' : '';
+        });
+        tbody.appendChild(template);
+        bindRemove(template);
+        bindRecalc(template);
+        renumber();
+    });
+
+    recalcAll();
+})();
+<?php endif; ?>
+
+<?php if ($section === 'inventory'): ?>
+(function(){
+    const overlay = document.getElementById('itemModalOverlay');
+    const modalTitle = document.getElementById('itemModalTitle');
+    const form = document.getElementById('itemForm');
+    const fId = document.getElementById('if_ItemID');
+    const fName = document.getElementById('if_ItemName');
+    const fCategory = document.getElementById('if_Category');
+    const fStock = document.getElementById('if_QuantityInStock');
+    const fUnit = document.getElementById('if_SalesUnit');
+    const fPrice = document.getElementById('if_SellingPrice');
+    const fReorder = document.getElementById('if_ReorderLevel');
+    const fExpiry = document.getElementById('if_ExpiryDate');
+
+    function openModal(){ overlay.classList.add('show'); }
+    function closeModal(){ overlay.classList.remove('show'); }
+
+    document.getElementById('addItemBtn').addEventListener('click', function(){
+        form.reset();
+        fId.value = '';
+        fReorder.value = '10';
+        modalTitle.textContent = 'Add Item';
+        openModal();
+    });
+
+    document.querySelectorAll('.edit-item-btn').forEach(function(btn){
+        btn.addEventListener('click', function(){
+            form.reset();
+            fId.value = btn.dataset.id;
+            fName.value = btn.dataset.name;
+            fCategory.value = btn.dataset.category;
+            fStock.value = btn.dataset.stock;
+            fUnit.value = btn.dataset.unit;
+            fPrice.value = btn.dataset.price;
+            fReorder.value = btn.dataset.reorder;
+            fExpiry.value = btn.dataset.expiry;
+            modalTitle.textContent = 'Edit Item';
+            openModal();
+        });
+    });
+
+    document.getElementById('itemModalCloseBtn').addEventListener('click', closeModal);
+    document.getElementById('itemModalCancelBtn').addEventListener('click', closeModal);
+    overlay.addEventListener('click', function(e){ if (e.target === overlay) closeModal(); });
+    document.addEventListener('keydown', function(e){ if (e.key === 'Escape') closeModal(); });
+
+    <?php if (!empty($errors) && $_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['form_action'] ?? 'save') === 'save'): ?>
+    fId.value = <?= json_encode($oldInventory['ItemID']) ?>;
+    fName.value = <?= json_encode($oldInventory['ItemName']) ?>;
+    fCategory.value = <?= json_encode($oldInventory['Category']) ?>;
+    fStock.value = <?= json_encode($oldInventory['QuantityInStock']) ?>;
+    fUnit.value = <?= json_encode($oldInventory['SalesUnit']) ?>;
+    fPrice.value = <?= json_encode($oldInventory['SellingPrice']) ?>;
+    fReorder.value = <?= json_encode($oldInventory['ReorderLevel']) ?>;
+    fExpiry.value = <?= json_encode($oldInventory['ExpiryDate']) ?>;
+    modalTitle.textContent = fId.value ? 'Edit Item' : 'Add Item';
+    openModal();
+    <?php endif; ?>
+})();
+<?php endif; ?>
+
+<?php if ($justSaved || $justDeleted || $justVoided): ?>
+(function(){
+    let message = 'Saved successfully.';
+    <?php if ($justDeleted): ?>message = 'Item deleted successfully.';<?php endif; ?>
+    <?php if ($justVoided): ?>message = <?= $section === 'purchases' ? json_encode('Purchase order voided successfully.') : json_encode('Sale voided successfully.') ?>;<?php endif; ?>
+    <?php if ($justSaved): ?>message = <?= $section === 'pos' ? json_encode('Sale completed successfully.') : ($section === 'purchases' ? json_encode('Purchase order saved successfully.') : json_encode('Item saved successfully.')) ?>;<?php endif; ?>
+    showToast(message);
+})();
+<?php endif; ?>
+</script>
+
+</body>
+</html>
