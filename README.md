@@ -10,6 +10,7 @@ Clinic management system for reception, doctors, laboratory, pharmacy, accountin
 
    ```powershell
    C:\xampp\php\php.exe scripts\migrate_connected_workflow.php
+   C:\xampp\php\php.exe scripts\migrate_setup_rbac.php
    ```
 
 4. Create the default SuperAdmin account when needed:

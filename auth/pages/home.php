@@ -150,8 +150,8 @@ $navItems = [
         'icon'  => '<path d="M4 13a1 1 0 011-1h1a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1v-4zm5-5a1 1 0 011-1h1a1 1 0 011 1v9a1 1 0 01-1 1h-1a1 1 0 01-1-1V8zm5-4a1 1 0 011-1h1a1 1 0 011 1v13a1 1 0 01-1 1h-1a1 1 0 01-1-1V4z"/>',
     ],
     [
-        'href'  => 'settings.php',
-        'label' => 'Settings',
+        'href'  => 'setup.php',
+        'label' => 'Setup',
         'icon'  => '<path fill-rule="evenodd" d="M8.34 1.804A1 1 0 019.32 1h1.36a1 1 0 01.98.804l.331 1.652a6.993 6.993 0 011.929 1.115l1.598-.54a1 1 0 011.186.447l.68 1.178a1 1 0 01-.223 1.28l-1.281 1.05a7.05 7.05 0 010 2.228l1.28 1.05a1 1 0 01.224 1.28l-.68 1.178a1 1 0 01-1.187.447l-1.598-.54a6.993 6.993 0 01-1.929 1.115l-.33 1.652a1 1 0 01-.98.804H9.32a1 1 0 01-.98-.804l-.331-1.652a6.993 6.993 0 01-1.929-1.115l-1.598.54a1 1 0 01-1.186-.447l-.68-1.178a1 1 0 01.223-1.28l1.281-1.05a7.05 7.05 0 010-2.228l-1.28-1.05a1 1 0 01-.224-1.28l.68-1.178a1 1 0 011.187-.447l1.598.54A6.993 6.993 0 018.01 3.456l.33-1.652zM10 13a3 3 0 100-6 3 3 0 000 6z" clip-rule="evenodd"/>',
     ],
 ];
@@ -404,7 +404,7 @@ $currentPage = basename((string) ($_SERVER['SCRIPT_NAME'] ?? 'home.php'));
 <main class="page-body">
     <div class="dashboard-heading">
         <div>
-            <div class="welcome-eyebrow"><?= htmlspecialchars(TDC_ROLES[$_SESSION['role']], ENT_QUOTES, 'UTF-8') ?> / Dashboard</div>
+            <div class="welcome-eyebrow"><?= htmlspecialchars(tdc_role_name(), ENT_QUOTES, 'UTF-8') ?> / Dashboard</div>
             <h1 class="welcome-title">Welcome back, <?= htmlspecialchars($displayName, ENT_QUOTES, 'UTF-8') ?></h1>
         </div>
         <time datetime="<?= date('Y-m-d') ?>"><?= date('l, d F Y') ?></time>

@@ -119,8 +119,8 @@ const NAV_ITEMS = [
         'icon'  => '<path d="M4 13a1 1 0 011-1h1a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1v-4zm5-5a1 1 0 011-1h1a1 1 0 011 1v9a1 1 0 01-1 1h-1a1 1 0 01-1-1V8zm5-4a1 1 0 011-1h1a1 1 0 011 1v13a1 1 0 01-1 1h-1a1 1 0 01-1-1V4z"/>',
     ],
     [
-        'href'  => 'settings.php',
-        'label' => 'Settings',
+        'href'  => 'setup.php',
+        'label' => 'Setup',
         'icon'  => '<path fill-rule="evenodd" d="M8.34 1.804A1 1 0 019.32 1h1.36a1 1 0 01.98.804l.331 1.652a6.993 6.993 0 011.929 1.115l1.598-.54a1 1 0 011.186.447l.68 1.178a1 1 0 01-.223 1.28l-1.281 1.05a7.05 7.05 0 010 2.228l1.28 1.05a1 1 0 01.224 1.28l-.68 1.178a1 1 0 01-1.187.447l-1.598-.54a6.993 6.993 0 01-1.929 1.115l-.33 1.652a1 1 0 01-.98.804H9.32a1 1 0 01-.98-.804l-.331-1.652a6.993 6.993 0 01-1.929-1.115l-1.598.54a1 1 0 01-1.186-.447l-.68-1.178a1 1 0 01.223-1.28l1.281-1.05a7.05 7.05 0 010-2.228l-1.28-1.05a1 1 0 01-.224-1.28l.68-1.178a1 1 0 011.187-.447l1.598.54A6.993 6.993 0 018.01 3.456l.33-1.652zM10 13a3 3 0 100-6 3 3 0 000 6z" clip-rule="evenodd"/>',
     ],
 ];
@@ -349,6 +349,22 @@ function tdc_validate_purchase_form(array $input): array
     if ($input['AmountPaid'] !== '' && (!is_numeric($input['AmountPaid']) || (float) $input['AmountPaid'] < 0)) {
         $errors[] = 'Amount paid must be a valid non-negative number.';
     }
+    $purchaseDate = trim((string) ($input['PurchaseDate'] ?? ''));
+    if ($purchaseDate !== '' && !tdc_is_valid_date($purchaseDate)) {
+        $errors[] = 'Purchase date is not a valid date.';
+    }
+    $reference = trim((string) ($input['ReferenceNumber'] ?? ''));
+    if (mb_strlen($reference) > 60) {
+        $errors[] = 'Reference number is too long (max 60 characters).';
+    }
+    $discountRaw = trim((string) ($input['Discount'] ?? ''));
+    if ($discountRaw !== '' && (!is_numeric($discountRaw) || (float) $discountRaw < 0)) {
+        $errors[] = 'Discount must be a valid non-negative number.';
+    }
+    $vatRaw = trim((string) ($input['VATAmount'] ?? ''));
+    if ($vatRaw !== '' && (!is_numeric($vatRaw) || (float) $vatRaw < 0)) {
+        $errors[] = 'VAT must be a valid non-negative number.';
+    }
 
     $hasLine = false;
     foreach ($input['ItemName'] as $i => $name) {
@@ -369,12 +385,12 @@ function tdc_validate_purchase_form(array $input): array
         }
 
         $unitPrice = trim((string) ($input['UnitPrice'][$i] ?? ''));
-        if ($unitPrice === '' || !is_numeric($unitPrice) || (float) $unitPrice < 0) {
+        if ($unitPrice === '' || !is_numeric($unitPrice) || !is_finite((float) $unitPrice) || (float) $unitPrice < 0) {
             $errors[] = "Unit price at line {$lineNo} must be a valid non-negative number.";
         }
 
         $sellingPrice = trim((string) ($input['SellingPrice'][$i] ?? ''));
-        if ($sellingPrice !== '' && (!is_numeric($sellingPrice) || (float) $sellingPrice < 0)) {
+        if ($sellingPrice === '' || !is_numeric($sellingPrice) || !is_finite((float) $sellingPrice) || (float) $sellingPrice < 0) {
             $errors[] = "Selling price at line {$lineNo} must be a valid non-negative number.";
         }
 
@@ -390,6 +406,25 @@ function tdc_validate_purchase_form(array $input): array
     }
     if (!$hasLine) {
         $errors[] = 'Add at least one item line.';
+    }
+
+    $paidRaw = trim((string) ($input['AmountPaid'] ?? ''));
+    if ($hasLine) {
+        $orderTotal = 0.0;
+        foreach ($input['ItemName'] as $i => $name) {
+            if (trim((string) $name) === '') {
+                continue;
+            }
+            $orderTotal += (int) ($input['Quantity'][$i] ?? 0) * (float) ($input['UnitPrice'][$i] ?? 0);
+        }
+        $orderNet = round($orderTotal - (float) ($discountRaw !== '' ? $discountRaw : 0) + (float) ($vatRaw !== '' ? $vatRaw : 0), 2);
+        if ((float) $discountRaw > $orderTotal) {
+            $errors[] = 'Discount cannot exceed the purchase subtotal.';
+            $orderNet = 0.0;
+        }
+        if (round((float) $paidRaw, 2) > $orderNet) {
+            $errors[] = 'Amount paid cannot exceed the net amount of ' . number_format($orderNet, 2) . '.';
+        }
     }
 
     return $errors;
@@ -605,18 +640,31 @@ function tdc_save_purchase(PDO $pdo, array $input): string
         ];
     }
 
+    $subtotal  = round($totalAmount, 2);
+    $discount  = round((float) (trim((string) ($input['Discount'] ?? '')) !== '' ? $input['Discount'] : 0), 2);
+    $vatAmount = round((float) (trim((string) ($input['VATAmount'] ?? '')) !== '' ? $input['VATAmount'] : 0), 2);
+    $netAmount = round($subtotal - $discount + $vatAmount, 2);
+    if ($netAmount < 0) {
+        $netAmount = 0.0;
+    }
     $amountPaid = round((float) ($input['AmountPaid'] !== '' ? $input['AmountPaid'] : 0), 2);
-    $dueBalance = round($totalAmount - $amountPaid, 2);
+    if ($amountPaid > $netAmount) {
+        $amountPaid = $netAmount;
+    }
+    $dueBalance = max(0.0, round($netAmount - $amountPaid, 2));
+    $reference  = trim((string) ($input['ReferenceNumber'] ?? ''));
+    $purchaseDate = trim((string) ($input['PurchaseDate'] ?? ''));
+    $purchaseAt   = $purchaseDate !== '' ? $purchaseDate . ' ' . date('H:i:s') : date('Y-m-d H:i:s');
 
     $pdo->beginTransaction();
     try {
         $insert = $pdo->prepare(
-            'INSERT INTO Purchases (PurchaseID, SupplierID, SupplierName, SupplierPhone, Category, ItemName,
+            'INSERT INTO Purchases (PurchaseID, SupplierID, SupplierName, SupplierPhone, ReferenceNumber, Category, ItemName,
                 Quantity, MinimumQuantity, PurchaseUnit, ConversionFactor, SalesUnit, UnitPrice, SellingPrice,
-                TotalAmount, AmountPaid, DueBalance)
-             VALUES (:PurchaseID, :SupplierID, :SupplierName, :SupplierPhone, :Category, :ItemName,
+                TotalAmount, AmountPaid, DueBalance, Discount, VATAmount, PurchaseDate)
+             VALUES (:PurchaseID, :SupplierID, :SupplierName, :SupplierPhone, :ReferenceNumber, :Category, :ItemName,
                 :Quantity, 10, :PurchaseUnit, :ConversionFactor, :SalesUnit, :UnitPrice, :SellingPrice,
-                :TotalAmount, :AmountPaid, :DueBalance)'
+                :TotalAmount, :AmountPaid, :DueBalance, :Discount, :VATAmount, :PurchaseDate)'
         );
 
         $line = 0;
@@ -627,6 +675,7 @@ function tdc_save_purchase(PDO $pdo, array $input): string
                 'SupplierID'       => $supplierId,
                 'SupplierName'     => $input['SupplierName'],
                 'SupplierPhone'    => $input['SupplierPhone'] !== '' ? $input['SupplierPhone'] : null,
+                'ReferenceNumber'  => $reference !== '' ? $reference : null,
                 'Category'         => $l['Category'] !== '' ? $l['Category'] : null,
                 'ItemName'         => $l['ItemName'],
                 'Quantity'         => $l['Quantity'],
@@ -635,9 +684,12 @@ function tdc_save_purchase(PDO $pdo, array $input): string
                 'SalesUnit'        => $l['SalesUnit'] !== '' ? $l['SalesUnit'] : null,
                 'UnitPrice'        => $l['UnitPrice'],
                 'SellingPrice'     => $l['SellingPrice'],
-                'TotalAmount'      => $totalAmount,
+                'TotalAmount'      => $netAmount,
                 'AmountPaid'       => $amountPaid,
                 'DueBalance'       => $dueBalance,
+                'Discount'         => $discount,
+                'VATAmount'        => $vatAmount,
+                'PurchaseDate'     => $purchaseAt,
             ]);
 
             tdc_upsert_inventory_from_purchase($pdo, $l, $supplierId);
@@ -838,13 +890,14 @@ if (empty($_SESSION['user_id'])) {
     exit;
 }
 
-if (!in_array($_SESSION['role'] ?? '', ALLOWED_PHARMACY_ROLES, true)) {
-    header('Location: home.php');
-    exit;
-}
+tdc_require_permission('pharmacy.view');
 
 require_once __DIR__ . '/../../db.php';
 require_once __DIR__ . '/../includes/workflow.php';
+require_once __DIR__ . '/../includes/ui.php';
+require_once __DIR__ . '/../includes/data-transfer.php';
+$paymentMethods = tdc_payment_methods($pdo);
+$paymentMethodNames = array_column($paymentMethods, 'MethodName');
 
 if (empty($_SESSION['csrf_token'])) {
     $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
@@ -857,6 +910,11 @@ $section = $_GET['section'] ?? null;
 if ($section !== null && !in_array($section, ALLOWED_SECTIONS, true)) {
     $section = null;
 }
+$pharmacySectionPermissions = ['prescriptions'=>'pharmacy.prescriptions.view','pos'=>'pharmacy.pos','purchases'=>'pharmacy.purchases.manage','inventory'=>'pharmacy.inventory.view'];
+if ($section !== null && !tdc_can($pharmacySectionPermissions[$section])) tdc_forbidden();
+
+$canViewPurchaseCost = tdc_can_view_purchase_cost();
+if ($section === 'purchases' && !$canViewPurchaseCost && ($_SERVER['REQUEST_METHOD'] === 'POST' || isset($_GET['new']))) tdc_forbidden();
 
 $errors = [];
 
@@ -866,7 +924,8 @@ $oldSale = [
 ];
 
 $oldPurchase = [
-    'SupplierName' => '', 'SupplierPhone' => '', 'AmountPaid' => '',
+    'SupplierName' => '', 'SupplierPhone' => '', 'AmountPaid' => '', 'PurchaseDate' => date('Y-m-d'),
+    'ReferenceNumber' => '', 'Discount' => '', 'VATAmount' => '',
     'ItemName' => [], 'Category' => [], 'PurchaseUnit' => [], 'ConversionFactor' => [],
     'SalesUnit' => [], 'Quantity' => [], 'UnitPrice' => [], 'SellingPrice' => [], 'ExpiryDate' => [],
 ];
@@ -891,9 +950,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($section, ALLOWED_SECTIONS
 
         // --- Doctor prescriptions -----------------------------------
         if ($section === 'prescriptions') {
+            tdc_require_permission('pharmacy.dispense');
             $base = preg_replace('/[^A-Za-z0-9]/','',(string)($_POST['PrescriptionReference'] ?? ''));
             $amountPaid = is_numeric($_POST['AmountPaid'] ?? null) ? round((float)$_POST['AmountPaid'],2) : -1;
             $paymentMethod = (string)($_POST['PaymentMethod'] ?? 'Cash');
+            if (!in_array($paymentMethod, $paymentMethodNames, true)) tdc_forbidden();
             $pdo->beginTransaction();
             try {
                 $stmt=$pdo->prepare("SELECT * FROM Prescriptions WHERE PrescriptionID LIKE ? AND Status='Pending' ORDER BY PrescriptionID FOR UPDATE");
@@ -920,6 +981,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($section, ALLOWED_SECTIONS
 
         // --- Point of Sale ------------------------------------------
         } elseif ($section === 'pos') {
+            tdc_require_permission('pharmacy.pos');
             if ($formAction === 'void') {
                 $base = preg_replace('/[^A-Za-z0-9]/', '', (string) ($_POST['SaleRef'] ?? ''));
                 if ($base === '') {
@@ -964,6 +1026,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($section, ALLOWED_SECTIONS
 
         // --- Purchases -------------------------------------------------
         } elseif ($section === 'purchases') {
+            tdc_require_permission('pharmacy.purchases.manage');
             if ($formAction === 'void') {
                 $base = preg_replace('/[^A-Za-z0-9]/', '', (string) ($_POST['PORef'] ?? ''));
                 if ($base === '') {
@@ -984,6 +1047,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($section, ALLOWED_SECTIONS
                 $oldPurchase['SupplierName']     = trim((string) ($_POST['SupplierName'] ?? ''));
                 $oldPurchase['SupplierPhone']    = trim((string) ($_POST['SupplierPhone'] ?? ''));
                 $oldPurchase['AmountPaid']       = trim((string) ($_POST['AmountPaid'] ?? ''));
+                $oldPurchase['PurchaseDate']     = trim((string) ($_POST['PurchaseDate'] ?? ''));
+                $oldPurchase['ReferenceNumber']  = trim((string) ($_POST['ReferenceNumber'] ?? ''));
+                $oldPurchase['Discount']         = trim((string) ($_POST['Discount'] ?? ''));
+                $oldPurchase['VATAmount']        = trim((string) ($_POST['VATAmount'] ?? ''));
                 $oldPurchase['ItemName']         = $_POST['ItemName'] ?? [];
                 $oldPurchase['Category']         = $_POST['Category'] ?? [];
                 $oldPurchase['PurchaseUnit']     = $_POST['PurchaseUnit'] ?? [];
@@ -994,6 +1061,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($section, ALLOWED_SECTIONS
                 $oldPurchase['SellingPrice']     = $_POST['SellingPrice'] ?? [];
                 $oldPurchase['ExpiryDate']       = $_POST['ExpiryDate'] ?? [];
 
+                // Reuse catalog units and the latest received pack configuration.
+                foreach ($oldPurchase['ItemName'] as $i => $itemName) {
+                    $unitStmt = $pdo->prepare('SELECT i.SalesUnit,i.Category,p.PurchaseUnit,p.ConversionFactor FROM Inventory i LEFT JOIN Purchases p ON p.PurchaseID=(SELECT p2.PurchaseID FROM Purchases p2 WHERE LOWER(TRIM(p2.ItemName))=LOWER(TRIM(i.ItemName)) ORDER BY p2.PurchaseDate DESC,p2.PurchaseID DESC LIMIT 1) WHERE LOWER(TRIM(i.ItemName))=LOWER(TRIM(?)) LIMIT 1');
+                    $unitStmt->execute([(string)$itemName]);
+                    $unitDefaults = $unitStmt->fetch() ?: [];
+                    foreach (['SalesUnit','Category','PurchaseUnit','ConversionFactor'] as $field) {
+                        if (trim((string)($oldPurchase[$field][$i] ?? '')) === '') $oldPurchase[$field][$i] = (string)($unitDefaults[$field] ?? ($field === 'ConversionFactor' ? '1' : ''));
+                    }
+                }
                 $errors            = tdc_validate_purchase_form($oldPurchase);
                 $purchaseShowForm  = true;
 
@@ -1011,6 +1087,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($section, ALLOWED_SECTIONS
 
         // --- Inventory ---------------------------------------------------
         } elseif ($section === 'inventory') {
+            tdc_require_permission('pharmacy.inventory.manage');
             if ($formAction === 'delete') {
                 $deleteId = trim((string) ($_POST['ItemID'] ?? ''));
                 $errors   = $deleteId !== '' ? tdc_delete_inventory_item($pdo, $deleteId) : ['Invalid item selected.'];
@@ -1110,31 +1187,107 @@ $viewPORef            = '';
 $viewPOLines          = [];
 
 if ($section === 'purchases') {
+    $purchaseUnitOptions = $pdo->query('SELECT i.ItemName,i.Category,i.SalesUnit,i.SellingPrice,p.PurchaseUnit,COALESCE(p.ConversionFactor,1) AS ConversionFactor FROM Inventory i LEFT JOIN Purchases p ON p.PurchaseID=(SELECT p2.PurchaseID FROM Purchases p2 WHERE LOWER(TRIM(p2.ItemName))=LOWER(TRIM(i.ItemName)) ORDER BY p2.PurchaseDate DESC,p2.PurchaseID DESC LIMIT 1) ORDER BY i.ItemName')->fetchAll();
     $itemNamesForDatalist = $pdo->query('SELECT DISTINCT ItemName FROM Inventory ORDER BY ItemName ASC LIMIT 500')
         ->fetchAll(PDO::FETCH_COLUMN);
 
     $purchaseSearch = trim((string) ($_GET['q'] ?? ''));
-    $params         = [];
-    $where          = '';
-    if ($purchaseSearch !== '') {
-        $where  = 'WHERE SupplierName LIKE :q1 OR PurchaseID LIKE :q2';
-        $params = ['q1' => '%' . $purchaseSearch . '%', 'q2' => '%' . $purchaseSearch . '%'];
+    $purchaseStatus = $canViewPurchaseCost ? trim((string) ($_GET['status'] ?? '')) : '';
+    if (!in_array($purchaseStatus, ['', 'paid', 'due'], true)) {
+        $purchaseStatus = '';
     }
-    $stmt = $pdo->prepare(
-        "SELECT SUBSTRING_INDEX(PurchaseID, '-', 1) AS PORef, MIN(SupplierName) AS SupplierName,
-                MIN(SupplierPhone) AS SupplierPhone, COUNT(*) AS LineCount,
+    [$purchaseFrom, $purchaseTo, $purchaseDateError, $purchaseDateActive] = tdc_date_range_resolve();
+
+    $purchasePage = max(1, (int) ($_GET['page'] ?? 1));
+    $purchasePerPage = (int) ($_GET['per_page'] ?? 25);
+    if (!in_array($purchasePerPage, [10, 25, 50, 100], true)) {
+        $purchasePerPage = 25;
+    }
+
+    $params = [];
+    $where  = '';
+    if ($purchaseSearch !== '') {
+        $where .= ($where === '' ? 'WHERE ' : ' AND ')
+            . '(SupplierName LIKE :q1 OR PurchaseID LIKE :q2 OR ReferenceNumber LIKE :q3)';
+        $params['q1'] = '%' . $purchaseSearch . '%';
+        $params['q2'] = '%' . $purchaseSearch . '%';
+        $params['q3'] = '%' . $purchaseSearch . '%';
+    }
+    if ($purchaseFrom !== '' && tdc_ui_is_date($purchaseFrom)) {
+        $where .= ($where === '' ? 'WHERE ' : ' AND ') . 'PurchaseDate >= :fromDate';
+        $params['fromDate'] = $purchaseFrom . ' 00:00:00';
+    }
+    if ($purchaseTo !== '' && tdc_ui_is_date($purchaseTo)) {
+        $where .= ($where === '' ? 'WHERE ' : ' AND ') . 'PurchaseDate <= :toDate';
+        $params['toDate'] = $purchaseTo . ' 23:59:59';
+    }
+    if ($purchaseStatus === 'paid') {
+        $where .= ($where === '' ? 'WHERE ' : ' AND ') . 'DueBalance <= 0';
+    } elseif ($purchaseStatus === 'due') {
+        $where .= ($where === '' ? 'WHERE ' : ' AND ') . 'DueBalance > 0';
+    }
+
+    $purchaseExportUrl = 'pharmacy.php?' . http_build_query(array_filter([
+        'section' => 'purchases',
+        'q' => $purchaseSearch,
+        'status' => $purchaseStatus,
+        'from_date' => $purchaseFrom,
+        'to_date' => $purchaseTo,
+        'export' => 'csv',
+    ], static fn($value): bool => $value !== '' && $value !== null));
+
+    $purchaseSelectSql = "SELECT SUBSTRING_INDEX(PurchaseID, '-', 1) AS PORef, MIN(SupplierName) AS SupplierName,
+                MIN(SupplierPhone) AS SupplierPhone, MIN(ReferenceNumber) AS ReferenceNumber, COUNT(*) AS LineCount,
                 MIN(TotalAmount) AS TotalAmount, MIN(AmountPaid) AS AmountPaid,
                 MIN(DueBalance) AS DueBalance, MIN(PurchaseDate) AS PurchaseDate
          FROM Purchases {$where}
-         GROUP BY PORef ORDER BY PurchaseDate DESC LIMIT 200"
-    );
+         GROUP BY PORef";
+
+    if (!$canViewPurchaseCost) {
+        $purchaseSelectSql = "SELECT SUBSTRING_INDEX(PurchaseID, '-', 1) AS PORef, MIN(SupplierName) AS SupplierName,
+            MIN(SupplierPhone) AS SupplierPhone, MIN(ReferenceNumber) AS ReferenceNumber, COUNT(*) AS LineCount,
+            MIN(PurchaseDate) AS PurchaseDate FROM Purchases {$where} GROUP BY PORef";
+    }
+    if (($_GET['export'] ?? '') === 'csv' && empty($purchaseDateError)) {
+        if (!$canViewPurchaseCost) {
+            $stmt = $pdo->prepare($purchaseSelectSql . ' ORDER BY PurchaseDate DESC');
+            $stmt->execute($params);
+            tdc_csv_download('purchase-orders.csv', ['PO Ref','Supplier','Phone','Reference','Items','Date'], $stmt->fetchAll(PDO::FETCH_NUM));
+        }
+        tdc_require_permission('pharmacy.purchases.manage');
+        $exportStmt = $pdo->prepare($purchaseSelectSql . ' ORDER BY PurchaseDate DESC');
+        $exportStmt->execute($params);
+        $exportRows = [];
+        foreach ($exportStmt->fetchAll() as $po) {
+            $exportRows[] = [
+                $po['PORef'],
+                (string) ($po['ReferenceNumber'] ?? ''),
+                $po['SupplierName'],
+                (string) $po['SupplierPhone'],
+                (int) $po['LineCount'],
+                number_format((float) $po['TotalAmount'], 2, '.', ''),
+                number_format((float) $po['AmountPaid'], 2, '.', ''),
+                number_format((float) $po['DueBalance'], 2, '.', ''),
+                (float) $po['DueBalance'] > 0 ? 'Due' : 'Paid',
+                date('Y-m-d', strtotime((string) $po['PurchaseDate'])),
+            ];
+        }
+        tdc_csv_download('purchase-orders-' . date('Y-m-d') . '.csv', ['PO Ref', 'Reference', 'Supplier', 'Phone', 'Items', 'Total', 'Paid', 'Due', 'Status', 'Purchase Date'], $exportRows);
+    }
+
+    $countStmt = $pdo->prepare('SELECT COUNT(*) FROM (SELECT SUBSTRING_INDEX(PurchaseID, \'-\', 1) AS PORef FROM Purchases ' . $where . ' GROUP BY PORef) AS grouped');
+    $countStmt->execute($params);
+    $purchaseTotal = (int) $countStmt->fetchColumn();
+
+    $purchaseOffset = ($purchasePage - 1) * $purchasePerPage;
+    $stmt = $pdo->prepare($purchaseSelectSql . ' ORDER BY PurchaseDate DESC LIMIT ' . (int) $purchasePerPage . ' OFFSET ' . (int) $purchaseOffset);
     $stmt->execute($params);
     $purchaseOrders = $stmt->fetchAll();
 
     if (empty($errors)) {
         if (isset($_GET['view'])) {
             $viewPORef = preg_replace('/[^A-Za-z0-9]/', '', (string) $_GET['view']);
-            $stmt = $pdo->prepare('SELECT * FROM Purchases WHERE PurchaseID LIKE :pattern ORDER BY PurchaseID ASC');
+            $stmt = $pdo->prepare('SELECT ' . ($canViewPurchaseCost ? '*' : 'PurchaseID,SupplierName,SupplierPhone,ReferenceNumber,ItemName,Category,Quantity,PurchaseUnit,SalesUnit,SellingPrice,PurchaseDate') . ' FROM Purchases WHERE PurchaseID LIKE :pattern ORDER BY PurchaseID ASC');
             $stmt->execute(['pattern' => $viewPORef . '-%']);
             $viewPOLines = $stmt->fetchAll();
             if (empty($viewPOLines)) {
@@ -1339,17 +1492,6 @@ $justVoided  = isset($_GET['voided']);
     .info-field .info-value{ font-size:14.5px; font-weight:600; color:var(--navy); word-break:break-word; }
     .subsection-title{ font-size:16px; font-weight:700; color:var(--navy); margin-bottom:12px; }
 
-    .modal-overlay{ position:fixed; inset:0; background:rgba(46,49,146,0.35); display:none; align-items:center; justify-content:center; z-index:1000; padding:20px; }
-    .modal-overlay.show{ display:flex; }
-    .modal-box{ background:var(--white); border:2px solid var(--navy); width:100%; max-width:520px; max-height:90vh; overflow-y:auto; }
-    .modal-head{ display:flex; align-items:center; justify-content:space-between; padding:18px 22px; border-bottom:2px solid var(--navy); }
-    .modal-head h3{ font-size:16px; font-weight:700; color:var(--navy); }
-    .modal-close{ appearance:none; background:none; border:none; cursor:pointer; color:var(--navy-55); width:26px; height:26px; }
-    .modal-close:hover{ color:var(--orange); }
-    .modal-close svg{ width:100%; height:100%; }
-    .modal-body{ padding:22px; }
-    .modal-body .form-group{ margin-bottom:16px; }
-    .modal-actions{ display:flex; justify-content:flex-end; gap:10px; margin-top:6px; }
 
     #js-toast{ position:fixed; bottom:28px; left:50%; transform:translateX(-50%) translateY(20px); display:flex; align-items:center; gap:8px; background:var(--white); border:2px solid var(--navy); color:var(--navy); font-size:13px; font-weight:500; padding:10px 18px; white-space:nowrap; z-index:9999; opacity:0; pointer-events:none; transition:opacity 0.2s ease, transform 0.2s ease; }
     #js-toast svg{ width:16px; height:16px; flex-shrink:0; }
@@ -1413,21 +1555,29 @@ $justVoided  = isset($_GET['voided']);
 
 <main class="page-body">
 
+<nav class="setup-section-nav" aria-label="Pharmacy sections">
+    <?php if (tdc_can('pharmacy.prescriptions.view')): ?><a href="pharmacy.php?section=prescriptions"<?= $section === 'prescriptions' ? ' class="active" aria-current="page"' : '' ?>><?= tdc_icon('pill', 16) ?><span>Prescriptions</span></a><?php endif; ?>
+    <?php if (tdc_can('pharmacy.pos')): ?><a href="pharmacy.php?section=pos"<?= $section === 'pos' ? ' class="active" aria-current="page"' : '' ?>><?= tdc_icon('wallet', 16) ?><span>Point of Sale</span></a><?php endif; ?>
+    <?php if (tdc_can('pharmacy.purchases.manage')): ?><a href="pharmacy.php?section=purchases"<?= $section === 'purchases' ? ' class="active" aria-current="page"' : '' ?>><?= tdc_icon('inbox', 16) ?><span>Purchases</span></a><?php endif; ?>
+    <?php if (tdc_can('pharmacy.inventory.view')): ?><a href="pharmacy.php?section=inventory"<?= $section === 'inventory' ? ' class="active" aria-current="page"' : '' ?>><?= tdc_icon('inbox', 16) ?><span>Inventory</span></a><?php endif; ?>
+</nav>
+
+
 <?php if ($section === null): ?>
 
     <div class="welcome-eyebrow">Pharmacy</div>
     <div class="welcome-title">Pharmacy Operations</div>
 
     <div class="setup-grid">
-        <a href="pharmacy.php?section=prescriptions" class="setup-card"><div class="setup-icon"><svg viewBox="0 0 24 24"><path d="m10.5 20.5-7-7a5 5 0 0 1 7-7l7 7a5 5 0 0 1-7 7Z"/><path d="m8 11 7 7"/></svg></div><div><div class="setup-card-title">Pending Prescriptions</div><div class="setup-card-desc">Doctor prescriptions ready for dispensing</div></div></a>
-        <a href="pharmacy.php?section=pos" class="setup-card">
+        <?php if(tdc_can('pharmacy.prescriptions.view')):?><a href="pharmacy.php?section=prescriptions" class="setup-card"><div class="setup-icon"><svg viewBox="0 0 24 24"><path d="m10.5 20.5-7-7a5 5 0 0 1 7-7l7 7a5 5 0 0 1-7 7Z"/><path d="m8 11 7 7"/></svg></div><div><div class="setup-card-title">Pending Prescriptions</div><div class="setup-card-desc">Doctor prescriptions ready for dispensing</div></div></a><?php endif;?>
+        <?php if(tdc_can('pharmacy.pos')):?><a href="pharmacy.php?section=pos" class="setup-card">
             <div class="setup-icon"><svg viewBox="0 0 24 24"><path d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293A1 1 0 005.414 17H17"/><circle cx="9" cy="20" r="1"/><circle cx="17" cy="20" r="1"/></svg></div>
             <div>
                 <div class="setup-card-title">Point of Sale</div>
                 <div class="setup-card-desc"><?= $hubTodaySales ?> sale<?= $hubTodaySales === 1 ? '' : 's' ?> today</div>
             </div>
-        </a>
-        <?php if (in_array($_SESSION['role'], ALLOWED_PHARMACY_ROLES, true)): ?>
+        </a><?php endif;?>
+        <?php if (tdc_can('pharmacy.purchases.manage')): ?>
         <a href="pharmacy.php?section=purchases" class="setup-card">
             <div class="setup-icon"><svg viewBox="0 0 24 24"><path d="M20 7h-3V6a4 4 0 00-8 0v1H6a1 1 0 00-1 1v11a2 2 0 002 2h10a2 2 0 002-2V8a1 1 0 00-1-1zM9 6a3 3 0 016 0v1H9V6z"/></svg></div>
             <div>
@@ -1435,7 +1585,7 @@ $justVoided  = isset($_GET['voided']);
                 <div class="setup-card-desc"><?= $hubOpenPOCount ?> order<?= $hubOpenPOCount === 1 ? '' : 's' ?> with a balance due</div>
             </div>
         </a>
-        <a href="pharmacy.php?section=inventory" class="setup-card">
+        <?php endif; ?><?php if (tdc_can('pharmacy.inventory.view')): ?><a href="pharmacy.php?section=inventory" class="setup-card">
             <div class="setup-icon"><svg viewBox="0 0 24 24"><path d="M3 7l9-4 9 4-9 4-9-4zm0 0v10l9 4 9-4V7"/><path d="M12 11v10"/></svg></div>
             <div>
                 <div class="setup-card-title">Inventory</div>
@@ -1466,7 +1616,7 @@ $justVoided  = isset($_GET['voided']);
           // ============================================================ ?>
     <?php if ($section === 'prescriptions'): ?>
         <div class="welcome-title">Pending Prescriptions</div><div class="welcome-sub">Dispense doctor orders directly from available inventory.</div>
-        <div class="data-table-wrap" style="margin-top:24px"><table class="data-table"><thead><tr><th>Prescription</th><th>Patient</th><th>Doctor</th><th>Items</th><th>Created</th><th>Dispense</th></tr></thead><tbody><?php if(!$pendingPrescriptions): ?><tr class="empty-row"><td colspan="6">No pending prescriptions.</td></tr><?php else:foreach($pendingPrescriptions as $rx): ?><tr><td><?= tdc_e($rx['PrescriptionReference']) ?></td><td><?= tdc_e($rx['PatientName']) ?><br><span class="cell-sub"><?= tdc_e($rx['PatientPhone']) ?></span></td><td><?= tdc_e($rx['DoctorName']) ?></td><td><?= (int)$rx['ItemCount'] ?></td><td><?= tdc_e(date('d M Y H:i',strtotime($rx['PrescriptionDate']))) ?></td><td><form method="post" class="row-actions"><input type="hidden" name="csrf_token" value="<?= tdc_e($csrfToken) ?>"><input type="hidden" name="form_action" value="dispense"><input type="hidden" name="PrescriptionReference" value="<?= tdc_e($rx['PrescriptionReference']) ?>"><input class="compact-input" type="number" min="0" step=".01" name="AmountPaid" placeholder="Amount paid" required><select class="compact-input" name="PaymentMethod"><option>Cash</option><option>Card</option><option>Mobile Money</option><option>Bank</option><option>Other</option></select><button class="btn-sm">Dispense</button></form></td></tr><?php endforeach;endif; ?></tbody></table></div>
+        <div class="data-table-wrap" style="margin-top:24px"><table class="data-table"><thead><tr><th>Prescription</th><th>Patient</th><th>Doctor</th><th>Items</th><th>Created</th><th>Dispense</th></tr></thead><tbody><?php if(!$pendingPrescriptions): ?><tr class="empty-row"><td colspan="6">No pending prescriptions.</td></tr><?php else:foreach($pendingPrescriptions as $rx): ?><tr><td><?= tdc_e($rx['PrescriptionReference']) ?></td><td><?= tdc_e($rx['PatientName']) ?><br><span class="cell-sub"><?= tdc_e($rx['PatientPhone']) ?></span></td><td><?= tdc_e($rx['DoctorName']) ?></td><td><?= (int)$rx['ItemCount'] ?></td><td><?= tdc_e(date('d M Y H:i',strtotime($rx['PrescriptionDate']))) ?></td><td><form method="post" class="row-actions"><input type="hidden" name="csrf_token" value="<?= tdc_e($csrfToken) ?>"><input type="hidden" name="form_action" value="dispense"><input type="hidden" name="PrescriptionReference" value="<?= tdc_e($rx['PrescriptionReference']) ?>"><input class="compact-input" type="number" min="0" step=".01" name="AmountPaid" placeholder="Amount paid" required><select class="compact-input" name="PaymentMethod"><?php foreach($paymentMethods as $method):?><option><?=tdc_e($method['MethodName'])?></option><?php endforeach;?></select><button class="btn-sm">Dispense</button></form></td></tr><?php endforeach;endif; ?></tbody></table></div>
 
     <?php elseif ($section === 'pos'): ?>
 
@@ -1638,15 +1788,18 @@ $justVoided  = isset($_GET['voided']);
         <div class="info-grid">
             <div class="info-field"><div class="info-label">Supplier</div><div class="info-value"><?= tdc_e($head['SupplierName']) ?></div></div>
             <div class="info-field"><div class="info-label">Phone</div><div class="info-value"><?= tdc_e($head['SupplierPhone'] ?: '—') ?></div></div>
-            <div class="info-field"><div class="info-label">Total</div><div class="info-value"><?= number_format((float) $head['TotalAmount'], 2) ?></div></div>
+            <div class="info-field"><div class="info-label">Reference</div><div class="info-value"><?= tdc_e((string) ($head['ReferenceNumber'] ?? '')) ?: '-' ?></div></div>
+            <?php if ($canViewPurchaseCost): ?><div class="info-field"><div class="info-label">Discount</div><div class="info-value"><?= number_format((float) ($head['Discount'] ?? 0), 2) ?></div></div>
+            <div class="info-field"><div class="info-label">VAT</div><div class="info-value"><?= number_format((float) ($head['VATAmount'] ?? 0), 2) ?></div></div>
+            <div class="info-field"><div class="info-label">Net Amount</div><div class="info-value"><?= number_format((float) $head['TotalAmount'], 2) ?></div></div>
             <div class="info-field"><div class="info-label">Paid</div><div class="info-value"><?= number_format((float) $head['AmountPaid'], 2) ?></div></div>
-            <div class="info-field"><div class="info-label">Due</div><div class="info-value"><?= number_format((float) $head['DueBalance'], 2) ?></div></div>
+            <div class="info-field"><div class="info-label">Due</div><div class="info-value"><?= number_format((float) $head['DueBalance'], 2) ?></div></div><?php endif; ?>
         </div>
 
         <div class="subsection-title">Items Received</div>
         <div class="data-table-wrap" style="margin-bottom:24px;">
             <table class="data-table">
-                <thead><tr><th>Item</th><th>Category</th><th>Qty</th><th>Unit</th><th>Unit Cost</th><th>Selling Price</th><th>Expiry</th></tr></thead>
+                <thead><tr><th>Item</th><th>Category</th><th>Qty</th><th>Unit</th><?php if ($canViewPurchaseCost): ?><th>Purchase Price</th><?php endif; ?><th>Selling Price</th><th>Expiry</th></tr></thead>
                 <tbody>
                     <?php foreach ($viewPOLines as $l): ?>
                     <tr>
@@ -1654,9 +1807,9 @@ $justVoided  = isset($_GET['voided']);
                         <td><?= tdc_e($l['Category'] ?: '—') ?></td>
                         <td><?= (int) $l['Quantity'] ?></td>
                         <td><?= tdc_e($l['PurchaseUnit'] ?: '—') ?></td>
-                        <td><?= number_format((float) $l['UnitPrice'], 2) ?></td>
+                        <?php if ($canViewPurchaseCost): ?><td><?= number_format((float) $l['UnitPrice'], 2) ?></td><?php endif; ?>
                         <td><?= number_format((float) $l['SellingPrice'], 2) ?></td>
-                        <td><?= tdc_e($l['ExpiryDate'] ? date('Y-m-d', strtotime((string) $l['ExpiryDate'])) : '—') ?></td>
+                        <td><?= tdc_e(!empty($l['ExpiryDate']) ? date('Y-m-d', strtotime((string) $l['ExpiryDate'])) : '—') ?></td>
                     </tr>
                     <?php endforeach; ?>
                 </tbody>
@@ -1665,17 +1818,21 @@ $justVoided  = isset($_GET['voided']);
 
         <div class="row-actions no-print">
             <button type="button" class="btn btn-secondary" onclick="window.print()">Print</button>
-            <form method="POST" action="pharmacy.php?section=purchases" onsubmit="return confirm('Void this purchase order? Stock added by it will be reversed. This cannot be undone.');">
+            <?php if ($canViewPurchaseCost): ?><form method="POST" action="pharmacy.php?section=purchases" onsubmit="return confirm('Void this purchase order? Stock added by it will be reversed. This cannot be undone.');">
                 <input type="hidden" name="csrf_token" value="<?= tdc_e($csrfToken) ?>">
                 <input type="hidden" name="form_action" value="void">
                 <input type="hidden" name="PORef" value="<?= tdc_e($viewPORef) ?>">
                 <button type="submit" class="btn-sm danger">Void Purchase Order</button>
-            </form>
+            </form><?php endif; ?>
         </div>
 
         <?php elseif ($purchaseShowForm): ?>
 
-        <div class="welcome-title">New Purchase Order</div>
+        <a href="pharmacy.php?section=purchases" class="btn btn-secondary">Back to purchases</a>
+        <button type="button" class="btn btn-primary" id="openPurchaseModal">+ New Purchase</button>
+        <div class="modal-overlay" id="purchaseModal"><div class="modal-box purchase-modal" aria-labelledby="purchaseTitle">
+        <div class="modal-head"><h3 id="purchaseTitle">New Purchase</h3><button type="button" class="modal-close" data-close-purchase aria-label="Close">&times;</button></div><div class="modal-body">
+        <?php if ($errors): ?><div class="error-msg" role="alert"><?= tdc_e(implode(' ', $errors)) ?></div><?php endif; ?>
         <div class="welcome-sub">Receiving stock from a supplier updates Inventory automatically.</div>
 
         <datalist id="existingItemNames">
@@ -1686,16 +1843,20 @@ $justVoided  = isset($_GET['voided']);
             <input type="hidden" name="csrf_token" value="<?= tdc_e($csrfToken) ?>">
             <input type="hidden" name="form_action" value="save">
 
-            <div class="form-row" style="max-width:1200px;margin-bottom:16px;">
-                <div class="form-group"><label for="pof_SupplierName">Supplier Name</label>
+            <div class="form-row" style="margin-bottom:16px;">
+                <div class="form-group"><label for="pof_SupplierName">Supplier Name *</label>
                     <input type="text" id="pof_SupplierName" name="SupplierName" value="<?= tdc_e($oldPurchase['SupplierName']) ?>" required></div>
                 <div class="form-group"><label for="pof_SupplierPhone">Supplier Phone</label>
                     <input type="text" id="pof_SupplierPhone" name="SupplierPhone" value="<?= tdc_e($oldPurchase['SupplierPhone']) ?>"></div>
+                <div class="form-group"><label for="pof_ReferenceNumber">Reference Number</label>
+                    <input type="text" id="pof_ReferenceNumber" name="ReferenceNumber" maxlength="60" value="<?= tdc_e($oldPurchase['ReferenceNumber']) ?>" placeholder="e.g. INV-1024"></div>
+                <div class="form-group"><label for="pof_PurchaseDate">Purchase Date</label>
+                    <input type="date" id="pof_PurchaseDate" name="PurchaseDate" value="<?= tdc_e($oldPurchase['PurchaseDate']) ?>"></div>
             </div>
 
             <div class="line-items-wrap">
                 <table class="line-items" id="lineItemsTable">
-                    <thead><tr><th style="width:40px;">#</th><th>Item Name</th><th>Category</th><th style="width:80px;">Qty</th><th>Purchase Unit</th><th style="width:90px;">Conv.</th><th>Sales Unit</th><th style="width:100px;">Unit Cost</th><th style="width:100px;">Sell Price</th><th style="width:130px;">Expiry</th><th style="width:36px;"></th></tr></thead>
+                    <thead><tr><th style="width:40px;">#</th><th>Medicine *</th><th style="width:80px;">Quantity *</th><th>Unit settings</th><th style="width:100px;">Purchase Price *</th><th style="width:100px;">Selling Price *</th><th style="width:130px;">Expiry</th><th>Amount</th><th style="width:36px;">Actions</th></tr></thead>
                     <tbody id="lineItemsBody">
                     <?php
                     $poLineCount = max(1, count($oldPurchase['ItemName']));
@@ -1703,16 +1864,13 @@ $justVoided  = isset($_GET['voided']);
                     ?>
                         <tr class="line-item-row">
                             <td class="line-no"><?= $i + 1 ?></td>
-                            <td><input type="text" list="existingItemNames" name="ItemName[]" value="<?= tdc_e($oldPurchase['ItemName'][$i] ?? '') ?>" placeholder="e.g. Paracetamol 500mg"></td>
-                            <td><input type="text" name="Category[]" value="<?= tdc_e($oldPurchase['Category'][$i] ?? '') ?>" placeholder="e.g. Analgesic"></td>
-                            <td><input type="number" min="1" name="Quantity[]" value="<?= tdc_e($oldPurchase['Quantity'][$i] ?? '') ?>"></td>
-                            <td><input type="text" name="PurchaseUnit[]" value="<?= tdc_e($oldPurchase['PurchaseUnit'][$i] ?? '') ?>" placeholder="e.g. Box"></td>
-                            <td><input type="number" step="0.01" min="0.01" name="ConversionFactor[]" value="<?= tdc_e($oldPurchase['ConversionFactor'][$i] ?? '1.00') ?>"></td>
-                            <td><input type="text" name="SalesUnit[]" value="<?= tdc_e($oldPurchase['SalesUnit'][$i] ?? '') ?>" placeholder="e.g. Tablet"></td>
-                            <td><input type="number" step="0.01" min="0" name="UnitPrice[]" value="<?= tdc_e($oldPurchase['UnitPrice'][$i] ?? '') ?>"></td>
-                            <td><input type="number" step="0.01" min="0" name="SellingPrice[]" value="<?= tdc_e($oldPurchase['SellingPrice'][$i] ?? '') ?>"></td>
+                            <td><input type="text" list="existingItemNames" required name="ItemName[]" value="<?= tdc_e($oldPurchase['ItemName'][$i] ?? '') ?>" placeholder="e.g. Paracetamol 500mg"></td>
+                            <td><input type="number" min="1" required name="Quantity[]" value="<?= tdc_e($oldPurchase['Quantity'][$i] ?? '') ?>"></td>
+                            <td><details><summary>Advanced</summary><label>Category</label><input type="text" name="Category[]" value="<?= tdc_e($oldPurchase['Category'][$i] ?? '') ?>" placeholder="e.g. Analgesic"><label>Purchase unit</label><input type="text" name="PurchaseUnit[]" value="<?= tdc_e($oldPurchase['PurchaseUnit'][$i] ?? '') ?>" placeholder="e.g. Box"><label>Conversion</label><input type="number" step="0.01" min="0.01" name="ConversionFactor[]" value="<?= tdc_e($oldPurchase['ConversionFactor'][$i] ?? '') ?>"><label>Sales unit</label><input type="text" name="SalesUnit[]" value="<?= tdc_e($oldPurchase['SalesUnit'][$i] ?? '') ?>" placeholder="e.g. Tablet"></details></td>
+                            <td><input type="number" step="0.01" min="0" required name="UnitPrice[]" value="<?= tdc_e($oldPurchase['UnitPrice'][$i] ?? '') ?>"></td>
+                            <td><input type="number" step="0.01" min="0" required name="SellingPrice[]" value="<?= tdc_e($oldPurchase['SellingPrice'][$i] ?? '') ?>"></td>
                             <td><input type="date" name="ExpiryDate[]" value="<?= tdc_e($oldPurchase['ExpiryDate'][$i] ?? '') ?>"></td>
-                            <td><button type="button" class="remove-line-btn" title="Remove line">&times;</button></td>
+                            <td class="purchase-line-amount">0.00</td><td><button type="button" class="remove-line-btn" title="Remove item" aria-label="Remove item">&times;</button></td>
                         </tr>
                     <?php endfor; ?>
                     </tbody>
@@ -1721,56 +1879,80 @@ $justVoided  = isset($_GET['voided']);
             <button type="button" class="btn btn-secondary add-line-btn" id="addLineBtn">+ Add Item</button>
 
             <div class="totals-row">
-                <div class="form-group"><label>Total Cost</label><div class="due-display" id="pof_TotalDisplay">0.00</div></div>
+                <div class="form-group"><label>Subtotal</label><div class="due-display" id="pof_SubtotalDisplay">0.00</div></div>
+                <div class="form-group"><label for="pof_Discount">Discount</label>
+                    <input type="number" step="0.01" min="0" id="pof_Discount" name="Discount" value="<?= tdc_e($oldPurchase['Discount']) ?>" placeholder="0.00"></div>
+                <div class="form-group"><label for="pof_VATAmount">VAT</label>
+                    <input type="number" step="0.01" min="0" id="pof_VATAmount" name="VATAmount" value="<?= tdc_e($oldPurchase['VATAmount']) ?>" placeholder="0.00"></div>
+                <div class="form-group"><label>Net Amount</label><div class="due-display" id="pof_NetDisplay">0.00</div></div>
                 <div class="form-group"><label for="pof_AmountPaid">Amount Paid to Supplier</label>
                     <input type="number" step="0.01" min="0" id="pof_AmountPaid" name="AmountPaid" value="<?= tdc_e($oldPurchase['AmountPaid']) ?>"></div>
                 <div class="form-group"><label>Due to Supplier</label><div class="due-display" id="pof_DueDisplay">0.00</div></div>
             </div>
 
             <div class="form-actions">
-                <a href="pharmacy.php?section=purchases" class="btn btn-secondary">Cancel</a>
-                <button type="submit" class="btn btn-primary">Save Purchase Order</button>
+                <button type="button" class="btn btn-secondary" data-close-purchase>Cancel</button>
+                <button type="submit" class="btn btn-primary">Save Purchase</button>
             </div>
-        </form>
+        </form></div></div></div>
 
         <?php else: ?>
 
         <div class="welcome-title">Purchases</div>
         <div class="welcome-sub">Purchase orders from suppliers. Saving one adds the received stock to Inventory.</div>
 
-        <div class="section-toolbar">
+        <?= tdc_toolbar_start() ?>
+            <?= tdc_date_range([
+                'from' => $purchaseFrom,
+                'to' => $purchaseTo,
+                'error' => $purchaseDateError,
+                'id' => 'purchaseDateRange',
+                'preserve' => ['section' => 'purchases', 'q' => $purchaseSearch, 'status' => $purchaseStatus, 'per_page' => $purchasePerPage],
+            ]) ?>
             <form method="GET" action="pharmacy.php" class="filter-box">
                 <input type="hidden" name="section" value="purchases">
-                <input type="text" name="q" placeholder="Search by supplier or ref..." value="<?= tdc_e($purchaseSearch) ?>">
-                <button type="submit" class="btn btn-secondary">Search</button>
+                <input type="hidden" name="from_date" value="<?= tdc_e($purchaseFrom) ?>">
+                <input type="hidden" name="to_date" value="<?= tdc_e($purchaseTo) ?>">
+                <input type="hidden" name="per_page" value="<?= (int) $purchasePerPage ?>">
+                <?= tdc_search_field('q', $purchaseSearch, 'Search supplier or reference...') ?>
+                <?php if ($canViewPurchaseCost): ?><label class="table-filter">
+                    <select name="status" aria-label="Payment status">
+                        <option value="">All statuses</option>
+                        <option value="paid" <?= $purchaseStatus === 'paid' ? 'selected' : '' ?>>Paid</option>
+                        <option value="due" <?= $purchaseStatus === 'due' ? 'selected' : '' ?>>Due</option>
+                    </select>
+                </label><?php endif; ?>
+                <button type="submit" class="btn btn-secondary btn-sm"><?= tdc_icon('filter', 14) ?><span>Apply</span></button>
             </form>
-            <a href="pharmacy.php?section=purchases&new=1" class="btn btn-primary">+ New Purchase Order</a>
-        </div>
+            <?= tdc_toolbar_spacer() ?>
+            <?= tdc_export_buttons(['csv' => $purchaseExportUrl]) ?>
+            <?php if ($canViewPurchaseCost): ?><a href="pharmacy.php?section=purchases&new=1" class="btn btn-primary"><?= tdc_icon('plus', 15) ?><span>New Purchase</span></a><?php endif; ?>
+        <?= tdc_toolbar_end() ?>
 
         <div class="data-table-wrap">
             <table class="data-table">
-                <thead><tr><th>PO Ref</th><th>Supplier</th><th>Items</th><th>Total</th><th>Paid</th><th>Due</th><th>Date</th><th>Actions</th></tr></thead>
+                <thead><tr><th>PO Ref</th><th>Supplier</th><th>Items</th><?php if ($canViewPurchaseCost): ?><th>Total</th><th>Paid</th><th>Due</th><?php endif; ?><th>Date</th><th>Actions</th></tr></thead>
                 <tbody>
                     <?php if (empty($purchaseOrders)): ?>
-                    <tr class="empty-row"><td colspan="8">No purchase orders found<?= $purchaseSearch !== '' ? ' for "' . tdc_e($purchaseSearch) . '"' : '' ?>.</td></tr>
+                    <?= tdc_empty_state('inbox', 'No purchase orders yet', $purchaseSearch !== '' || $purchaseDateActive || $purchaseStatus !== '' ? 'No purchase orders match the current filters.' : 'Record stock received from suppliers to build your purchase history.', $canViewPurchaseCost ? '<a class="btn btn-primary" href="pharmacy.php?section=purchases&new=1">New Purchase</a>' : '', $canViewPurchaseCost ? 8 : 5) ?>
                     <?php else: foreach ($purchaseOrders as $po): ?>
                     <tr>
                         <td><?= tdc_e($po['PORef']) ?></td>
                         <td><?= tdc_e($po['SupplierName']) ?></td>
                         <td><?= (int) $po['LineCount'] ?></td>
-                        <td><?= number_format((float) $po['TotalAmount'], 2) ?></td>
+                        <?php if ($canViewPurchaseCost): ?><td><?= number_format((float) $po['TotalAmount'], 2) ?></td>
                         <td><?= number_format((float) $po['AmountPaid'], 2) ?></td>
-                        <td><span class="status-badge<?= (float) $po['DueBalance'] > 0 ? ' danger' : '' ?>"><?= number_format((float) $po['DueBalance'], 2) ?></span></td>
+                        <td><span class="status-badge<?= (float) $po['DueBalance'] > 0 ? ' danger' : '' ?>"><?= number_format((float) $po['DueBalance'], 2) ?></span></td><?php endif; ?>
                         <td><?= tdc_e(date('Y-m-d', strtotime((string) $po['PurchaseDate']))) ?></td>
                         <td>
                             <div class="row-actions">
-                                <a href="pharmacy.php?section=purchases&view=<?= urlencode($po['PORef']) ?>" class="btn-sm">View</a>
-                                <form method="POST" action="pharmacy.php?section=purchases" onsubmit="return confirm('Void this purchase order? Stock added by it will be reversed. This cannot be undone.');">
+                                <a class="icon-action waiting-open" href="pharmacy.php?section=purchases&view=<?= urlencode($po['PORef']) ?>" title="View purchase order" aria-label="View purchase order"><?= tdc_icon('eye', 15) ?></a>
+                                <?php if ($canViewPurchaseCost): ?><form method="POST" action="pharmacy.php?section=purchases" onsubmit="return confirm('Void this purchase order? Stock added by it will be reversed. This cannot be undone.');">
                                     <input type="hidden" name="csrf_token" value="<?= tdc_e($csrfToken) ?>">
                                     <input type="hidden" name="form_action" value="void">
                                     <input type="hidden" name="PORef" value="<?= tdc_e($po['PORef']) ?>">
-                                    <button type="submit" class="btn-sm danger">Void</button>
-                                </form>
+                                    <button type="submit" class="icon-action danger" title="Void purchase order" aria-label="Void purchase order"><?= tdc_icon('ban', 15) ?></button>
+                                </form><?php endif; ?>
                             </div>
                         </td>
                     </tr>
@@ -1778,6 +1960,8 @@ $justVoided  = isset($_GET['voided']);
                 </tbody>
             </table>
         </div>
+
+        <?= tdc_pager($purchasePage, $purchasePerPage, $purchaseTotal, array_filter(['section' => 'purchases', 'q' => $purchaseSearch, 'status' => $purchaseStatus, 'from_date' => $purchaseFrom, 'to_date' => $purchaseTo, 'per_page' => $purchasePerPage], static fn($value): bool => $value !== '' && $value !== null)) ?>
 
         <?php endif; ?>
 
@@ -2083,6 +2267,13 @@ function initComboBox(hiddenIdInput, searchInput, listEl, options, onSelect){
 <?php if ($section === 'purchases' && $purchaseShowForm): ?>
 (function(){
     const tbody = document.getElementById('lineItemsBody');
+    const modal = document.getElementById('purchaseModal');
+    const unitOptions = <?= json_encode($purchaseUnitOptions, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
+    const opener = document.getElementById('openPurchaseModal');
+    const open = () => { modal.querySelector('.modal-box').removeAttribute('aria-hidden'); modal.removeAttribute('aria-hidden'); modal.classList.add('show'); };
+    opener.addEventListener('click', open);
+    document.querySelectorAll('[data-close-purchase]').forEach(button => button.addEventListener('click', () => { modal.classList.remove('show'); opener.focus(); }));
+    window.addEventListener('DOMContentLoaded', () => { opener.focus(); open(); });
 
     function renumber(){
         tbody.querySelectorAll('.line-item-row').forEach(function(row, i){ row.querySelector('.line-no').textContent = i + 1; });
@@ -2094,11 +2285,19 @@ function initComboBox(hiddenIdInput, searchInput, listEl, options, onSelect){
             const qty = parseFloat(row.querySelector('input[name="Quantity[]"]').value) || 0;
             const price = parseFloat(row.querySelector('input[name="UnitPrice[]"]').value) || 0;
             total += qty * price;
+            const amount = row.querySelector('.purchase-line-amount');
+            if (amount) amount.textContent = (qty * price).toFixed(2);
         });
-        document.getElementById('pof_TotalDisplay').textContent = total.toFixed(2);
+        const discount = parseFloat(document.getElementById('pof_Discount').value) || 0;
+        const vat = parseFloat(document.getElementById('pof_VATAmount').value) || 0;
+        const net = Math.max(0, total - discount + vat);
+        document.getElementById('pof_SubtotalDisplay').textContent = total.toFixed(2);
+        document.getElementById('pof_NetDisplay').textContent = net.toFixed(2);
         const paidInput = document.getElementById('pof_AmountPaid');
         const paid = parseFloat(paidInput.value) || 0;
-        document.getElementById('pof_DueDisplay').textContent = (total - paid).toFixed(2);
+        paidInput.max = net.toFixed(2);
+        document.getElementById('pof_Discount').max = total.toFixed(2);
+        document.getElementById('pof_DueDisplay').textContent = Math.max(0, net - paid).toFixed(2);
     }
 
     function bindRemove(row){
@@ -2107,6 +2306,17 @@ function initComboBox(hiddenIdInput, searchInput, listEl, options, onSelect){
         });
     }
     function bindRecalc(row){
+        const labels = ['Item','Medicine','Quantity','Unit settings','Purchase Price','Selling Price','Expiry Date','Amount','Actions'];
+        row.querySelectorAll('td').forEach((cell,index) => {
+            cell.dataset.label = labels[index];
+            cell.querySelectorAll('input').forEach(input => input.setAttribute('aria-label', input.name.replace('[]','')));
+        });
+        row.querySelector('input[name="ItemName[]"]').addEventListener('change', function(){
+            const item = unitOptions.find(item => item.ItemName.trim().toLowerCase() === this.value.trim().toLowerCase());
+            ['Category','PurchaseUnit','SalesUnit','ConversionFactor','SellingPrice'].forEach(field => {
+                row.querySelector('[name="'+field+'[]"]').value = item?.[field] ?? (field === 'ConversionFactor' ? '1' : '');
+            });
+        });
         row.querySelectorAll('input[name="Quantity[]"], input[name="UnitPrice[]"]').forEach(function(el){
             el.addEventListener('input', recalcAll);
         });
@@ -2114,6 +2324,8 @@ function initComboBox(hiddenIdInput, searchInput, listEl, options, onSelect){
 
     tbody.querySelectorAll('.line-item-row').forEach(function(row){ bindRemove(row); bindRecalc(row); });
     document.getElementById('pof_AmountPaid').addEventListener('input', recalcAll);
+    document.getElementById('pof_Discount').addEventListener('input', recalcAll);
+    document.getElementById('pof_VATAmount').addEventListener('input', recalcAll);
 
     document.getElementById('addLineBtn').addEventListener('click', function(){
         const template = tbody.querySelector('.line-item-row').cloneNode(true);

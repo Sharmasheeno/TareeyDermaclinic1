@@ -62,8 +62,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $error = 'Please enter both username and password.';
         } else {
             $stmt = $pdo->prepare(
-                'SELECT id, userlegalname, role, username, password
-                 FROM users WHERE username = :username LIMIT 1'
+                'SELECT id,userlegalname,role,role_id,username,password,is_active,is_root
+                 FROM users WHERE username=:username AND is_active=1 LIMIT 1'
             );
             $stmt->execute(['username' => $username]);
             $user = $stmt->fetch();
@@ -73,7 +73,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $_SESSION['user_id']       = $user['id'];
                 $_SESSION['username']      = $user['username'];
                 $_SESSION['role']          = $user['role'];
+                $_SESSION['role_id']       = $user['role_id'];
+                $_SESSION['is_root']       = $user['is_root'];
                 $_SESSION['userlegalname'] = $user['userlegalname'];
+                $pdo->prepare('UPDATE users SET last_login_at=NOW() WHERE id=?')->execute([$user['id']]);
                 unset($_SESSION['login_attempts'], $_SESSION['login_lockout_until']);
 
                 header('Location: pages/home.php');

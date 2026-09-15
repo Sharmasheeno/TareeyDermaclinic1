@@ -26,7 +26,7 @@ $revenueRows = [];
 $dashboardError = false;
 
 try {
-    if ($dashboardRole === 'superuser' || $dashboardRole === 'receptionuser') {
+    if ($dashboardRole === 'superuser' || tdc_can('reception.view')) {
         $patientUrl = $dashboardRole === 'superuser' ? 'patients.php' : 'reception.php?section=patients';
         $metrics = [
             ['Registered today', $dashboardScalar('SELECT COUNT(*) FROM Patients WHERE DATE(RegisteredAt) = CURDATE()'), $patientUrl, 'Patient registrations', 'user-plus', 'blue'],
@@ -47,10 +47,10 @@ try {
         if ($dashboardRole === 'superuser') {
             $metrics[] = ['Sales today', $dashboardScalar("SELECT COUNT(DISTINCT SUBSTRING_INDEX(SaleID, '-', 1)) FROM PharmacySales WHERE DATE(SaleDate) = CURDATE()"), 'pharmacy.php?section=pos', 'Pharmacy transactions', 'cart', 'rose'];
             $metrics[] = ['Low stock', $dashboardScalar('SELECT COUNT(*) FROM Inventory WHERE QuantityInStock <= ReorderLevel'), 'pharmacy.php?section=inventory&low=1', 'At or below reorder level', 'package', 'orange'];
-            $metrics[] = ['Users', $dashboardScalar('SELECT COUNT(*) FROM users'), 'settings.php?section=users', 'System accounts', 'users', 'teal'];
+            $metrics[] = ['Users', $dashboardScalar('SELECT COUNT(*) FROM users'), 'setup.php?section=users', 'System accounts', 'users', 'teal'];
             $metrics[] = ['Net income this month', number_format((float) $dashboardScalar("SELECT COALESCE(SUM(Credit-Debit), 0) FROM Accounting WHERE AccountType IN ('Revenue','Expense') AND TransactionDate >= DATE_FORMAT(CURDATE(), '%Y-%m-01') AND TransactionDate < CURDATE() + INTERVAL 1 DAY"), 2), 'reports.php?section=income-statement', 'Posted revenue less expenses', 'chart', 'purple'];
             $workLinks[] = ['Point of Sale', 'Sell pharmacy products', 'pharmacy.php?section=pos', 'cart', 'green'];
-            $workLinks[] = ['Manage Users', 'Maintain staff accounts', 'settings.php?section=users', 'users', 'blue'];
+            $workLinks[] = ['Manage Users', 'Maintain staff accounts', 'setup.php?section=users', 'users', 'blue'];
             $workLinks[] = ['Financial Reports', 'Review financial statements', 'reports.php', 'chart', 'teal'];
             $activityMap = [];
             foreach ($pdo->query("SELECT DATE(RegisteredAt) day, COUNT(*) total FROM Patients WHERE RegisteredAt >= CURDATE() - INTERVAL 29 DAY GROUP BY DATE(RegisteredAt)")->fetchAll() as $row) {
@@ -63,7 +63,7 @@ try {
             }
             $revenueRows = $pdo->query("SELECT AccountName label, SUM(Credit-Debit) total FROM Accounting WHERE AccountType='Revenue' AND TransactionDate >= DATE_FORMAT(CURDATE(), '%Y-%m-01') AND TransactionDate < CURDATE() + INTERVAL 1 DAY GROUP BY AccountName HAVING total > 0 ORDER BY total DESC LIMIT 5")->fetchAll();
         }
-    } elseif ($dashboardRole === 'doctoruser') {
+    } elseif (tdc_can('doctor.workspace')) {
         $doctorStmt = $pdo->prepare('SELECT DoctorID FROM Doctors WHERE UserID = ?');
         $doctorStmt->execute([$_SESSION['user_id']]);
         $doctorId = (int) $doctorStmt->fetchColumn();
@@ -85,7 +85,7 @@ try {
             $stmt->execute([$doctorId]);
             foreach ($stmt->fetchAll() as $row) $dashboardRows[] = [$row['VisitReference'],$row['PatientName'],date('H:i',strtotime($row['VisitDate'])),$row['QueueStatus']];
         }
-    } elseif ($dashboardRole === 'pharmacyuser') {
+    } elseif (tdc_can('pharmacy.view')) {
         $sales = "SELECT MIN(TotalAmount) total, MIN(AmountPaid) paid, MIN(DueBalance) due, MIN(SaleDate) sold FROM PharmacySales GROUP BY SUBSTRING_INDEX(SaleID, '-', 1)";
         $metrics = [
             ['Sales today', $dashboardScalar("SELECT COUNT(*) FROM ($sales) s WHERE DATE(sold) = CURDATE()"), 'pharmacy.php?section=pos', 'Pharmacy transactions', 'cart', 'blue'],
@@ -101,7 +101,7 @@ try {
         foreach ($pdo->query("SELECT SUBSTRING_INDEX(SaleID, '-', 1) ref, MIN(CustomerName) customer, MIN(TotalAmount) total, MIN(PaymentStatus) payment FROM PharmacySales GROUP BY ref ORDER BY MIN(SaleDate) DESC LIMIT 8")->fetchAll() as $row) {
             $dashboardRows[] = [$row['ref'], $row['customer'], number_format((float) $row['total'], 2), $row['payment']];
         }
-    } else {
+    } elseif (tdc_can('laboratory.view')) {
         $metrics = [
             ['Ready for testing', $dashboardScalar("SELECT COUNT(*) FROM Laboratory WHERE PaymentStatus = 'Paid' AND Result = 'Pending'"), 'laboratory.php?result=Pending', 'Paid orders awaiting results', 'lab', 'purple'],
             ['Orders today', $dashboardScalar("SELECT COUNT(*) FROM Laboratory WHERE PaymentStatus = 'Paid' AND DATE(OrderDate) = CURDATE()"), 'laboratory.php', 'Paid orders placed today', 'receipt', 'blue'],
@@ -114,6 +114,14 @@ try {
         foreach ($pdo->query("SELECT l.LaboratoryID, p.PatientName, l.TestName, l.OrderDate FROM Laboratory l JOIN Patients p ON p.PatientID = l.PatientID WHERE l.PaymentStatus = 'Paid' AND l.Result = 'Pending' ORDER BY l.OrderDate ASC LIMIT 8")->fetchAll() as $row) {
             $dashboardRows[] = [$row['LaboratoryID'], $row['PatientName'], $row['TestName'], date('d M Y', strtotime($row['OrderDate']))];
         }
+    } else {
+        $metrics = [
+            ['Accounting', 'Open', $dashboardRole === 'superuser' || tdc_can('accounting.view') ? 'accounting.php' : 'home.php', 'Financial records', 'receipt', 'blue'],
+            ['Reports', 'Open', tdc_can('reports.view') ? 'reports.php' : 'home.php', 'Authorized reporting', 'chart', 'green'],
+        ];
+        $workLinks = [];
+        $dashboardTitle = 'Authorized workspace';
+        $dashboardColumns = ['Access'];
     }
 } catch (PDOException $exception) {
     error_log('[DASHBOARD] ' . $exception->getMessage());

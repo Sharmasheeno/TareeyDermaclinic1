@@ -56,6 +56,8 @@ session_set_cookie_params([
 ]);
 session_start();
 require_once __DIR__ . '/../includes/access.php';
+require_once __DIR__ . '/../includes/patient-age.php';
+require_once __DIR__ . '/../includes/ui.php';
 tdc_require_access();
 
 header('X-Frame-Options: DENY');
@@ -139,8 +141,8 @@ const NAV_ITEMS = [
         'icon'  => '<path d="M4 13a1 1 0 011-1h1a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1v-4zm5-5a1 1 0 011-1h1a1 1 0 011 1v9a1 1 0 01-1 1h-1a1 1 0 01-1-1V8zm5-4a1 1 0 011-1h1a1 1 0 011 1v13a1 1 0 01-1 1h-1a1 1 0 01-1-1V4z"/>',
     ],
     [
-        'href'  => 'settings.php',
-        'label' => 'Settings',
+        'href'  => 'setup.php',
+        'label' => 'Setup',
         'icon'  => '<path fill-rule="evenodd" d="M8.34 1.804A1 1 0 019.32 1h1.36a1 1 0 01.98.804l.331 1.652a6.993 6.993 0 011.929 1.115l1.598-.54a1 1 0 011.186.447l.68 1.178a1 1 0 01-.223 1.28l-1.281 1.05a7.05 7.05 0 010 2.228l1.28 1.05a1 1 0 01.224 1.28l-.68 1.178a1 1 0 01-1.187.447l-1.598-.54a6.993 6.993 0 01-1.929 1.115l-.33 1.652a1 1 0 01-.98.804H9.32a1 1 0 01-.98-.804l-.331-1.652a6.993 6.993 0 01-1.929-1.115l-1.598.54a1 1 0 01-1.186-.447l-.68-1.178a1 1 0 01.223-1.28l1.281-1.05a7.05 7.05 0 010-2.228l-1.28-1.05a1 1 0 01-.224-1.28l.68-1.178a1 1 0 011.187-.447l1.598.54A6.993 6.993 0 018.01 3.456l.33-1.652zM10 13a3 3 0 100-6 3 3 0 000 6z" clip-rule="evenodd"/>',
     ],
 ];
@@ -664,13 +666,12 @@ if (empty($_SESSION['user_id'])) {
     exit;
 }
 
-if (!in_array($_SESSION['role'] ?? '', ALLOWED_RECEPTION_ROLES, true)) {
-    header('Location: home.php');
-    exit;
-}
+tdc_require_permission('reception.view');
 
 require_once __DIR__ . '/../../db.php';
 require_once __DIR__ . '/../includes/workflow.php';
+$paymentMethods = tdc_payment_methods($pdo);
+$paymentMethodNames = array_column($paymentMethods, 'MethodName');
 
 if (empty($_SESSION['csrf_token'])) {
     $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
@@ -683,6 +684,14 @@ $section = $_GET['section'] ?? null;
 if ($section !== null && !in_array($section, ALLOWED_SECTIONS, true)) {
     $section = null;
 }
+$receptionSectionPermissions = ['patients'=>'patients.view','consultations'=>'consultations.view','laboratory'=>'lab_billing.view','pharmacy'=>'pharmacy_billing.view'];
+if ($section !== null && !tdc_can($receptionSectionPermissions[$section])) tdc_forbidden();
+$canPatientCreate = tdc_can('patients.create');
+$canPatientEdit = tdc_can('patients.edit');
+$canPatientDelete = tdc_can('patients.delete');
+$canBookConsultation = tdc_can('consultations.create');
+$canReceiveLabPayment = tdc_can('lab_billing.payment');
+$canReceivePharmacyPayment = tdc_can('pharmacy_billing.payment');
 
 $errors = [];
 
@@ -726,13 +735,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($section, ALLOWED_SECTIONS
 
         // --- Consultation booking ------------------------------------
         if ($section === 'consultations') {
+            tdc_require_permission('consultations.create');
             if ($formAction === 'collect') {
                 $visitId = ctype_digit((string) ($_POST['VisitID'] ?? '')) ? (int) $_POST['VisitID'] : 0;
                 $collection = is_numeric($_POST['PaymentAmount'] ?? null) ? round((float) $_POST['PaymentAmount'], 2) : -1;
                 $paymentMethod = (string) ($_POST['PaymentMethod'] ?? 'Cash');
                 if ($visitId < 1) $errors[] = 'Please select a valid consultation.';
                 if ($collection <= 0) $errors[] = 'Payment amount must be greater than zero.';
-                if (!in_array($paymentMethod, ['Cash','Card','Mobile Money','Bank','Other'], true)) $errors[] = 'Please select a valid payment method.';
+                if (!in_array($paymentMethod, $paymentMethodNames, true)) $errors[] = 'Please select a valid active payment method.';
                 if (!$errors) {
                     $pdo->beginTransaction();
                     try {
@@ -778,7 +788,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($section, ALLOWED_SECTIONS
             if (!$visitDate || $visitDate->format('Y-m-d\TH:i') !== $oldVisit['VisitDate']) $errors[] = 'Please select a valid consultation date and time.';
             $fee = $doctor ? round((float) $doctor['ConsultationFee'], 2) : 0.0;
             if ($amountPaid < 0 || $amountPaid > $fee) $errors[] = 'Amount paid must be between zero and the consultation fee.';
-            if ($amountPaid > 0 && !in_array($oldVisit['PaymentMethod'], ['Cash','Card','Mobile Money','Bank','Other'], true)) $errors[] = 'Please select a payment method when receiving money.';
+            if ($amountPaid > 0 && !in_array($oldVisit['PaymentMethod'], $paymentMethodNames, true)) $errors[] = 'Please select an active payment method when receiving money.';
             if (!$errors) {
                 $paymentStatus = tdc_workflow_payment_status($fee, $amountPaid);
                 $queueStatus = $paymentStatus === 'Paid' ? 'Waiting' : 'Pending Payment';
@@ -806,12 +816,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($section, ALLOWED_SECTIONS
         // --- Patients ------------------------------------------------
         } elseif ($section === 'patients') {
             if ($formAction === 'delete') {
+                tdc_require_permission('patients.delete');
                 $deleteId = (int) ($_POST['PatientID'] ?? 0);
                 $errors   = $deleteId > 0 ? tdc_delete_patient($pdo, $deleteId) : ['Invalid patient selected.'];
                 if (empty($errors)) {
                     tdc_redirect('patients', 'deleted');
                 }
             } elseif ($formAction === 'visit') {
+                tdc_require_permission('visits.create');
                 $patientId = (int) ($_POST['PatientID'] ?? 0);
                 header('Location: reception.php?section=consultations&patient=' . $patientId);
                 exit;
@@ -823,14 +835,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($section, ALLOWED_SECTIONS
                 $oldPatient['Gender']          = (string) ($_POST['Gender'] ?? '');
                 $oldPatient['Age']             = trim((string) ($_POST['Age'] ?? ''));
                 $oldPatient['DateOfBirth']     = trim((string) ($_POST['DateOfBirth'] ?? ''));
-                if ($oldPatient['DateOfBirth'] !== '' && tdc_is_valid_date($oldPatient['DateOfBirth']) && $oldPatient['DateOfBirth'] <= date('Y-m-d')) {
-                    $oldPatient['Age'] = (string)tdc_age_from_birth_date($oldPatient['DateOfBirth']);
-                }
+                [$oldPatient['Age'], $oldPatient['DateOfBirth']] = tdc_sync_age_dob($oldPatient['Age'], $oldPatient['DateOfBirth']);
                 $oldPatient['PatientType']     = (string) ($_POST['PatientType'] ?? '');
                 $oldPatient['AllocatedDoctor'] = trim((string) ($_POST['AllocatedDoctor'] ?? ''));
                 $oldPatient['Remark']          = trim((string) ($_POST['Remark'] ?? ''));
 
                 $isEdit = $oldPatient['PatientID'] !== '' && ctype_digit($oldPatient['PatientID']);
+                tdc_require_permission($isEdit ? 'patients.edit' : 'patients.create');
                 $errors = tdc_validate_patient_form($oldPatient);
                 if (!$isEdit && $oldPatient['PatientPhone'] !== '') {
                     $stmt = $pdo->prepare('SELECT PatientID,PatientName FROM Patients WHERE REPLACE(REPLACE(REPLACE(PatientPhone,\' \',\'\'),\'-\',\'\'),\'+\',\'\') = REPLACE(REPLACE(REPLACE(?,\' \',\'\'),\'-\',\'\'),\'+\',\'\') LIMIT 1');
@@ -853,13 +864,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($section, ALLOWED_SECTIONS
 
         // --- Laboratory ------------------------------------------------
         } elseif ($section === 'laboratory') {
+            tdc_require_permission('lab_billing.payment');
             if ($formAction !== 'collect') tdc_forbidden();
             $labId = trim((string)($_POST['LaboratoryID'] ?? ''));
             $collection = is_numeric($_POST['PaymentAmount'] ?? null) ? round((float)$_POST['PaymentAmount'],2) : -1;
             $paymentMethod = (string)($_POST['PaymentMethod'] ?? '');
             if ($labId === '') $errors[] = 'Select a laboratory bill.';
             if ($collection <= 0) $errors[] = 'Amount received must be greater than zero.';
-            if (!in_array($paymentMethod,['Cash','Card','Mobile Money','Bank','Other'],true)) $errors[] = 'Select a valid payment method.';
+            if (!in_array($paymentMethod,$paymentMethodNames,true)) $errors[] = 'Select a valid active payment method.';
             if (!$errors) {
                 $pdo->beginTransaction();
                 try {
@@ -878,6 +890,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($section, ALLOWED_SECTIONS
 
         // --- Pharmacy ----------------------------------------------------
         } elseif ($section === 'pharmacy') {
+            tdc_require_permission('pharmacy_billing.payment');
             if ($formAction === 'delete') {
                 $base = preg_replace('/[^A-Za-z0-9]/', '', (string) ($_POST['BillRef'] ?? ''));
                 if ($base === '') {
@@ -985,11 +998,97 @@ if ($section === 'patients') {
     $patients = $stmt->fetchAll();
 }
 
+$consultationSearch = trim((string) ($_GET['q'] ?? ''));
+$consultationStatus = trim((string) ($_GET['status'] ?? ''));
+$consultationPerPage = (int) ($_GET['per_page'] ?? 25);
+if (!in_array($consultationPerPage, [10, 25, 50, 100], true)) $consultationPerPage = 25;
+$consultationPage = max(1, (int) ($_GET['page'] ?? 1));
+[$consultationFrom, $consultationTo, $consultationRangeError] = tdc_date_range_resolve();
+$consultationStatuses = ['Pending Payment', 'Waiting', 'In Consultation', 'Completed', 'Cancelled'];
+if ($consultationStatus !== '' && !in_array($consultationStatus, $consultationStatuses, true)) $consultationStatus = '';
+
 $consultationVisits = [];
+$consultationTotal = 0;
+$consultationCounts = ['total' => 0, 'waiting' => 0, 'in_consultation' => 0, 'completed' => 0];
+$consultationExportUrl = '';
+
 if ($section === 'consultations') {
-    $consultationVisits = $pdo->query(
-        'SELECT v.*,p.PatientName,d.DoctorName FROM Visits v JOIN Patients p ON p.PatientID=v.PatientID JOIN Doctors d ON d.DoctorID=v.DoctorID ORDER BY v.VisitDate DESC LIMIT 200'
-    )->fetchAll();
+    $consultationWhere = [];
+    $consultationParams = [];
+    $scopeWhere = [];
+    $scopeParams = [];
+    if ($consultationSearch !== '') {
+        $scopeWhere[] = '(v.VisitReference LIKE ? OR p.PatientName LIKE ? OR p.PatientPhone LIKE ?)';
+        $like = '%' . $consultationSearch . '%';
+        $scopeParams[] = $like;
+        $scopeParams[] = $like;
+        $scopeParams[] = $like;
+    }
+    foreach (tdc_sql_date_range('v.VisitDate', $consultationFrom, $consultationTo, $scopeParams) as $clause) {
+        $scopeWhere[] = $clause;
+    }
+    $consultationWhere = $scopeWhere;
+    $consultationParams = $scopeParams;
+    if ($consultationStatus !== '') {
+        $consultationWhere[] = 'v.QueueStatus = ?';
+        $consultationParams[] = $consultationStatus;
+    }
+    $scopeSql = $scopeWhere ? ' WHERE ' . implode(' AND ', $scopeWhere) : '';
+    $consultationSql = $consultationWhere ? ' WHERE ' . implode(' AND ', $consultationWhere) : '';
+
+    $countStmt = $pdo->prepare('SELECT COUNT(*) FROM Visits v JOIN Patients p ON p.PatientID=v.PatientID' . $scopeSql);
+    $countStmt->execute($scopeParams);
+    $consultationCounts['total'] = (int) $countStmt->fetchColumn();
+    $breakdown = $pdo->prepare('SELECT v.QueueStatus, COUNT(*) AS Total FROM Visits v JOIN Patients p ON p.PatientID=v.PatientID' . $scopeSql . ' GROUP BY v.QueueStatus');
+    $breakdown->execute($scopeParams);
+    foreach ($breakdown->fetchAll() as $row) {
+        if ($row['QueueStatus'] === 'Waiting') $consultationCounts['waiting'] = (int) $row['Total'];
+        if ($row['QueueStatus'] === 'In Consultation') $consultationCounts['in_consultation'] = (int) $row['Total'];
+        if ($row['QueueStatus'] === 'Completed') $consultationCounts['completed'] = (int) $row['Total'];
+    }
+
+    if (($_GET['export'] ?? '') === 'csv') {
+        require_once __DIR__ . '/../includes/data-transfer.php';
+        $exportStmt = $pdo->prepare(
+            'SELECT v.VisitReference, p.PatientName, p.Gender, p.Age, p.PatientPhone, d.DoctorName,
+                    v.VisitDate, v.QueueStatus, v.PaymentStatus, v.ConsultationFee, v.AmountPaid, v.DueBalance
+             FROM Visits v JOIN Patients p ON p.PatientID=v.PatientID JOIN Doctors d ON d.DoctorID=v.DoctorID'
+            . $consultationSql . ' ORDER BY v.VisitDate DESC LIMIT 5000'
+        );
+        $exportStmt->execute($consultationParams);
+        $exportRows = [];
+        foreach ($exportStmt->fetchAll() as $row) {
+            $exportRows[] = [
+                (string) $row['VisitReference'], (string) $row['PatientName'], (string) $row['Gender'],
+                (string) $row['Age'], (string) $row['PatientPhone'], (string) $row['DoctorName'],
+                (string) $row['VisitDate'], (string) $row['QueueStatus'], (string) $row['PaymentStatus'],
+                number_format((float) $row['ConsultationFee'], 2), number_format((float) $row['AmountPaid'], 2),
+                number_format((float) $row['DueBalance'], 2),
+            ];
+        }
+        tdc_csv_download('doctor-waiting-' . date('Y-m-d') . '.csv', ['Appointment', 'Patient', 'Gender', 'Age', 'Phone', 'Doctor', 'Visit Date', 'Queue Status', 'Payment Status', 'Fee', 'Paid', 'Balance'], $exportRows);
+    }
+
+    $totalStmt = $pdo->prepare('SELECT COUNT(*) FROM Visits v JOIN Patients p ON p.PatientID=v.PatientID' . $consultationSql);
+    $totalStmt->execute($consultationParams);
+    $consultationTotal = (int) $totalStmt->fetchColumn();
+    $totalPages = max(1, (int) ceil($consultationTotal / $consultationPerPage));
+    if ($consultationPage > $totalPages) $consultationPage = $totalPages;
+    $offset = ($consultationPage - 1) * $consultationPerPage;
+
+    $listStmt = $pdo->prepare(
+        'SELECT v.*, p.PatientName, p.PatientPhone, p.Gender, p.Age, d.DoctorName
+         FROM Visits v JOIN Patients p ON p.PatientID=v.PatientID JOIN Doctors d ON d.DoctorID=v.DoctorID'
+        . $consultationSql
+        . " ORDER BY FIELD(v.QueueStatus,'In Consultation','Waiting','Pending Payment','Completed','Cancelled'), v.VisitDate DESC LIMIT $consultationPerPage OFFSET $offset"
+    );
+    $listStmt->execute($consultationParams);
+    $consultationVisits = $listStmt->fetchAll();
+
+    $consultationExportUrl = 'reception.php?' . http_build_query(array_filter([
+        'section' => 'consultations', 'export' => 'csv', 'q' => $consultationSearch,
+        'status' => $consultationStatus, 'from_date' => $consultationFrom, 'to_date' => $consultationTo,
+    ], static fn($value): bool => $value !== '' && $value !== null));
 }
 
 $labBills = [];
@@ -1206,18 +1305,6 @@ $justVisited = isset($_GET['visited']);
     #js-toast svg{ width:16px; height:16px; flex-shrink:0; }
     #js-toast.show{ opacity:1; transform:translateX(-50%) translateY(0); }
 
-    .modal-overlay{ position:fixed; inset:0; background:rgba(46,49,146,0.35); display:none; align-items:center; justify-content:center; z-index:1000; padding:20px; }
-    .modal-overlay.show{ display:flex; }
-    .modal-box{ background:var(--white); border:2px solid var(--navy); width:100%; max-width:560px; max-height:90vh; overflow-y:auto; }
-    .modal-head{ display:flex; align-items:center; justify-content:space-between; padding:18px 22px; border-bottom:2px solid var(--navy); }
-    .modal-head h3{ font-size:16px; font-weight:700; color:var(--navy); }
-    .modal-close{ appearance:none; background:none; border:none; cursor:pointer; color:var(--navy-55); width:26px; height:26px; }
-    .modal-close:hover{ color:var(--orange); }
-    .modal-close svg{ width:100%; height:100%; }
-    .modal-body{ padding:22px; }
-    .modal-body .form-group{ margin-bottom:16px; }
-    .modal-hint{ font-size:11.5px; color:var(--navy-55); margin-top:4px; }
-    .modal-actions{ display:flex; justify-content:flex-end; gap:10px; margin-top:6px; }
 
     .logout-fab{ position:fixed; bottom:20px; right:20px; width:40px; height:40px; border-radius:50%; display:flex; align-items:center; justify-content:center; background:var(--navy); border:2px solid var(--white); cursor:pointer; text-decoration:none; z-index:9999; box-shadow:0 2px 6px rgba(46,49,146,0.35); transition:transform 0.15s ease, background 0.15s ease, box-shadow 0.15s ease; }
     .logout-fab svg{ width:18px; height:18px; stroke:var(--white); fill:none; stroke-width:2; stroke-linecap:round; stroke-linejoin:round; transition:stroke 0.15s ease; }
@@ -1271,6 +1358,13 @@ $justVisited = isset($_GET['visited']);
 
 <main class="page-body">
 
+<nav class="setup-section-nav" aria-label="Reception sections">
+    <?php if (tdc_can('patients.view')): ?><a href="reception.php?section=patients"<?= $section === 'patients' ? ' class="active" aria-current="page"' : '' ?>><?= tdc_icon('users', 16) ?><span>Patients</span></a><?php endif; ?>
+    <?php if (tdc_can('consultations.view')): ?><a href="reception.php?section=consultations"<?= $section === 'consultations' ? ' class="active" aria-current="page"' : '' ?>><?= tdc_icon('calendar', 16) ?><span>Consultations</span></a><?php endif; ?>
+    <?php if (tdc_can('lab_billing.view')): ?><a href="reception.php?section=laboratory"<?= $section === 'laboratory' ? ' class="active" aria-current="page"' : '' ?>><?= tdc_icon('flask', 16) ?><span>Laboratory Billing</span></a><?php endif; ?>
+    <?php if (tdc_can('pharmacy_billing.view')): ?><a href="reception.php?section=pharmacy"<?= $section === 'pharmacy' ? ' class="active" aria-current="page"' : '' ?>><?= tdc_icon('pill', 16) ?><span>Pharmacy Billing</span></a><?php endif; ?>
+</nav>
+
 <?php if ($section === null): ?>
 
     <div class="welcome-eyebrow">Reception</div>
@@ -1278,30 +1372,30 @@ $justVisited = isset($_GET['visited']);
     <div class="welcome-sub">Register patients and manage laboratory and pharmacy billing.</div>
 
     <div class="setup-grid">
-        <a href="reception.php?section=patients" class="setup-card">
+        <?php if(tdc_can('patients.view')):?><a href="reception.php?section=patients" class="setup-card">
             <div class="setup-icon"><svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 00-4-4H7a4 4 0 00-4 4v2"/><circle cx="10" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg></div>
             <div>
                 <div class="setup-card-title">Patient Registration</div>
                 <div class="setup-card-desc">Create patient records, update details, and review visit history.</div>
                 <span class="setup-card-cta">Manage patients</span>
             </div>
-        </a>
-        <a href="reception.php?section=laboratory" class="setup-card">
+        </a><?php endif;?>
+        <?php if(tdc_can('lab_billing.view')):?><a href="reception.php?section=laboratory" class="setup-card">
             <div class="setup-icon"><svg viewBox="0 0 24 24"><path d="M9 2h6M10 2v6.5L4.5 18a2 2 0 001.7 3h11.6a2 2 0 001.7-3L14 8.5V2"/></svg></div>
             <div>
                 <div class="setup-card-title">Laboratory Bills</div>
                 <div class="setup-card-desc">Order tests, record payments, and track laboratory billing.</div>
                 <span class="setup-card-cta">Open laboratory</span>
             </div>
-        </a>
-        <a href="reception.php?section=pharmacy" class="setup-card">
+        </a><?php endif;?>
+        <?php if(tdc_can('pharmacy_billing.view')):?><a href="reception.php?section=pharmacy" class="setup-card">
             <div class="setup-icon"><svg viewBox="0 0 24 24"><path d="M13.657 2.343a4 4 0 00-5.657 0L2.343 8a4 4 0 105.657 5.657l5.657-5.657a4 4 0 000-5.657zM8.5 6.5l5 5"/></svg></div>
             <div>
                 <div class="setup-card-title">Pharmacy Bills</div>
                 <div class="setup-card-desc">Create prescription bills and manage pharmacy payments.</div>
                 <span class="setup-card-cta">Open pharmacy</span>
             </div>
-        </a>
+        </a><?php endif;?>
     </div>
 
     <section class="secondary-tools" aria-labelledby="reception-tools-title">
@@ -1346,19 +1440,73 @@ $justVisited = isset($_GET['visited']);
     <div class="welcome-title">Consultation Booking</div>
     <div class="welcome-sub">Schedule a patient, apply the doctor's fee, and send fully paid visits to the consultation queue.</div>
 
-    <form method="POST" action="reception.php?section=consultations" class="workflow-form" id="consultationForm">
+    <?php if($canBookConsultation):?><form method="POST" action="reception.php?section=consultations" class="workflow-form" id="consultationForm">
         <input type="hidden" name="csrf_token" value="<?= tdc_e($csrfToken) ?>">
         <input type="hidden" name="form_action" value="save">
         <section class="form-section"><div class="form-section-heading"><span><strong>Patient</strong><span>Select an existing patient record.</span></span></div><div class="form-group"><label for="cv_patient_search">Patient ID, name or phone</label><div class="combo" data-combo><input type="hidden" id="cv_patient" name="PatientID" value="<?= tdc_e($oldVisit['PatientID']) ?>" required><input type="hidden" id="cv_patient_label"><input class="combo-input" id="cv_patient_search" autocomplete="off" placeholder="Search patient by name or phone" required><ul class="combo-list" id="cv_patient_list" hidden></ul></div></div><a class="btn-sm" href="reception.php?section=patients">+ Register New Patient</a></section>
         <section class="form-section"><div class="form-section-heading"><span><strong>Consultation</strong><span>Assign an available doctor and appointment time.</span></span></div><div class="form-row"><div class="form-group"><label for="cv_doctor">Doctor</label><select id="cv_doctor" name="DoctorID" required><option value="">Select assignable doctor</option><?php foreach ($doctors as $d): if(empty($d['UserID'])) continue; ?><option value="<?= (int)$d['DoctorID'] ?>" data-fee="<?= tdc_e((string)$d['ConsultationFee']) ?>" <?= $oldVisit['DoctorID']===(string)$d['DoctorID']?'selected':'' ?>><?= tdc_e($d['DoctorName']) ?> — <?= number_format((float)$d['ConsultationFee'],2) ?></option><?php endforeach; ?></select></div><div class="form-group"><label for="cv_date">Consultation Date</label><input id="cv_date" type="datetime-local" name="VisitDate" value="<?= tdc_e($oldVisit['VisitDate']) ?>" required></div></div><div class="form-group"><label for="cv_complaint">Chief Complaint</label><textarea id="cv_complaint" name="ChiefComplaint" placeholder="Reason for consultation"><?= tdc_e($oldVisit['ChiefComplaint']) ?></textarea></div></section>
-        <section class="form-section"><div class="form-section-heading"><span><strong>Payment Summary</strong><span>Payment state is calculated automatically.</span></span></div><div class="form-row"><div class="form-group"><label for="cv_fee">Consultation Fee</label><input id="cv_fee" type="text" value="Select a doctor" readonly></div><div class="form-group"><label for="cv_paid">Amount Paid</label><input id="cv_paid" type="number" min="0" step="0.01" name="AmountPaid" value="<?= tdc_e($oldVisit['AmountPaid']) ?>" required></div></div><div class="form-row"><div class="form-group"><label>Balance</label><div class="due-display" id="cv_balance">0.00</div></div><div class="form-group"><label>Payment Status</label><div><span class="status-badge danger" id="cv_status">Unpaid</span></div></div><div class="form-group"><label for="cv_method">Payment Method</label><select id="cv_method" name="PaymentMethod"><option value="">Not applicable until payment is entered</option><?php foreach (['Cash','Card','Mobile Money','Bank','Other'] as $method): ?><option <?= $oldVisit['PaymentMethod']===$method?'selected':'' ?>><?= $method ?></option><?php endforeach; ?></select></div></div></section>
+        <section class="form-section"><div class="form-section-heading"><span><strong>Payment Summary</strong><span>Payment state is calculated automatically.</span></span></div><div class="form-row"><div class="form-group"><label for="cv_fee">Consultation Fee</label><input id="cv_fee" type="text" value="Select a doctor" readonly></div><div class="form-group"><label for="cv_paid">Amount Paid</label><input id="cv_paid" type="number" min="0" step="0.01" name="AmountPaid" value="<?= tdc_e($oldVisit['AmountPaid']) ?>" required></div></div><div class="form-row"><div class="form-group"><label>Balance</label><div class="due-display" id="cv_balance">0.00</div></div><div class="form-group"><label>Payment Status</label><div><span class="status-badge danger" id="cv_status">Unpaid</span></div></div><div class="form-group"><label for="cv_method">Payment Method</label><select id="cv_method" name="PaymentMethod"><option value="">Not applicable until payment is entered</option><?php foreach ($paymentMethods as $method): ?><option value="<?=tdc_e($method['MethodName'])?>" <?= $oldVisit['PaymentMethod']===$method['MethodName']?'selected':'' ?>><?=tdc_e($method['MethodName'])?></option><?php endforeach; ?></select></div></div></section>
         <div class="modal-actions workflow-actions"><a href="reception.php" class="btn btn-secondary">Cancel</a><button class="btn btn-primary" type="submit">Book Consultation</button></div>
+    </form><?php endif;?>
+
+    <div class="subsection-title"><span>Doctor patient waiting</span></div>
+    <p class="section-hint">Every booked consultation with its payment state and current position in the doctor queue.</p>
+
+    <div class="queue-stats">
+        <div class="queue-stat"><span class="queue-stat-icon info"><?= tdc_icon('calendar', 18) ?></span><div><strong><?= (int) $consultationCounts['total'] ?></strong><span>Matching visits</span></div></div>
+        <div class="queue-stat"><span class="queue-stat-icon warn"><?= tdc_icon('clock', 18) ?></span><div><strong><?= (int) $consultationCounts['waiting'] ?></strong><span>Waiting</span></div></div>
+        <div class="queue-stat"><span class="queue-stat-icon primary"><?= tdc_icon('stethoscope', 18) ?></span><div><strong><?= (int) $consultationCounts['in_consultation'] ?></strong><span>In consultation</span></div></div>
+        <div class="queue-stat"><span class="queue-stat-icon success"><?= tdc_icon('check', 18) ?></span><div><strong><?= (int) $consultationCounts['completed'] ?></strong><span>Completed</span></div></div>
+    </div>
+
+    <?= tdc_date_range([
+        'action'   => 'reception.php',
+        'from'     => $consultationFrom,
+        'to'       => $consultationTo,
+        'error'    => $consultationRangeError,
+        'preserve' => ['section' => 'consultations', 'q' => $consultationSearch, 'status' => $consultationStatus, 'per_page' => $consultationPerPage],
+    ]) ?>
+
+    <form class="table-command-bar" method="get" action="reception.php">
+        <input type="hidden" name="section" value="consultations">
+        <input type="hidden" name="from_date" value="<?= tdc_e($consultationFrom) ?>">
+        <input type="hidden" name="to_date" value="<?= tdc_e($consultationTo) ?>">
+        <?= tdc_search_field('q', $consultationSearch, 'Search appointment, patient or phone') ?>
+        <label class="filter-select"><select name="status" aria-label="Queue status">
+            <option value="">All queue states</option>
+            <?php foreach ($consultationStatuses as $statusOption): ?>
+                <option value="<?= tdc_e($statusOption) ?>"<?= $consultationStatus === $statusOption ? ' selected' : '' ?>><?= tdc_e($statusOption) ?></option>
+            <?php endforeach; ?>
+        </select></label>
+        <label class="filter-select"><select name="per_page" aria-label="Rows per page">
+            <?php foreach ([10, 25, 50, 100] as $sizeOption): ?>
+                <option value="<?= (int) $sizeOption ?>"<?= $consultationPerPage === $sizeOption ? ' selected' : '' ?>>Show <?= (int) $sizeOption ?></option>
+            <?php endforeach; ?>
+        </select></label>
+        <button class="btn btn-primary btn-sm" type="submit"><?= tdc_icon('filter', 14) ?><span>Apply</span></button>
+        <span class="toolbar-spacer"></span>
+        <?= tdc_export_buttons(['csv' => $consultationExportUrl]) ?>
+        <button type="button" class="btn btn-secondary btn-sm" onclick="window.print()"><?= tdc_icon('printer', 14) ?><span>Export PDF</span></button>
     </form>
 
-    <div class="subsection-title"><span>Recent consultation bookings</span></div>
-    <div class="data-table-wrap"><table class="data-table"><thead><tr><th>Visit</th><th>Patient</th><th>Doctor</th><th>Date</th><th>Fee</th><th>Paid</th><th>Due</th><th>Payment</th><th>Queue</th><th>Action</th></tr></thead><tbody>
-    <?php if (!$consultationVisits): ?><tr class="empty-row"><td colspan="10">No consultation bookings yet.</td></tr><?php else: foreach ($consultationVisits as $v): ?><tr><td><?= tdc_e($v['VisitReference']) ?></td><td><?= tdc_e($v['PatientName']) ?></td><td><?= tdc_e($v['DoctorName']) ?></td><td><?= tdc_e(date('d M Y H:i',strtotime($v['VisitDate']))) ?></td><td><?= number_format((float)$v['ConsultationFee'],2) ?></td><td><?= number_format((float)$v['AmountPaid'],2) ?></td><td><?= number_format((float)$v['DueBalance'],2) ?></td><td><span class="status-badge<?= $v['PaymentStatus']==='Unpaid'?' danger':($v['PaymentStatus']==='Partial'?' warn':'') ?>"><?= tdc_e($v['PaymentStatus']) ?></span></td><td><span class="status-badge"><?= tdc_e($v['QueueStatus']) ?></span></td><td><?php if((float)$v['DueBalance']>0 && $v['QueueStatus']==='Pending Payment'): ?><form method="post" action="reception.php?section=consultations" class="balance-form"><input type="hidden" name="csrf_token" value="<?= tdc_e($csrfToken) ?>"><input type="hidden" name="form_action" value="collect"><input type="hidden" name="VisitID" value="<?= (int)$v['VisitID'] ?>"><input aria-label="Payment amount" type="number" name="PaymentAmount" min="0.01" max="<?= tdc_e((string)$v['DueBalance']) ?>" step="0.01" value="<?= tdc_e((string)$v['DueBalance']) ?>" required><select aria-label="Payment method" name="PaymentMethod"><option>Cash</option><option>Card</option><option>Mobile Money</option><option>Bank</option><option>Other</option></select><button class="btn-sm" type="submit">Collect</button></form><?php else: ?><span class="cell-sub">No balance</span><?php endif; ?></td></tr><?php endforeach; endif; ?>
+    <div class="data-table-wrap"><table class="data-table"><thead><tr><th>Appointment</th><th>Patient</th><th>Gender</th><th>Age</th><th>Phone</th><th>Visit date</th><th>Queue</th><th>Payment</th><th>Actions</th></tr></thead><tbody>
+    <?php if (!$consultationVisits): ?>
+        <?= tdc_empty_state('calendar', 'No consultations match these filters', 'Widen the date range or clear the filters to see more bookings.', '', 9) ?>
+    <?php else: foreach ($consultationVisits as $v): ?>
+        <tr>
+            <td><strong><?= tdc_e((string) $v['VisitReference']) ?></strong><br><span class="cell-sub"><?= tdc_e((string) $v['DoctorName']) ?></span></td>
+            <td><?= tdc_e((string) $v['PatientName']) ?></td>
+            <td><?= $v['Gender'] !== null && $v['Gender'] !== '' ? tdc_e((string) $v['Gender']) : '&mdash;' ?></td>
+            <td><?= $v['Age'] !== null && $v['Age'] !== '' ? (int) $v['Age'] : '&mdash;' ?></td>
+            <td><?= $v['PatientPhone'] !== null && $v['PatientPhone'] !== '' ? tdc_e((string) $v['PatientPhone']) : '&mdash;' ?></td>
+            <td><?= tdc_e(date('d M Y H:i', strtotime((string) $v['VisitDate']))) ?></td>
+            <td><?= tdc_badge((string) $v['QueueStatus']) ?></td>
+            <td><?= tdc_badge((string) $v['PaymentStatus']) ?></td>
+            <td><?php if (tdc_can('doctor.workspace')): ?><a class="btn-sm" href="doctors.php?visit=<?= (int) $v['VisitID'] ?>" title="Open consultation workspace">Open</a><?php endif; ?><?php if ((float) $v['DueBalance'] > 0 && $v['QueueStatus'] === 'Pending Payment'): ?><form method="post" action="reception.php?section=consultations" class="balance-form"><input type="hidden" name="csrf_token" value="<?= tdc_e($csrfToken) ?>"><input type="hidden" name="form_action" value="collect"><input type="hidden" name="VisitID" value="<?= (int) $v['VisitID'] ?>"><input aria-label="Payment amount" type="number" name="PaymentAmount" min="0.01" max="<?= tdc_e((string) $v['DueBalance']) ?>" step="0.01" value="<?= tdc_e((string) $v['DueBalance']) ?>" required><select aria-label="Payment method" name="PaymentMethod"><?php foreach ($paymentMethods as $method): ?><option><?= tdc_e($method['MethodName']) ?></option><?php endforeach; ?></select><button class="btn-sm" type="submit">Collect</button></form><?php elseif ((float) $v['DueBalance'] > 0): ?><span class="cell-sub">Balance <?= number_format((float) $v['DueBalance'], 2) ?></span><?php else: ?><span class="cell-sub">Settled</span><?php endif; ?></td>
+        </tr>
+    <?php endforeach; endif; ?>
     </tbody></table></div>
+    <?= tdc_pager($consultationPage, $consultationPerPage, $consultationTotal, array_filter(['section' => 'consultations', 'q' => $consultationSearch, 'status' => $consultationStatus, 'from_date' => $consultationFrom, 'to_date' => $consultationTo, 'per_page' => $consultationPerPage], static fn($value): bool => $value !== '' && $value !== null)) ?>
 
     <script>document.addEventListener('DOMContentLoaded',function(){const patients=<?= json_encode($patientOptions, JSON_HEX_TAG|JSON_HEX_APOS|JSON_HEX_QUOT|JSON_HEX_AMP) ?>;const patientId=document.getElementById('cv_patient'),patientLabel=document.getElementById('cv_patient_label'),patientSearch=document.getElementById('cv_patient_search');const selected=patients.find(p=>String(p.id)===patientId.value);if(selected){patientLabel.value=selected.label;patientSearch.value=selected.label;}initPatientCombobox(patientId,patientLabel,patientSearch,document.getElementById('cv_patient_list'),patients);const doctor=document.getElementById('cv_doctor'),feeField=document.getElementById('cv_fee'),paidField=document.getElementById('cv_paid'),balance=document.getElementById('cv_balance'),status=document.getElementById('cv_status'),method=document.getElementById('cv_method');function sync(){const option=doctor.options[doctor.selectedIndex],fee=option&&option.dataset.fee?Number(option.dataset.fee):0,paid=Math.max(0,Number(paidField.value)||0),due=Math.max(0,fee-paid);feeField.value=option&&option.dataset.fee?fee.toFixed(2):'Select a doctor';paidField.max=fee.toFixed(2);balance.textContent=due.toFixed(2);const state=fee<=0||paid>=fee?'Paid':(paid>0?'Partial':'Unpaid');status.textContent=state;status.className='status-badge'+(state==='Unpaid'?' danger':(state==='Partial'?' warn':''));method.disabled=paid<=0;method.required=paid>0;if(paid<=0)method.value='';}doctor.addEventListener('change',sync);paidField.addEventListener('input',sync);sync();});</script>
 
@@ -1386,7 +1534,7 @@ $justVisited = isset($_GET['visited']);
             <button type="submit" class="btn btn-secondary">Filter</button>
             <?php if ($patientSearch !== '' || $patientTypeFilter !== '' || $patientDoctorFilter > 0 || $patientDateFilter !== ''): ?><a href="reception.php?section=patients" class="clear-filters">Clear</a><?php endif; ?>
         </form>
-        <button type="button" id="addPatientBtn" class="btn btn-primary">+ Register Patient</button>
+        <?php if($canPatientCreate):?><button type="button" id="addPatientBtn" class="btn btn-primary">+ Register Patient</button><?php endif;?>
     </div>
 
     <div class="data-table-wrap">
@@ -1410,7 +1558,7 @@ $justVisited = isset($_GET['visited']);
                     <td><?= tdc_e(date('Y-m-d', strtotime((string) $p['RegisteredAt']))) ?></td>
                     <td>
                         <div class="row-actions">
-                            <button type="button" class="btn-sm edit-patient-btn"
+                            <?php if($canPatientEdit):?><button type="button" class="btn-sm edit-patient-btn"
                                 data-id="<?= (int) $p['PatientID'] ?>"
                                 data-name="<?= tdc_e($p['PatientName']) ?>"
                                 data-phone="<?= tdc_e((string) $p['PatientPhone']) ?>"
@@ -1420,14 +1568,14 @@ $justVisited = isset($_GET['visited']);
                                 data-dob="<?= tdc_e((string) $p['DateOfBirth']) ?>"
                                 data-type="<?= tdc_e((string) $p['PatientType']) ?>"
                                 data-doctor="<?= tdc_e((string) $p['AllocatedDoctor']) ?>"
-                                data-remark="<?= tdc_e((string) $p['Remark']) ?>">Edit</button>
-                            <a class="btn-sm" href="reception.php?section=consultations&amp;patient=<?= (int) $p['PatientID'] ?>">Book</a>
-                            <form method="POST" action="reception.php?section=patients" onsubmit="return confirm('Delete this patient? This cannot be undone.');">
+                                data-remark="<?= tdc_e((string) $p['Remark']) ?>">Edit</button><?php endif;?>
+                            <?php if($canBookConsultation):?><a class="btn-sm" href="reception.php?section=consultations&amp;patient=<?= (int) $p['PatientID'] ?>">Book</a><?php endif;?>
+                            <?php if($canPatientDelete):?><form method="POST" action="reception.php?section=patients" onsubmit="return confirm('Delete this patient? This cannot be undone.');">
                                 <input type="hidden" name="csrf_token" value="<?= tdc_e($csrfToken) ?>">
                                 <input type="hidden" name="form_action" value="delete">
                                 <input type="hidden" name="PatientID" value="<?= (int) $p['PatientID'] ?>">
                                 <button type="submit" class="btn-sm danger">Delete</button>
-                            </form>
+                            </form><?php endif;?>
                         </div>
                     </td>
                 </tr>
@@ -1532,7 +1680,7 @@ $justVisited = isset($_GET['visited']);
                     <td><?= number_format((float)$l['AmountPaid'],2) ?></td><td><?= number_format((float)$l['DueBalance'],2) ?></td>
                     <td><span class="status-badge<?= $l['PaymentStatus'] === 'Unpaid' ? ' danger' : ($l['PaymentStatus'] === 'Partial' ? ' warn' : '') ?>"><?= tdc_e($l['PaymentStatus']) ?></span></td>
                     <td>
-                        <?php if((float)$l['DueBalance']>0 && in_array($l['WorkflowStatus'],['Requested','Awaiting Payment'],true)): ?><form method="POST" action="reception.php?section=laboratory" class="balance-form"><input type="hidden" name="csrf_token" value="<?= tdc_e($csrfToken) ?>"><input type="hidden" name="form_action" value="collect"><input type="hidden" name="LaboratoryID" value="<?= tdc_e($l['LaboratoryID']) ?>"><input aria-label="Amount received" type="number" name="PaymentAmount" min="0.01" max="<?= tdc_e((string)$l['DueBalance']) ?>" step="0.01" value="<?= tdc_e((string)$l['DueBalance']) ?>" required><select aria-label="Payment method" name="PaymentMethod" required><option value="">Select method</option><option>Cash</option><option>Card</option><option>Mobile Money</option><option>Bank</option><option>Other</option></select><button class="btn-sm" type="submit">Record Payment</button></form><?php else: ?><span class="status-badge"><?= tdc_e($l['WorkflowStatus']) ?></span><?php endif; ?>
+                        <?php if((float)$l['DueBalance']>0 && in_array($l['WorkflowStatus'],['Requested','Awaiting Payment'],true)): ?><form method="POST" action="reception.php?section=laboratory" class="balance-form"><input type="hidden" name="csrf_token" value="<?= tdc_e($csrfToken) ?>"><input type="hidden" name="form_action" value="collect"><input type="hidden" name="LaboratoryID" value="<?= tdc_e($l['LaboratoryID']) ?>"><input aria-label="Amount received" type="number" name="PaymentAmount" min="0.01" max="<?= tdc_e((string)$l['DueBalance']) ?>" step="0.01" value="<?= tdc_e((string)$l['DueBalance']) ?>" required><select aria-label="Payment method" name="PaymentMethod" required><option value="">Select method</option><?php foreach($paymentMethods as $method):?><option><?=tdc_e($method['MethodName'])?></option><?php endforeach;?></select><button class="btn-sm" type="submit">Record Payment</button></form><?php else: ?><span class="status-badge"><?= tdc_e($l['WorkflowStatus']) ?></span><?php endif; ?>
                     </td>
                 </tr>
                 <?php endforeach; endif; ?>
@@ -1795,13 +1943,60 @@ function initPatientCombobox(hiddenIdInput, hiddenLabelInput, searchInput, listE
     const fDoctor = document.getElementById('pf_AllocatedDoctor');
     const fRemark = document.getElementById('pf_Remark');
 
-    fDob.addEventListener('change', function(){
-        if (!fDob.value) return;
-        const dob = new Date(fDob.value + 'T00:00:00');
+    const MAX_AGE = 150;
+    let ageDobSyncing = false;
+
+    function pad2(n){ return String(n).padStart(2, '0'); }
+
+    function dobFromAge(years){
+        if (!Number.isInteger(years) || years < 0 || years > MAX_AGE) return '';
+        const t = new Date();
+        const d = new Date(t.getFullYear() - years, t.getMonth(), t.getDate());
+        return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate());
+    }
+
+    function ageFromDob(value){
+        if (!value) return null;
+        const dob = new Date(value + 'T00:00:00');
+        if (isNaN(dob.getTime())) return null;
         const today = new Date();
         let age = today.getFullYear() - dob.getFullYear();
         if (today.getMonth() < dob.getMonth() || (today.getMonth() === dob.getMonth() && today.getDate() < dob.getDate())) age--;
-        if (age >= 0 && age <= 150) fAge.value = age;
+        return (age >= 0 && age <= MAX_AGE) ? age : null;
+    }
+
+    fAge.addEventListener('input', function(){
+        if (ageDobSyncing) return;
+        const raw = fAge.value.trim();
+        if (raw === '') { fDob.value = ''; fDob.setCustomValidity(''); return; }
+        if (!/^\d+$/.test(raw)) { fDob.value = ''; return; }
+        const years = parseInt(raw, 10);
+        if (years < 0 || years > MAX_AGE) { fDob.value = ''; return; }
+        ageDobSyncing = true;
+        fDob.value = dobFromAge(years);
+        fDob.setCustomValidity('');
+        ageDobSyncing = false;
+    });
+
+    fDob.addEventListener('change', function(){
+        if (ageDobSyncing) return;
+        const rawDob = fDob.value.trim();
+        if (rawDob === '') { fAge.value = ''; fDob.setCustomValidity(''); return; }
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(rawDob)) { fAge.value = ''; return; }
+        const today = new Date();
+        const todayKey = today.getFullYear() + '-' + pad2(today.getMonth() + 1) + '-' + pad2(today.getDate());
+        if (rawDob > todayKey) {
+            fAge.value = '';
+            fDob.setCustomValidity('Date of birth cannot be in the future.');
+            fDob.reportValidity();
+            return;
+        }
+        const age = ageFromDob(rawDob);
+        if (age === null) { fAge.value = ''; return; }
+        fDob.setCustomValidity('');
+        ageDobSyncing = true;
+        fAge.value = age;
+        ageDobSyncing = false;
     });
 
     function openModal(){ overlay.classList.add('show'); }
@@ -1823,7 +2018,7 @@ function initPatientCombobox(hiddenIdInput, hiddenLabelInput, searchInput, listE
             fAddress.value = btn.dataset.address;
             fGender.value = btn.dataset.gender;
             fAge.value = btn.dataset.age;
-            fDob.value = btn.dataset.dob;
+            fDob.value = btn.dataset.dob || dobFromAge(parseInt(btn.dataset.age, 10));
             fType.value = btn.dataset.type;
             fDoctor.value = btn.dataset.doctor;
             fRemark.value = btn.dataset.remark;

@@ -1,17 +1,17 @@
-<?php
+﻿<?php
 /**
  * auth/pages/reports.php
  * ---------------------------------------------------------------------
- * Tarey Derma Clinic — Financial Reports (Income Statement, Balance Sheet)
+ * Tarey Derma Clinic â€” Financial Reports (Income Statement, Balance Sheet)
  * ---------------------------------------------------------------------
  * Two read-only financial statements computed live from the Accounting
- * ledger (see accounting.php for the ledger itself — this page never
+ * ledger (see accounting.php for the ledger itself â€” this page never
  * writes to it):
  *
- *   1. Income Statement (Profit & Loss) — Revenue and Expense activity
+ *   1. Income Statement (Profit & Loss) â€” Revenue and Expense activity
  *      for a chosen period, normalized to each account's normal balance
  *      side (see tdc_normal_side_amount()).
- *   2. Balance Sheet — Asset, Liability and Equity balances as of a
+ *   2. Balance Sheet â€” Asset, Liability and Equity balances as of a
  *      chosen date, cumulative since inception (not period-bound).
  *
  * Design decisions:
@@ -23,12 +23,12 @@
  *     not stored: it is the running Net Income across all Revenue/
  *     Expense activity up to the as-of date that has not been formally
  *     closed to an Equity account (this app has no period-close
- *     workflow, so nothing ever needs to be — the running total already
+ *     workflow, so nothing ever needs to be â€” the running total already
  *     represents undistributed earnings). Because every journal entry
  *     accounting.php accepts is balanced (debits = credits, enforced in
  *     tdc_validate_journal_form() there), the accounting identity
  *     Assets = Liabilities + Equity holds by construction. This page
- *     verifies that identity on every render and displays the result —
+ *     verifies that identity on every render and displays the result â€”
  *     it is a check, not an assumption, and would surface any ledger
  *     corrupted outside the app (e.g. a direct database edit).
  *   - The letterhead (company name/address/phone) printed at the top of
@@ -42,7 +42,7 @@
  *   - Defensive headers: clickjacking, MIME-sniffing, referrer leakage
  *   - no-store caching so authenticated markup is never cached
  *   - Session gate: unauthenticated requests never reach the markup
- *   - Role gate: only 'superuser' may open this page — same reasoning
+ *   - Role gate: only 'superuser' may open this page â€” same reasoning
  *     as accounting.php (no dedicated finance role exists, and this is
  *     the most sensitive financial data in the app)
  *   - All session/user-derived and query-string-derived output escaped
@@ -52,7 +52,7 @@
 declare(strict_types=1);
 
 // =======================================================================
-// SECTION 1 — Session bootstrap & defensive headers
+// SECTION 1 â€” Session bootstrap & defensive headers
 // =======================================================================
 ini_set('session.use_strict_mode', '1');
 session_set_cookie_params([
@@ -73,7 +73,7 @@ header('Referrer-Policy: strict-origin-when-cross-origin');
 header('Cache-Control: no-store, no-cache, must-revalidate');
 
 // =======================================================================
-// SECTION 2 — Reference data & shared constants
+// SECTION 2 â€” Reference data & shared constants
 // =======================================================================
 const ALLOWED_SECTIONS      = ['income-statement', 'balance-sheet'];
 const ALLOWED_REPORTS_ROLES = ['superuser'];
@@ -82,7 +82,7 @@ const ALLOWED_REPORTS_ROLES = ['superuser'];
 const NORMAL_CREDIT_TYPES = ['Liability', 'Equity', 'Revenue'];
 
 /**
- * Primary navigation — single source of truth, shared shape with
+ * Primary navigation â€” single source of truth, shared shape with
  * home.php / reception.php / doctors.php / patients.php / pharmacy.php /
  * accounting.php / settings.php.
  */
@@ -135,7 +135,7 @@ const NAV_ITEMS = [
 ];
 
 // =======================================================================
-// SECTION 3 — Pure helper functions (no I/O beyond the given PDO)
+// SECTION 3 â€” Pure helper functions (no I/O beyond the given PDO)
 // =======================================================================
 
 /** Escapes a value for safe HTML output. Single source of truth. */
@@ -213,7 +213,7 @@ function tdc_scalar(PDO $pdo, string $sql, array $params = [])
 
 /**
  * Normalizes a Debit/Credit pair to the signed amount for an account's
- * normal balance side — Asset & Expense accounts read positive on the
+ * normal balance side â€” Asset & Expense accounts read positive on the
  * debit side, Liability/Equity/Revenue on the credit side. Every report
  * on this page reads through this single function so the sign
  * convention can never drift between statements.
@@ -226,12 +226,12 @@ function tdc_normal_side_amount(string $accountType, float $debitSum, float $cre
 }
 
 // =======================================================================
-// SECTION 4 — Report data access (read-only; no persistence layer here)
+// SECTION 4 â€” Report data access (read-only; no persistence layer here)
 // =======================================================================
 
 /**
  * Income Statement (Profit & Loss) for the period [$from, $to]
- * (inclusive DATETIME bounds — callers pass the full-day range).
+ * (inclusive DATETIME bounds â€” callers pass the full-day range).
  *
  * @return array{revenue: array[], expense: array[], totalRevenue: float, totalExpense: float, netIncome: float}
  */
@@ -277,7 +277,7 @@ function tdc_income_statement(PDO $pdo, string $from, string $to): array
 }
 
 /**
- * Balance Sheet as of $asOf (a DATETIME upper bound — callers pass end
+ * Balance Sheet as of $asOf (a DATETIME upper bound â€” callers pass end
  * of the chosen day), cumulative since inception. See the file-level
  * doc comment for how "Retained Earnings (Current)" and the balance
  * check are derived.
@@ -351,12 +351,12 @@ function tdc_balance_sheet(PDO $pdo, string $asOf): array
 }
 
 // =======================================================================
-// SECTION 5 — Logout (may exit)
+// SECTION 5 â€” Logout (may exit)
 // =======================================================================
 tdc_handle_logout();
 
 // =======================================================================
-// SECTION 6 — Auth gate & role gate
+// SECTION 6 â€” Auth gate & role gate
 // =======================================================================
 if (empty($_SESSION['user_id'])) {
     header('Location: ../auth.php');
@@ -373,10 +373,9 @@ if (empty($_SESSION['csrf_token'])) {
 }
 
 // =======================================================================
-// SECTION 7 — Request-scoped filter state & report computation
+// SECTION 7 â€” Request-scoped filter state & report computation
 // =======================================================================
 $section = $_GET['section'] ?? null;
-if ($section === 'pharmacy-purchases' && !tdc_can_view_purchase_cost()) tdc_forbidden();
 require_once __DIR__ . '/../includes/reports-center.php';
 $reportMeta = null;
 if ($section !== null) {
@@ -511,7 +510,7 @@ $companyAddress = $letterhead['CompanyAddress'] ?? '';
 $companyPhone   = $letterhead['PhoneNumbers'] ?? '';
 
 // =======================================================================
-// SECTION 8 — View data
+// SECTION 8 â€” View data
 // =======================================================================
 $legalName     = (string) ($_SESSION['userlegalname'] ?? 'User');
 $displayName   = tdc_display_name($legalName);
@@ -770,7 +769,7 @@ $currentPage   = basename((string) ($_SERVER['SCRIPT_NAME'] ?? 'reports.php'));
             <div class="statement-header">
                 <div class="company-name"><?= tdc_e($companyName) ?></div>
                 <?php if ($companyAddress !== '' || $companyPhone !== ''): ?>
-                <div class="company-meta"><?= tdc_e(trim($companyAddress . ($companyAddress !== '' && $companyPhone !== '' ? ' · ' : '') . $companyPhone)) ?></div>
+                <div class="company-meta"><?= tdc_e(trim($companyAddress . ($companyAddress !== '' && $companyPhone !== '' ? ' Â· ' : '') . $companyPhone)) ?></div>
                 <?php endif; ?>
                 <div class="statement-title">Income Statement</div>
                 <div class="statement-period">For the period <?= tdc_e(date('M j, Y', strtotime($isFrom))) ?> &ndash; <?= tdc_e(date('M j, Y', strtotime($isTo))) ?></div>
@@ -839,7 +838,7 @@ $currentPage   = basename((string) ($_SERVER['SCRIPT_NAME'] ?? 'reports.php'));
             <div class="statement-header">
                 <div class="company-name"><?= tdc_e($companyName) ?></div>
                 <?php if ($companyAddress !== '' || $companyPhone !== ''): ?>
-                <div class="company-meta"><?= tdc_e(trim($companyAddress . ($companyAddress !== '' && $companyPhone !== '' ? ' · ' : '') . $companyPhone)) ?></div>
+                <div class="company-meta"><?= tdc_e(trim($companyAddress . ($companyAddress !== '' && $companyPhone !== '' ? ' Â· ' : '') . $companyPhone)) ?></div>
                 <?php endif; ?>
                 <div class="statement-title">Balance Sheet</div>
                 <div class="statement-period">As of <?= tdc_e(date('M j, Y', strtotime($bsAsOf))) ?></div>
@@ -903,12 +902,12 @@ $currentPage   = basename((string) ($_SERVER['SCRIPT_NAME'] ?? 'reports.php'));
         <?php if ($balanceSheet['balances']): ?>
         <div class="balance-check ok">
             <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.03-9.78a.75.75 0 00-1.06-1.06L8.75 10.44l-1.72-1.72a.75.75 0 00-1.06 1.06l2.25 2.25a.75.75 0 001.06 0l4.75-4.75z" clip-rule="evenodd"/></svg>
-            Balanced — Total Assets equal Total Liabilities plus Equity.
+            Balanced â€” Total Assets equal Total Liabilities plus Equity.
         </div>
         <?php else: ?>
         <div class="balance-check warn">
             <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm-.75-4.75a.75.75 0 001.5 0v-4.5a.75.75 0 00-1.5 0v4.5zm.75-7a.75.75 0 100 1.5.75.75 0 000-1.5z" clip-rule="evenodd"/></svg>
-            Out of balance — check the ledger for entries posted outside the normal journal flow.
+            Out of balance â€” check the ledger for entries posted outside the normal journal flow.
         </div>
         <?php endif; ?>
 
@@ -945,3 +944,4 @@ $currentPage   = basename((string) ($_SERVER['SCRIPT_NAME'] ?? 'reports.php'));
 
 </body>
 </html>
+

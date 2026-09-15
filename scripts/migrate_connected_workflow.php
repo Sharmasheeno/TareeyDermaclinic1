@@ -36,11 +36,7 @@ function add_column(PDO $pdo, string $table, string $column, string $definition)
     }
 }
 
-$pdo->exec(
-    "ALTER TABLE users MODIFY role ENUM(
-        'superuser','receptionuser','doctoruser','pharmacyuser','labuser'
-    ) NOT NULL"
-);
+$pdo->exec('ALTER TABLE users MODIFY role VARCHAR(100) NOT NULL');
 
 add_column($pdo, 'Doctors', 'UserID', 'INT NULL AFTER DoctorID');
 if (!index_exists($pdo, 'Doctors', 'uq_doctors_user')) {

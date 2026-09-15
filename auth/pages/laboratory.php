@@ -62,6 +62,7 @@ session_set_cookie_params([
 session_start();
 require_once __DIR__ . '/../includes/access.php';
 tdc_require_access();
+require_once __DIR__ . '/../includes/ui.php';
 
 header('X-Frame-Options: DENY');
 header('X-Content-Type-Options: nosniff');
@@ -131,8 +132,8 @@ const NAV_ITEMS = [
         'icon'  => '<path d="M4 13a1 1 0 011-1h1a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1v-4zm5-5a1 1 0 011-1h1a1 1 0 011 1v9a1 1 0 01-1 1h-1a1 1 0 01-1-1V8zm5-4a1 1 0 011-1h1a1 1 0 011 1v13a1 1 0 01-1 1h-1a1 1 0 01-1-1V4z"/>',
     ],
     [
-        'href'  => 'settings.php',
-        'label' => 'Settings',
+        'href'  => 'setup.php',
+        'label' => 'Setup',
         'icon'  => '<path fill-rule="evenodd" d="M8.34 1.804A1 1 0 019.32 1h1.36a1 1 0 01.98.804l.331 1.652a6.993 6.993 0 011.929 1.115l1.598-.54a1 1 0 011.186.447l.68 1.178a1 1 0 01-.223 1.28l-1.281 1.05a7.05 7.05 0 010 2.228l1.28 1.05a1 1 0 01.224 1.28l-.68 1.178a1 1 0 01-1.187.447l-1.598-.54a6.993 6.993 0 01-1.929 1.115l-.33 1.652a1 1 0 01-.98.804H9.32a1 1 0 01-.98-.804l-.331-1.652a6.993 6.993 0 01-1.929-1.115l-1.598.54a1 1 0 01-1.186-.447l-.68-1.178a1 1 0 01.223-1.28l1.281-1.05a7.05 7.05 0 010-2.228l-1.28-1.05a1 1 0 01-.224-1.28l.68-1.178a1 1 0 011.187-.447l1.598.54A6.993 6.993 0 018.01 3.456l.33-1.652zM10 13a3 3 0 100-6 3 3 0 000 6z" clip-rule="evenodd"/>',
     ],
 ];
@@ -395,9 +396,11 @@ if (empty($_SESSION['csrf_token'])) {
     $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
 }
 
-$canManage = in_array($_SESSION['role'] ?? '', ALLOWED_MANAGE_ROLES, true);
-$isLabStaff = $_SESSION['role'] === 'labuser';
-$isSuperAdmin = $_SESSION['role'] === 'superuser';
+$canProcess = tdc_can('laboratory.process');
+$canEnterResult = tdc_can('laboratory.result.create');
+$canManage = $canProcess || $canEnterResult;
+$isLabStaff = $canManage;
+$isSuperAdmin = tdc_can('setup.laboratory.manage');
 require_once __DIR__ . '/../includes/lab-results.php';
 
 // =======================================================================
@@ -428,7 +431,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $formAction = (string) ($_POST['form_action'] ?? 'save');
 
         if ($formAction === 'save_service') {
-            if (!$isSuperAdmin) tdc_forbidden();
+            tdc_forbidden();
             $serviceId = ctype_digit((string)($_POST['ServiceID'] ?? '')) ? (int)$_POST['ServiceID'] : 0;
             $serviceName = trim((string)($_POST['ServiceName'] ?? ''));
             $category = trim((string)($_POST['Category'] ?? ''));
@@ -456,9 +459,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if (!in_array($formAction, ['save','start'], true)) {
                 tdc_forbidden();
             }
-            $errors = $formAction === 'start'
-                ? tdc_start_lab_order($pdo, trim((string)($_POST['LaboratoryID'] ?? '')))
-                : tdc_record_lab_result($pdo, $_POST);
+            if ($formAction === 'save' && trim((string)($_POST['LaboratoryID'] ?? '')) === '') tdc_forbidden();
+            tdc_require_permission($formAction === 'start' ? 'laboratory.process' : 'laboratory.result.create');
+            $errors = $formAction === 'start' ? tdc_start_lab_order($pdo, trim((string)($_POST['LaboratoryID'] ?? ''))) : tdc_record_lab_result($pdo, $_POST);
             if (!$errors) tdc_redirect('success');
         } else {
             tdc_forbidden();
@@ -528,7 +531,6 @@ if ($labBills !== []) {
     $itemsStmt->execute($orderIds);
     foreach ($itemsStmt->fetchAll() as $item) $labItemsByOrder[$item['LaboratoryID']][] = $item;
 }
-$labServices = $isSuperAdmin ? $pdo->query('SELECT * FROM LabServices ORDER BY IsActive DESC,Category,ServiceName')->fetchAll() : [];
 
 $hasActiveFilters = $search !== '' || $resultFilter !== '' || $paymentFilter !== '';
 
@@ -554,144 +556,9 @@ $justDeleted = isset($_GET['deleted']);
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Google+Sans:ital,opsz,wght@0,17..18,400..700;1,17..18,400..700&display=swap" rel="stylesheet">
 <style>
-    :root{
-        --navy: #2E3192;
-        --navy-30: rgba(46,49,146,0.3);
-        --navy-10: rgba(46,49,146,0.08);
-        --navy-55: rgba(46,49,146,0.55);
-        --orange: #F15A24;
-        --white: #ffffff;
-        --border: 2px solid var(--navy);
-        --on-navy-70: rgba(255,255,255,0.7);
-    }
-    *, *::before, *::after{ box-sizing:border-box; margin:0; padding:0; }
-    body{ font-family:'Google Sans', sans-serif; background:var(--white); color:var(--navy); min-height:100vh; }
-    .app-header{ position:relative; z-index:100; }
-    .nav-item{ position:relative; flex-shrink:0; }
-    .utility-bar{ display:flex; align-items:center; justify-content:space-between; background:var(--navy); padding:8px 24px; }
-    .brand-chip{ background:var(--white); display:flex; align-items:center; padding:5px 14px; flex-shrink:0; }
-    .brand-chip img{ height:30px; width:auto; object-fit:contain; display:block; }
-    .utility-right{ display:flex; align-items:center; gap:2px; }
-    .icon-btn{ appearance:none; background:none; border:2px solid transparent; cursor:pointer; display:flex; align-items:center; justify-content:center; width:38px; height:38px; position:relative; color:var(--on-navy-70); transition:color 0.12s; }
-    .icon-btn:hover{ color:var(--white); }
-    .icon-btn svg{ width:20px; height:20px; stroke:currentColor; fill:none; stroke-width:2; stroke-linecap:round; stroke-linejoin:round; }
-    .icon-btn .badge{ position:absolute; top:6px; right:7px; width:7px; height:7px; background:var(--orange); border:2px solid var(--navy); }
-    .nav-item.open > .icon-btn{ color:var(--orange); }
-    .profile-static{ display:flex; align-items:center; gap:9px; padding:6px 8px; font-family:'Google Sans', sans-serif; color:var(--white); }
-    .avatar{ width:30px; height:30px; flex-shrink:0; background:var(--white); color:var(--navy); display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:700; letter-spacing:0.02em; }
-    .profile-name{ font-size:13.5px; font-weight:600; }
-    .menu-bar{ background:var(--white); padding:0 24px; display:flex; justify-content:safe center; overflow-x:auto; overflow-y:hidden; scrollbar-width:thin; scrollbar-color:var(--navy-30) transparent; }
-    .menu-bar::-webkit-scrollbar{ height:4px; }
-    .menu-bar::-webkit-scrollbar-track{ background:transparent; }
-    .menu-bar::-webkit-scrollbar-thumb{ background:var(--navy-30); border-radius:2px; }
-    .menu-bar::-webkit-scrollbar-thumb:hover{ background:var(--navy-55); }
-    .nav-items{ list-style:none; display:flex; align-items:center; gap:4px; flex-wrap:nowrap; flex-shrink:0; }
-    .nav-link{ appearance:none; background:none; border:none; cursor:pointer; display:flex; align-items:center; gap:7px; font-family:'Google Sans', sans-serif; font-size:13.5px; font-weight:600; letter-spacing:0.01em; color:var(--navy); text-decoration:none; padding:12px; white-space:nowrap; flex-shrink:0; transition:color 0.12s; }
-    .nav-link svg{ width:16px; height:16px; fill:var(--navy-55); flex-shrink:0; transition:fill 0.12s; }
-    .nav-link:hover{ color:var(--orange); }
-    .nav-link:hover svg{ fill:var(--orange); }
-    .nav-item.active > .nav-link{ color:var(--navy); box-shadow:inset 0 -2px 0 var(--orange); }
-    .nav-item.active > .nav-link svg{ fill:var(--navy); }
-    .dropdown-menu{ position:absolute; top:calc(100% + 6px); left:0; min-width:220px; background:var(--white); border:var(--border); display:none; flex-direction:column; padding:6px 0; }
-    .nav-item.open > .dropdown-menu{ display:flex; }
-    .dropdown-menu a{ display:block; text-decoration:none; color:var(--navy); font-size:13.5px; font-weight:500; padding:9px 16px; transition:background 0.12s, color 0.12s; }
-    .dropdown-menu a:hover{ background:var(--navy-10); color:var(--orange); }
-    .notif-menu{ right:0; left:auto; min-width:260px; }
-    .notif-menu .notif-title{ padding:10px 16px 8px; font-size:12px; font-weight:700; letter-spacing:0.04em; text-transform:uppercase; color:var(--navy-55); }
-    .notif-empty{ padding:20px 16px 22px; font-size:13px; color:var(--navy-55); text-align:center; }
-    .page-body{ padding:40px 32px; }
-    .welcome-eyebrow{ font-size:11px; font-weight:600; letter-spacing:0.08em; text-transform:uppercase; color:var(--navy-55); margin-bottom:8px; }
-    .welcome-title{ font-size:26px; font-weight:700; color:var(--navy); }
-    .welcome-sub{ font-size:14px; color:var(--navy-55); margin-top:6px; margin-bottom:28px; }
-
-    .error-msg{ display:flex; flex-direction:column; gap:4px; background:var(--white); border:2px solid var(--navy); color:var(--navy); font-size:13px; font-weight:500; padding:14px 16px; margin-bottom:24px; max-width:1240px; }
-    .error-msg .error-title{ display:flex; align-items:center; gap:8px; font-weight:700; }
-    .error-msg svg{ width:16px; height:16px; flex-shrink:0; }
-    .error-msg ul{ list-style:none; padding-left:24px; }
-    .error-msg li::before{ content:"— "; }
-
-    .form-group{ display:flex; flex-direction:column; }
-    .form-group label{ font-size:11px; font-weight:600; letter-spacing:0.06em; text-transform:uppercase; color:var(--navy); margin-bottom:6px; }
-    .form-group input, .form-group select, .form-group textarea{ width:100%; padding:11px 12px; border:2px solid rgba(46,49,146,0.3); font-size:14px; font-family:'Google Sans', sans-serif; color:var(--navy); background:var(--white); outline:none; transition:border-color 0.15s; }
-    .form-group textarea{ resize:vertical; min-height:70px; }
-    .form-group input::placeholder, .form-group textarea::placeholder{ color:rgba(46,49,146,0.45); }
-    .form-group input:focus, .form-group select:focus, .form-group textarea:focus{ border-color:var(--orange); }
-    .form-group select{ cursor:pointer; }
-    .form-row{ display:flex; gap:16px; flex-wrap:wrap; }
-    .form-row .form-group{ flex:1; min-width:180px; }
-    .checkbox-row{ display:flex; align-items:center; gap:8px; }
-    .checkbox-row input{ width:auto; }
-    .btn{ padding:11px 22px; font-size:14px; font-weight:600; border:2px solid var(--navy); cursor:pointer; letter-spacing:0.02em; transition:background 0.12s, color 0.12s, border-color 0.12s; text-decoration:none; display:inline-flex; align-items:center; gap:6px; }
-    .btn-primary{ background:var(--navy); color:var(--white); }
-    .btn-primary:hover{ background:var(--orange); border-color:var(--orange); }
-    .btn-secondary{ background:var(--white); color:var(--navy); }
-    .btn-secondary:hover{ color:var(--orange); border-color:var(--orange); }
-
-    .back-link{ display:inline-flex; align-items:center; gap:6px; font-size:13px; font-weight:600; color:var(--navy-55); text-decoration:none; margin-bottom:16px; }
-    .back-link:hover{ color:var(--orange); }
-
-    .section-toolbar{ display:flex; align-items:center; justify-content:space-between; gap:12px; max-width:1240px; margin-bottom:16px; flex-wrap:wrap; }
-    .filter-box{ display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
-    .filter-box input, .filter-box select{ padding:10px 12px; border:2px solid rgba(46,49,146,0.3); font-size:13.5px; font-family:'Google Sans',sans-serif; color:var(--navy); background:var(--white); }
-    .filter-box input{ min-width:240px; }
-    .filter-box input:focus, .filter-box select:focus{ outline:none; border-color:var(--orange); }
-    .clear-filters{ font-size:12.5px; font-weight:600; color:var(--navy-55); text-decoration:none; white-space:nowrap; }
-    .clear-filters:hover{ color:var(--orange); }
-
-    .data-table-wrap{ max-width:1240px; border:2px solid var(--navy); overflow-x:auto; }
-    .data-table{ width:100%; border-collapse:collapse; }
-    .data-table th, .data-table td{ padding:12px 14px; font-size:13px; text-align:left; border-bottom:1px solid var(--navy-30); white-space:nowrap; }
-    .data-table th{ background:var(--navy-10); font-weight:700; text-transform:uppercase; font-size:11px; letter-spacing:.05em; color:var(--navy); }
-    .data-table tbody tr:last-child td{ border-bottom:none; }
-    .data-table tbody tr:hover{ background:var(--navy-10); }
-    .data-table input:not([type="checkbox"]):not([type="hidden"]){ width:100%; min-width:130px; padding:9px 10px; border:1px solid var(--navy-30); border-radius:4px; background:var(--white); color:var(--navy); font:inherit; }
-    .data-table input:not([type="checkbox"]):not([type="hidden"]):focus{ outline:none; border-color:var(--navy); box-shadow:0 0 0 3px var(--navy-10); }
-    .empty-row td{ text-align:center; padding:28px; color:var(--navy-55); }
-    .patient-link{ color:var(--navy); text-decoration:none; font-weight:600; }
-    .patient-link:hover{ color:var(--orange); text-decoration:underline; }
-    .cell-sub{ color:var(--navy-55); font-size:11.5px; }
-
-    .status-badge{ display:inline-block; padding:3px 9px; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.03em; border:1.5px solid var(--navy); color:var(--navy); white-space:nowrap; }
-    .status-badge.warn{ border-color:var(--orange); color:var(--orange); }
-    .status-badge.danger{ border-color:#c0392b; color:#c0392b; }
-
-    .row-actions{ display:flex; gap:8px; flex-wrap:wrap; }
-    .row-actions form{ display:inline; }
-    .btn-sm{ padding:6px 12px; font-size:12px; font-weight:600; border:2px solid var(--navy); cursor:pointer; background:var(--white); color:var(--navy); text-decoration:none; display:inline-flex; align-items:center; }
-    .btn-sm:hover{ background:var(--orange); border-color:var(--orange); color:var(--white); }
-    .btn-sm.danger{ border-color:#c0392b; color:#c0392b; }
-    .btn-sm.danger:hover{ background:#c0392b; border-color:#c0392b; color:var(--white); }
-
-    .combo{ position:relative; }
-    .combo-list{ position:absolute; top:calc(100% + 4px); left:0; right:0; max-height:220px; overflow-y:auto; background:var(--white); border:2px solid var(--navy); list-style:none; z-index:50; }
-    .combo-list li{ padding:9px 12px; font-size:13px; cursor:pointer; }
-    .combo-list li:hover, .combo-list li.active{ background:var(--navy-10); color:var(--orange); }
-    .combo-empty{ padding:9px 12px; font-size:12.5px; color:var(--navy-55); }
-
-    .modal-overlay{ position:fixed; inset:0; background:rgba(46,49,146,0.35); display:none; align-items:center; justify-content:center; z-index:1000; padding:20px; }
-    .modal-overlay.show{ display:flex; }
-    .modal-box{ background:var(--white); border:2px solid var(--navy); width:100%; max-width:560px; max-height:90vh; overflow-y:auto; }
-    .modal-head{ display:flex; align-items:center; justify-content:space-between; padding:18px 22px; border-bottom:2px solid var(--navy); }
-    .modal-head h3{ font-size:16px; font-weight:700; color:var(--navy); }
-    .modal-close{ appearance:none; background:none; border:none; cursor:pointer; color:var(--navy-55); width:26px; height:26px; }
-    .modal-close:hover{ color:var(--orange); }
-    .modal-close svg{ width:100%; height:100%; }
-    .modal-body{ padding:22px; }
-    .modal-body .form-group{ margin-bottom:16px; }
-    .modal-hint{ font-size:11.5px; color:var(--navy-55); margin-top:4px; }
-    .modal-actions{ display:flex; justify-content:flex-end; gap:10px; margin-top:6px; }
-
-    #js-toast{ position:fixed; bottom:28px; left:50%; transform:translateX(-50%) translateY(20px); display:flex; align-items:center; gap:8px; background:var(--white); border:2px solid var(--navy); color:var(--navy); font-size:13px; font-weight:500; padding:10px 18px; white-space:nowrap; z-index:9999; opacity:0; pointer-events:none; transition:opacity 0.2s ease, transform 0.2s ease; }
-    #js-toast svg{ width:16px; height:16px; flex-shrink:0; }
+    #js-toast{ position:fixed; bottom:28px; left:50%; transform:translateX(-50%) translateY(20px); display:flex; align-items:center; gap:8px; background:var(--surface); border:1px solid var(--border-ui); border-radius:var(--radius); color:var(--text-primary); font-size:13px; font-weight:600; padding:11px 18px; white-space:nowrap; z-index:9999; opacity:0; pointer-events:none; box-shadow:var(--shadow-card); transition:opacity 0.2s ease, transform 0.2s ease; }
+    #js-toast svg{ width:16px; height:16px; flex-shrink:0; color:var(--success); }
     #js-toast.show{ opacity:1; transform:translateX(-50%) translateY(0); }
-
-    .logout-fab{ position:fixed; bottom:20px; right:20px; width:40px; height:40px; border-radius:50%; display:flex; align-items:center; justify-content:center; background:var(--navy); border:2px solid var(--white); cursor:pointer; text-decoration:none; z-index:9999; box-shadow:0 2px 6px rgba(46,49,146,0.35); transition:transform 0.15s ease, background 0.15s ease, box-shadow 0.15s ease; }
-    .logout-fab svg{ width:18px; height:18px; stroke:var(--white); fill:none; stroke-width:2; stroke-linecap:round; stroke-linejoin:round; transition:stroke 0.15s ease; }
-    .logout-fab:hover{ background:var(--orange); transform:scale(1.08); box-shadow:0 4px 10px rgba(241,90,36,0.4); }
-    .logout-fab:active{ transform:scale(0.96); }
-    .logout-fab:focus-visible{ outline:2px solid var(--orange); outline-offset:3px; }
-    .logout-fab::after{ content:'Log Out'; position:absolute; bottom:calc(100% + 8px); right:0; background:var(--navy); color:var(--white); font-family:'Google Sans', sans-serif; font-size:12px; font-weight:600; padding:6px 10px; white-space:nowrap; opacity:0; visibility:hidden; transform:translateY(4px); transition:opacity 0.15s ease, transform 0.15s ease, visibility 0.15s ease; pointer-events:none; }
-    .logout-fab:hover::after, .logout-fab:focus-visible::after{ opacity:1; visibility:visible; transform:translateY(0); }
 </style>
 <link rel="stylesheet" href="../assets/clinic.css">
 <script src="../assets/clinic.js" defer></script>
@@ -753,14 +620,6 @@ $justDeleted = isset($_GET['deleted']);
     </div>
     <?php endif; ?>
 
-    <?php if ($isSuperAdmin): ?>
-    <div class="subsection-title">Laboratory Service Catalogue</div>
-    <div class="data-table-wrap" style="margin-bottom:20px"><table class="data-table"><thead><tr><th>Service</th><th>Category</th><th>Description</th><th>Price</th><th>Available</th><th>Active</th><th>Save</th></tr></thead><tbody>
-    <?php foreach($labServices as $service): $serviceForm='service-form-'.(int)$service['ServiceID']; ?><tr><td><form id="<?= $serviceForm ?>" method="POST" action="laboratory.php"><input type="hidden" name="csrf_token" value="<?= tdc_e($csrfToken) ?>"><input type="hidden" name="form_action" value="save_service"><input type="hidden" name="ServiceID" value="<?= (int)$service['ServiceID'] ?>"></form><input form="<?= $serviceForm ?>" name="ServiceName" value="<?= tdc_e($service['ServiceName']) ?>" required></td><td><input form="<?= $serviceForm ?>" name="Category" value="<?= tdc_e((string)$service['Category']) ?>"></td><td><input form="<?= $serviceForm ?>" name="ServiceDescription" value="<?= tdc_e((string)$service['Description']) ?>"></td><td><input form="<?= $serviceForm ?>" type="number" min="0" step=".01" name="ServicePrice" value="<?= tdc_e((string)$service['Price']) ?>" required></td><td><input form="<?= $serviceForm ?>" type="checkbox" name="IsAvailable" value="1" <?= $service['IsAvailable']?'checked':'' ?> aria-label="Service available"></td><td><input form="<?= $serviceForm ?>" type="checkbox" name="IsActive" value="1" <?= $service['IsActive']?'checked':'' ?> aria-label="Service active"></td><td><button form="<?= $serviceForm ?>" class="btn-sm">Save</button></td></tr><?php endforeach; ?>
-    <tr><td><form id="new-service-form" method="POST" action="laboratory.php"><input type="hidden" name="csrf_token" value="<?= tdc_e($csrfToken) ?>"><input type="hidden" name="form_action" value="save_service"></form><input form="new-service-form" name="ServiceName" placeholder="New service" required></td><td><input form="new-service-form" name="Category" placeholder="Category"></td><td><input form="new-service-form" name="ServiceDescription" placeholder="Description"></td><td><input form="new-service-form" type="number" min="0" step=".01" name="ServicePrice" placeholder="0.00" required></td><td><span class="status-badge">Available</span></td><td><span class="status-badge">Active</span></td><td><button form="new-service-form" class="btn-sm">Add</button></td></tr>
-    </tbody></table></div>
-    <?php endif; ?>
-
     <div class="section-toolbar">
         <form method="GET" action="laboratory.php" class="filter-box">
             <input type="text" name="q" placeholder="Search by patient, phone, or test..." value="<?= tdc_e($search) ?>">
@@ -794,12 +653,7 @@ $justDeleted = isset($_GET['deleted']);
             </thead>
             <tbody>
                 <?php if (empty($labBills)): ?>
-                <tr class="empty-row">
-                    <td colspan="<?= $canManage ? 10 : 9 ?>">
-                        No laboratory bills found<?= $hasActiveFilters ? ' for the current filters' : '' ?>.
-                        <?= $isLabStaff ? ' Doctor requests will appear here, including orders awaiting payment.' : '' ?>
-                    </td>
-                </tr>
+                <?= tdc_empty_state('flask', 'No laboratory bills found', ($hasActiveFilters ? 'No records match the current filters.' : 'No records to show yet.') . ($isLabStaff ? ' Doctor requests will appear here, including orders awaiting payment.' : ''), '', $canManage ? 10 : 9) ?>
                 <?php else: foreach ($labBills as $l): ?>
                 <tr>
                     <td><?= tdc_e($l['LaboratoryID']) ?></td>
@@ -817,7 +671,7 @@ $justDeleted = isset($_GET['deleted']);
                     <?php if ($canManage): ?>
                     <td>
                         <div class="row-actions">
-                            <?php if ($isLabStaff && $l['WorkflowStatus'] === 'In Progress'): ?><button type="button" class="btn-sm edit-lab-btn"
+                            <?php if ($canEnterResult && $l['WorkflowStatus'] === 'In Progress'): ?><button type="button" class="btn-sm edit-lab-btn"
                                 data-id="<?= tdc_e($l['LaboratoryID']) ?>"
                                 data-patientid="<?= (int) $l['PatientID'] ?>"
                                 data-patientlabel="<?= tdc_e($l['PatientName'] . ($l['PatientPhone'] ? ' — ' . $l['PatientPhone'] : '')) ?>"
@@ -830,7 +684,7 @@ $justDeleted = isset($_GET['deleted']);
                                 data-resultdate="<?= tdc_e($l['ResultDate'] ? date('Y-m-d\TH:i', strtotime((string) $l['ResultDate'])) : '') ?>"
                                 data-paymentstatus="<?= tdc_e($l['PaymentStatus']) ?>"
                                 data-items="<?= tdc_e(json_encode($labItemsByOrder[$l['LaboratoryID']] ?? [])) ?>">Record results</button><?php endif; ?>
-                            <?php if ($isLabStaff && $l['WorkflowStatus'] === 'Ready'): ?><form method="POST" action="laboratory.php"><input type="hidden" name="csrf_token" value="<?= tdc_e($csrfToken) ?>"><input type="hidden" name="form_action" value="start"><input type="hidden" name="LaboratoryID" value="<?= tdc_e($l['LaboratoryID']) ?>"><button type="submit" class="btn-sm">Start Test</button></form><?php endif; ?>
+                            <?php if ($canProcess && $l['WorkflowStatus'] === 'Ready'): ?><form method="POST" action="laboratory.php"><input type="hidden" name="csrf_token" value="<?= tdc_e($csrfToken) ?>"><input type="hidden" name="form_action" value="start"><input type="hidden" name="LaboratoryID" value="<?= tdc_e($l['LaboratoryID']) ?>"><button type="submit" class="btn-sm">Start Test</button></form><?php endif; ?>
                             <?php if ($isLabStaff && $l['WorkflowStatus'] === 'Awaiting Payment'): ?><span class="status-badge danger">Payment Locked</span><?php endif; ?>
                             <?php if ($isLabStaff && $l['WorkflowStatus'] === 'Completed'): ?><span class="status-badge">View Result</span><?php endif; ?>
                         </div>

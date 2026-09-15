@@ -4,7 +4,28 @@ declare(strict_types=1);
 $stmt = $pdo->prepare('SELECT * FROM Doctors WHERE UserID=?');
 $stmt->execute([$_SESSION['user_id']]);
 $doctorProfile = $stmt->fetch();
-$portalErrors = [];
+// SuperAdmin accounts have no linked Doctors row by design. Let a SuperAdmin
+// act on behalf of a chosen doctor so the full clinical workflow stays
+// reachable without a separate doctor login.
+$superadminDoctorMode = false;
+if (tdc_is_root_superadmin()) {
+    $superadminDoctorMode = true;
+    $requestedDoctorId = ctype_digit((string) ($_GET['doctor'] ?? '')) ? (int) $_GET['doctor'] : 0;
+    $requestedVisit = $_POST['VisitID'] ?? $_GET['visit'] ?? '';
+    if (ctype_digit((string) $requestedVisit)) {
+        $doctorLookup = $pdo->prepare('SELECT DoctorID FROM Visits WHERE VisitID=?');
+        $doctorLookup->execute([(int) $requestedVisit]);
+        $requestedDoctorId = (int) $doctorLookup->fetchColumn();
+    }
+    if ($requestedDoctorId <= 0) {
+        $requestedDoctorId = (int) $pdo->query('SELECT DoctorID FROM Doctors ORDER BY DoctorID LIMIT 1')->fetchColumn();
+    }
+    if ($requestedDoctorId > 0) {
+        $stmt = $pdo->prepare('SELECT * FROM Doctors WHERE DoctorID=?');
+        $stmt->execute([$requestedDoctorId]);
+        $doctorProfile = $stmt->fetch();
+    }
+}$portalErrors = [];
 $medicineOptions = [];
 $medicineByName = [];
 $labServices = [];
@@ -26,6 +47,9 @@ if ($doctorProfile && $_SERVER['REQUEST_METHOD'] === 'POST') {
         $visit = $stmt->fetch();
         if (!$visit) $portalErrors[] = 'This consultation is not assigned to your account.';
         $action = (string)($_POST['portal_action'] ?? '');
+        $actionPermissions = ['start'=>'consultations.edit','save_notes'=>'consultations.edit','prescribe'=>'pharmacy.prescription.create','request_lab'=>'laboratory.request','review_result'=>'laboratory.results.view'];
+        if (!isset($actionPermissions[$action])) tdc_forbidden();
+        tdc_require_permission($actionPermissions[$action]);
         if (!$portalErrors && $action !== 'review_result' && $visit['PaymentStatus'] !== 'Paid') {
             $portalErrors[] = 'Reception must record full consultation payment before clinical work can begin.';
         }
@@ -123,15 +147,39 @@ if ($doctorProfile && ctype_digit((string)($_GET['visit'] ?? ''))) {
         $stmt=$pdo->prepare('SELECT * FROM Laboratory WHERE VisitID=? ORDER BY OrderDate DESC');$stmt->execute([$selectedVisit['VisitID']]);$labOrders=$stmt->fetchAll();
     }
 }
+[$waitingFrom, $waitingTo, $waitingDateError] = tdc_date_range_resolve();
+$waitingSearch = trim((string) ($_GET['q'] ?? ''));
+$waitingPerPage = (int) ($_GET['per_page'] ?? 10);
+if (!in_array($waitingPerPage, [10,25,50,100], true)) $waitingPerPage = 10;
+$waitingPage = max(1, (int) ($_GET['page'] ?? 1));
 $queue=[];
 $readyResults=[];
 if ($doctorProfile) {
-    $stmt=$pdo->prepare("SELECT v.*,p.PatientName,p.PatientPhone FROM Visits v JOIN Patients p ON p.PatientID=v.PatientID WHERE v.DoctorID=? AND (DATE(v.VisitDate)=CURDATE() OR v.QueueStatus IN ('Waiting','In Consultation')) ORDER BY FIELD(v.QueueStatus,'In Consultation','Waiting','Pending Payment','Completed'),v.VisitDate");
-    $stmt->execute([$doctorProfile['DoctorID']]);$queue=$stmt->fetchAll();
+    $queueWhere = $superadminDoctorMode ? ['1=1'] : ['v.DoctorID=?'];
+    $queueParams = $superadminDoctorMode ? [] : [$doctorProfile['DoctorID']];
+    if ($waitingDateError) $queueWhere[] = '1=0';
+    if ($waitingFrom !== '' && tdc_ui_is_date($waitingFrom)) { $queueWhere[] = 'v.VisitDate>=?'; $queueParams[] = $waitingFrom.' 00:00:00'; }
+    if ($waitingTo !== '' && tdc_ui_is_date($waitingTo)) { $queueWhere[] = 'v.VisitDate<=?'; $queueParams[] = $waitingTo.' 23:59:59'; }
+    if ($waitingSearch !== '') {
+        $queueWhere[] = '(v.VisitReference LIKE ? OR p.PatientName LIKE ? OR p.PatientPhone LIKE ?)';
+        array_push($queueParams, '%'.$waitingSearch.'%', '%'.$waitingSearch.'%', '%'.$waitingSearch.'%');
+    }
+    $stmt=$pdo->prepare("SELECT v.*,p.PatientName,p.PatientPhone,p.Gender,p.Age,d.DoctorName FROM Visits v JOIN Patients p ON p.PatientID=v.PatientID JOIN Doctors d ON d.DoctorID=v.DoctorID WHERE ".implode(' AND ', $queueWhere)." ORDER BY v.VisitDate DESC,v.VisitID DESC");
+    $stmt->execute($queueParams);$queue=$stmt->fetchAll();
     $stmt=$pdo->prepare("SELECT l.LaboratoryID,l.VisitID,l.TestName,l.ResultDate,p.PatientName FROM Laboratory l JOIN Patients p ON p.PatientID=l.PatientID WHERE l.DoctorID=? AND l.WorkflowStatus='Completed' AND l.ReviewedAt IS NULL ORDER BY l.ResultDate DESC,l.OrderDate DESC");
     $stmt->execute([$doctorProfile['DoctorID']]);$readyResults=$stmt->fetchAll();
 }
+if (($_GET['export'] ?? '') === 'csv' && !$waitingDateError) {
+    tdc_require_permission('doctor.workspace');
+    $rows = array_map(static fn(array $v): array => [$v['VisitReference'],$v['PatientName'],$v['Gender'],$v['Age'],$v['PatientPhone'],$v['VisitDate'],$v['DoctorName'],$v['QueueStatus']], $queue);
+    tdc_csv_download('doctor-waiting.csv', ['Visit','Patient','Gender','Age','Phone','Date Added','Doctor','Status'], $rows);
+}
+$waitingTotal = count($queue);
+$waitingPage = min($waitingPage, max(1, (int) ceil($waitingTotal / $waitingPerPage)));
+$waitingRows = array_slice($queue, ($waitingPage - 1) * $waitingPerPage, $waitingPerPage);
 $legalName=(string)$_SESSION['userlegalname'];$displayName=tdc_display_name($legalName);$avatarLetters=strtoupper(substr($displayName,0,2));$csrfToken=(string)$_SESSION['csrf_token'];
+require __DIR__ . '/doctor-workspace-view.php';
+return;
 ?>
 <!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Doctor Portal | Tarey Derma Clinic</title><link rel="stylesheet" href="../assets/clinic.css"><style>body{font-family:Arial,sans-serif}.portal-header{background:var(--primary);padding:8px 30px;display:flex;align-items:center;justify-content:space-between;min-height:58px}.portal-brand{background:#fff;padding:7px 12px}.portal-brand img{height:28px}.portal-nav{display:flex;gap:8px;background:#fff;border-bottom:1px solid var(--border-ui);padding:0 30px}.portal-nav a{padding:15px;color:var(--primary);text-decoration:none;font-weight:700;font-size:13px}.portal-grid{display:grid;grid-template-columns:minmax(320px,.8fr) minmax(0,1.7fr);gap:16px}.portal-panel{padding:18px;border:1px solid var(--border-ui);border-radius:8px;background:#fff}.portal-panel h2{font-size:16px;margin-bottom:14px}.queue-link{display:block;padding:12px;border-bottom:1px solid var(--border-ui);color:var(--text-primary);text-decoration:none}.queue-link:hover{background:var(--primary-soft)}.queue-link span{display:block;color:var(--text-muted);font-size:11px;margin-top:4px}.clinical-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}.clinical-grid .full{grid-column:1/-1}.rx-line{border-bottom:1px solid var(--border-ui);padding-bottom:12px;margin-bottom:12px}.rx-line:last-child{border-bottom:0}.rx-meta{font-size:11px;color:var(--text-muted);margin-top:5px;min-height:14px}@media(max-width:850px){.portal-grid,.clinical-grid{grid-template-columns:1fr}.clinical-grid .full{grid-column:auto}}</style><script src="../assets/clinic.js" defer></script></head><body>
 <header><div class="portal-header"><a class="portal-brand" href="home.php"><img src="../uploads/tareydermacliniclogo.png" alt="Tarey Derma Clinic"></a><?php require __DIR__.'/profile.php'; ?></div><nav class="portal-nav"><a href="home.php">Dashboard</a><a href="doctors.php">Doctor Workspace</a></nav></header>

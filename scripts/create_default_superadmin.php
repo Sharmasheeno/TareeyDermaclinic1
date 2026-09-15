@@ -25,6 +25,10 @@ const DEFAULT_SUPERADMIN_PASSWORD = 'SuperAdmin@123';
 $resetPassword = in_array('--reset-password', $argv, true);
 
 try {
+    $roleId = (int) $pdo->query("SELECT RoleID FROM Roles WHERE RoleKey='superuser' LIMIT 1")->fetchColumn();
+    if ($roleId < 1) {
+        throw new RuntimeException('Run scripts/migrate_setup_rbac.php before creating the root SuperAdmin.');
+    }
     $stmt = $pdo->prepare(
         'SELECT id, username, role
          FROM users
@@ -42,12 +46,16 @@ try {
                 'UPDATE users
                  SET userlegalname = :userlegalname,
                      role = :role,
+                     role_id = :role_id,
+                     is_active = 1,
+                     is_root = 1,
                      password = :password
                  WHERE id = :id'
             );
             $stmt->execute([
                 'userlegalname' => DEFAULT_SUPERADMIN_NAME,
                 'role'          => DEFAULT_SUPERADMIN_ROLE,
+                'role_id'       => $roleId,
                 'password'      => $passwordHash,
                 'id'            => $existingUser['id'],
             ]);
@@ -59,12 +67,13 @@ try {
         }
     } else {
         $stmt = $pdo->prepare(
-            'INSERT INTO users (userlegalname, role, username, password)
-             VALUES (:userlegalname, :role, :username, :password)'
+            'INSERT INTO users (userlegalname,role,role_id,username,password,is_active,is_root)
+             VALUES (:userlegalname,:role,:role_id,:username,:password,1,1)'
         );
         $stmt->execute([
             'userlegalname' => DEFAULT_SUPERADMIN_NAME,
             'role'          => DEFAULT_SUPERADMIN_ROLE,
+            'role_id'       => $roleId,
             'username'      => DEFAULT_SUPERADMIN_USERNAME,
             'password'      => $passwordHash,
         ]);
@@ -76,7 +85,7 @@ try {
     echo "Username: " . DEFAULT_SUPERADMIN_USERNAME . "\n";
     echo "Password: " . DEFAULT_SUPERADMIN_PASSWORD . "\n";
     echo "Role: Superadmin\n";
-} catch (PDOException $e) {
+} catch (Throwable $e) {
     error_log('[CREATE DEFAULT SUPERADMIN ERROR] ' . $e->getMessage());
     fwrite(STDERR, "Failed to create default Superadmin. Check the database connection and users table.\n");
     exit(1);

@@ -153,8 +153,8 @@ const NAV_ITEMS = [
         'icon'  => '<path d="M4 13a1 1 0 011-1h1a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1v-4zm5-5a1 1 0 011-1h1a1 1 0 011 1v9a1 1 0 01-1 1h-1a1 1 0 01-1-1V8zm5-4a1 1 0 011-1h1a1 1 0 011 1v13a1 1 0 01-1 1h-1a1 1 0 01-1-1V4z"/>',
     ],
     [
-        'href'  => 'settings.php',
-        'label' => 'Settings',
+        'href'  => 'setup.php',
+        'label' => 'Setup',
         'icon'  => '<path fill-rule="evenodd" d="M8.34 1.804A1 1 0 019.32 1h1.36a1 1 0 01.98.804l.331 1.652a6.993 6.993 0 011.929 1.115l1.598-.54a1 1 0 011.186.447l.68 1.178a1 1 0 01-.223 1.28l-1.281 1.05a7.05 7.05 0 010 2.228l1.28 1.05a1 1 0 01.224 1.28l-.68 1.178a1 1 0 01-1.187.447l-1.598-.54a6.993 6.993 0 01-1.929 1.115l-.33 1.652a1 1 0 01-.98.804H9.32a1 1 0 01-.98-.804l-.331-1.652a6.993 6.993 0 01-1.929-1.115l-1.598.54a1 1 0 01-1.186-.447l-.68-1.178a1 1 0 01.223-1.28l1.281-1.05a7.05 7.05 0 010-2.228l-1.28-1.05a1 1 0 01-.224-1.28l.68-1.178a1 1 0 011.187-.447l1.598.54A6.993 6.993 0 018.01 3.456l.33-1.652zM10 13a3 3 0 100-6 3 3 0 000 6z" clip-rule="evenodd"/>',
     ],
 ];
@@ -628,10 +628,7 @@ if (empty($_SESSION['user_id'])) {
     exit;
 }
 
-if (!in_array($_SESSION['role'] ?? '', ALLOWED_ACCOUNTING_ROLES, true)) {
-    header('Location: home.php');
-    exit;
-}
+tdc_require_permission('accounting.view');
 
 require_once __DIR__ . '/../../db.php';
 
@@ -668,6 +665,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($section, ALLOWED_SECTIONS
 
         // --- General Ledger --------------------------------------------
         if ($section === 'ledger') {
+            tdc_require_permission($formAction === 'void' ? 'accounting.expenses.edit' : 'accounting.expenses.create');
             if ($formAction === 'void') {
                 $base = preg_replace('/[^A-Za-z0-9]/', '', (string) ($_POST['EntryRef'] ?? ''));
                 if ($base === '') {
@@ -712,6 +710,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($section, ALLOWED_SECTIONS
 
         // --- Chart of Accounts -----------------------------------------
         } elseif ($section === 'accounts') {
+            tdc_require_permission('accounting.expenses.edit');
             if ($formAction === 'rename') {
                 $accountId = trim((string) ($_POST['AccountID'] ?? ''));
                 $newName   = trim((string) ($_POST['NewName'] ?? ''));
@@ -1108,17 +1107,6 @@ $justRenamed  = isset($_GET['renamed']);
     .info-field .info-value{ font-size:14.5px; font-weight:600; color:var(--navy); word-break:break-word; }
     .subsection-title{ font-size:16px; font-weight:700; color:var(--navy); margin-bottom:12px; display:flex; align-items:center; gap:10px; max-width:1200px; }
 
-    .modal-overlay{ position:fixed; inset:0; background:rgba(46,49,146,0.35); display:none; align-items:center; justify-content:center; z-index:1000; padding:20px; }
-    .modal-overlay.show{ display:flex; }
-    .modal-box{ background:var(--white); border:2px solid var(--navy); width:100%; max-width:480px; max-height:90vh; overflow-y:auto; }
-    .modal-head{ display:flex; align-items:center; justify-content:space-between; padding:18px 22px; border-bottom:2px solid var(--navy); }
-    .modal-head h3{ font-size:16px; font-weight:700; color:var(--navy); }
-    .modal-close{ appearance:none; background:none; border:none; cursor:pointer; color:var(--navy-55); width:26px; height:26px; }
-    .modal-close:hover{ color:var(--orange); }
-    .modal-close svg{ width:100%; height:100%; }
-    .modal-body{ padding:22px; }
-    .modal-body .form-group{ margin-bottom:16px; }
-    .modal-actions{ display:flex; justify-content:flex-end; gap:10px; margin-top:6px; }
 
     #js-toast{ position:fixed; bottom:28px; left:50%; transform:translateX(-50%) translateY(20px); display:flex; align-items:center; gap:8px; background:var(--white); border:2px solid var(--navy); color:var(--navy); font-size:13px; font-weight:500; padding:10px 18px; white-space:nowrap; z-index:9999; opacity:0; pointer-events:none; transition:opacity 0.2s ease, transform 0.2s ease; }
     #js-toast svg{ width:16px; height:16px; flex-shrink:0; }

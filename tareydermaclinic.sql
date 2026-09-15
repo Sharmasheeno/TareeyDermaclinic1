@@ -240,9 +240,13 @@ CREATE TABLE `purchases` (
 CREATE TABLE `users` (
   `id` int(11) NOT NULL,
   `userlegalname` varchar(255) NOT NULL,
-  `role` enum('superuser','receptionuser','pharmacyuser','labuser') NOT NULL,
+  `role` varchar(100) NOT NULL,
+  `role_id` int(11) DEFAULT NULL,
   `username` varchar(100) NOT NULL,
   `password` varchar(255) NOT NULL,
+  `is_active` tinyint(1) NOT NULL DEFAULT 1,
+  `is_root` tinyint(1) NOT NULL DEFAULT 0,
+  `last_login_at` datetime DEFAULT NULL,
   `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
   `updated_at` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp()
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
@@ -251,10 +255,10 @@ CREATE TABLE `users` (
 -- Dumping data for table `users`
 --
 
-INSERT INTO `users` (`id`, `userlegalname`, `role`, `username`, `password`, `created_at`, `updated_at`) VALUES
-(5, 'Moalio Tech Solutions', 'superuser', 'Moalio', '$2b$10$X9uCZSx2CJICHwu5N3OcU.mMqr3N93HMmC2BvxK9xpHXBXPoWvz.C', '2026-07-16 10:21:29', '2026-08-30 09:55:14'),
-(6, 'Dr. Mohamed Abdi Hashi', 'superuser', 'tarey', '$2y$10$A8VRiu9mw3zW88X9EPPQ9uwzh9H.RIhdANZcwkyjBPq3XCbUXUO/6', '2026-07-16 11:10:33', '2026-08-30 11:56:11'),
-(7, 'Dr. Abdalla Mohamed Hashi', 'superuser', 'Tareey', '$2y$10$XRlDCCSx9liqleo3vz0DuOu728wRKWmucbzQk.jVhnZuOyRIt0XnG', '2026-08-29 08:35:23', '2026-08-30 09:54:51');
+INSERT INTO `users` (`id`, `userlegalname`, `role`, `role_id`, `username`, `password`, `is_active`, `is_root`, `last_login_at`, `created_at`, `updated_at`) VALUES
+(5, 'Moalio Tech Solutions', 'superuser', NULL, 'Moalio', '$2b$10$X9uCZSx2CJICHwu5N3OcU.mMqr3N93HMmC2BvxK9xpHXBXPoWvz.C', 1, 0, NULL, '2026-07-16 10:21:29', '2026-08-30 09:55:14'),
+(6, 'Dr. Mohamed Abdi Hashi', 'superuser', NULL, 'tarey', '$2y$10$A8VRiu9mw3zW88X9EPPQ9uwzh9H.RIhdANZcwkyjBPq3XCbUXUO/6', 1, 0, NULL, '2026-07-16 11:10:33', '2026-08-30 11:56:11'),
+(7, 'Dr. Abdalla Mohamed Hashi', 'superuser', NULL, 'Tareey', '$2y$10$XRlDCCSx9liqleo3vz0DuOu728wRKWmucbzQk.jVhnZuOyRIt0XnG', 1, 0, NULL, '2026-08-29 08:35:23', '2026-08-30 09:54:51');
 
 --
 -- Indexes for dumped tables
@@ -320,7 +324,8 @@ ALTER TABLE `purchases`
 --
 ALTER TABLE `users`
   ADD PRIMARY KEY (`id`),
-  ADD UNIQUE KEY `username` (`username`);
+  ADD UNIQUE KEY `username` (`username`),
+  ADD KEY `idx_users_role_id` (`role_id`);
 
 --
 -- AUTO_INCREMENT for dumped tables
@@ -347,7 +352,7 @@ ALTER TABLE `users`
 -- Connected clinic workflow (Doctor portal, consultation queue, payments,
 -- prescription dispensing, laboratory handoff, and notifications).
 ALTER TABLE `users`
-  MODIFY `role` enum('superuser','receptionuser','doctoruser','pharmacyuser','labuser') NOT NULL;
+  MODIFY `role` varchar(100) NOT NULL;
 
 ALTER TABLE `doctors`
   ADD COLUMN `UserID` int(11) DEFAULT NULL AFTER `DoctorID`,

@@ -50,6 +50,7 @@ session_set_cookie_params([
 ]);
 session_start();
 require_once __DIR__ . '/../includes/access.php';
+require_once __DIR__ . '/../includes/patient-age.php';
 tdc_require_access();
 
 header('X-Frame-Options: DENY');
@@ -120,8 +121,8 @@ const NAV_ITEMS = [
         'icon'  => '<path d="M4 13a1 1 0 011-1h1a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1v-4zm5-5a1 1 0 011-1h1a1 1 0 011 1v9a1 1 0 01-1 1h-1a1 1 0 01-1-1V8zm5-4a1 1 0 011-1h1a1 1 0 011 1v13a1 1 0 01-1 1h-1a1 1 0 01-1-1V4z"/>',
     ],
     [
-        'href'  => 'settings.php',
-        'label' => 'Settings',
+        'href'  => 'setup.php',
+        'label' => 'Setup',
         'icon'  => '<path fill-rule="evenodd" d="M8.34 1.804A1 1 0 019.32 1h1.36a1 1 0 01.98.804l.331 1.652a6.993 6.993 0 011.929 1.115l1.598-.54a1 1 0 011.186.447l.68 1.178a1 1 0 01-.223 1.28l-1.281 1.05a7.05 7.05 0 010 2.228l1.28 1.05a1 1 0 01.224 1.28l-.68 1.178a1 1 0 01-1.187.447l-1.598-.54a6.993 6.993 0 01-1.929 1.115l-.33 1.652a1 1 0 01-.98.804H9.32a1 1 0 01-.98-.804l-.331-1.652a6.993 6.993 0 01-1.929-1.115l-1.598.54a1 1 0 01-1.186-.447l-.68-1.178a1 1 0 01.223-1.28l1.281-1.05a7.05 7.05 0 010-2.228l-1.28-1.05a1 1 0 01-.224-1.28l.68-1.178a1 1 0 011.187-.447l1.598.54A6.993 6.993 0 018.01 3.456l.33-1.652zM10 13a3 3 0 100-6 3 3 0 000 6z" clip-rule="evenodd"/>',
     ],
 ];
@@ -327,12 +328,29 @@ if (empty($_SESSION['user_id'])) {
 }
 
 require_once __DIR__ . '/../../db.php';
+require_once __DIR__ . '/../includes/data-transfer.php';
 
 if (empty($_SESSION['csrf_token'])) {
     $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
 }
 
-$canManage = in_array($_SESSION['role'] ?? '', ALLOWED_MANAGE_ROLES, true);
+$canCreate = tdc_can('patients.create');
+$canEdit = tdc_can('patients.edit');
+$canDelete = tdc_can('patients.delete');
+$canCreateVisit = tdc_can('visits.create');
+$canImport = tdc_can('patients.import');
+$canExport = tdc_can('patients.export');
+$canManage = $canCreate || $canEdit || $canDelete;
+
+if (($_GET['download'] ?? '') === 'patient-template') {
+    tdc_require_permission('patients.import');
+    tdc_csv_download('patient-import-example.csv', ['patient_name','phone','address','gender','date_of_birth','patient_type','doctor_id','remark'], [['Example Patient','615000000','Mogadishu','Male','2000-01-15','New Patient','','Example row - remove before importing']]);
+}
+if (($_GET['download'] ?? '') === 'patients') {
+    tdc_require_permission('patients.export');
+    $rows=[];foreach($pdo->query('SELECT PatientID,PatientName,PatientPhone,PatientAddress,Gender,DateOfBirth,PatientType,AllocatedDoctor,VisitNumber,DueBalance,RegisteredAt FROM Patients ORDER BY PatientID')->fetchAll() as $row)$rows[]=array_values($row);
+    tdc_csv_download('patients-'.date('Y-m-d').'.csv',['patient_id','patient_name','phone','address','gender','date_of_birth','patient_type','doctor_id','visit_count','due_balance','registered_at'],$rows);
+}
 
 // =======================================================================
 // SECTION 8 — Request-scoped state
@@ -361,13 +379,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } else {
         $formAction = (string) ($_POST['form_action'] ?? 'save');
 
-        if ($formAction === 'delete') {
+        if ($formAction === 'import_csv') {
+            tdc_require_permission('patients.import');
+            try {
+                $rows=tdc_csv_upload_rows($_FILES['csv_file']??[],['patient_name','phone','gender','date_of_birth','patient_type']);
+                if(!$rows)throw new RuntimeException('The CSV file contains no patient rows.');
+                $pdo->beginTransaction();$imported=0;
+                foreach($rows as $index=>$row){$dob=trim((string)($row['date_of_birth']??''));$patient=['PatientID'=>'','PatientName'=>trim((string)($row['patient_name']??'')),'PatientPhone'=>trim((string)($row['phone']??'')),'PatientAddress'=>trim((string)($row['address']??'')),'Gender'=>trim((string)($row['gender']??'')),'Age'=>$dob!==''&&tdc_is_valid_date($dob)?(string)tdc_age_from_birth_date($dob):'','DateOfBirth'=>$dob,'PatientType'=>trim((string)($row['patient_type']??'')),'AllocatedDoctor'=>trim((string)($row['doctor_id']??'')),'Remark'=>trim((string)($row['remark']??''))];$rowErrors=tdc_validate_patient_form($patient);if($patient['PatientPhone']!==''){$stmt=$pdo->prepare("SELECT COUNT(*) FROM Patients WHERE REPLACE(REPLACE(REPLACE(PatientPhone,' ',''),'-',''),'+','')=REPLACE(REPLACE(REPLACE(?,' ',''),'-',''),'+','')");$stmt->execute([$patient['PatientPhone']]);if((int)$stmt->fetchColumn())$rowErrors[]='phone already exists';}if($rowErrors)throw new RuntimeException('Row '.($index+2).': '.implode(' ',$rowErrors));tdc_save_patient($pdo,$patient,false,0);$imported++;}
+                tdc_audit($pdo,'patients.imported','Patients',null,"Imported $imported patient records.");$pdo->commit();tdc_redirect('imported');
+            } catch(RuntimeException $e){if($pdo->inTransaction())$pdo->rollBack();$errors[]=$e->getMessage();}
+        } elseif ($formAction === 'delete') {
+            tdc_require_permission('patients.delete');
             $deleteId = (int) ($_POST['PatientID'] ?? 0);
             $errors   = $deleteId > 0 ? tdc_delete_patient($pdo, $deleteId) : ['Invalid patient selected.'];
             if (empty($errors)) {
                 tdc_redirect('deleted');
             }
         } elseif ($formAction === 'visit') {
+            tdc_require_permission('visits.create');
             $patientId = (int) ($_POST['PatientID'] ?? 0);
             header('Location: reception.php?section=consultations&patient=' . $patientId);
             exit;
@@ -379,14 +408,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $old['Gender']          = (string) ($_POST['Gender'] ?? '');
             $old['Age']             = trim((string) ($_POST['Age'] ?? ''));
             $old['DateOfBirth']     = trim((string) ($_POST['DateOfBirth'] ?? ''));
-            if ($old['DateOfBirth'] !== '' && tdc_is_valid_date($old['DateOfBirth']) && $old['DateOfBirth'] <= date('Y-m-d')) {
-                $old['Age'] = (string)tdc_age_from_birth_date($old['DateOfBirth']);
-            }
+            [$old['Age'], $old['DateOfBirth']] = tdc_sync_age_dob($old['Age'], $old['DateOfBirth']);
             $old['PatientType']     = (string) ($_POST['PatientType'] ?? '');
             $old['AllocatedDoctor'] = trim((string) ($_POST['AllocatedDoctor'] ?? ''));
             $old['Remark']          = trim((string) ($_POST['Remark'] ?? ''));
 
             $isEdit = $old['PatientID'] !== '' && ctype_digit($old['PatientID']);
+            tdc_require_permission($isEdit ? 'patients.edit' : 'patients.create');
             $errors = tdc_validate_patient_form($old);
             if (!$isEdit && $old['PatientPhone'] !== '') {
                 $stmt = $pdo->prepare('SELECT PatientID,PatientName FROM Patients WHERE REPLACE(REPLACE(REPLACE(PatientPhone,\' \',\'\'),\'-\',\'\'),\'+\',\'\') = REPLACE(REPLACE(REPLACE(?,\' \',\'\'),\'-\',\'\'),\'+\',\'\') LIMIT 1');
@@ -634,17 +662,6 @@ $justVisited = isset($_GET['visited']);
     .info-field .info-value{ font-size:14.5px; font-weight:600; color:var(--navy); word-break:break-word; }
     .subsection-title{ font-size:16px; font-weight:700; color:var(--navy); margin-bottom:12px; display:flex; align-items:center; justify-content:space-between; max-width:1200px; }
 
-    .modal-overlay{ position:fixed; inset:0; background:rgba(46,49,146,0.35); display:none; align-items:center; justify-content:center; z-index:1000; padding:20px; }
-    .modal-overlay.show{ display:flex; }
-    .modal-box{ background:var(--white); border:2px solid var(--navy); width:100%; max-width:560px; max-height:90vh; overflow-y:auto; }
-    .modal-head{ display:flex; align-items:center; justify-content:space-between; padding:18px 22px; border-bottom:2px solid var(--navy); }
-    .modal-head h3{ font-size:16px; font-weight:700; color:var(--navy); }
-    .modal-close{ appearance:none; background:none; border:none; cursor:pointer; color:var(--navy-55); width:26px; height:26px; }
-    .modal-close:hover{ color:var(--orange); }
-    .modal-close svg{ width:100%; height:100%; }
-    .modal-body{ padding:22px; }
-    .modal-body .form-group{ margin-bottom:16px; }
-    .modal-actions{ display:flex; justify-content:flex-end; gap:10px; margin-top:6px; }
 
     #js-toast{ position:fixed; bottom:28px; left:50%; transform:translateX(-50%) translateY(20px); display:flex; align-items:center; gap:8px; background:var(--white); border:2px solid var(--navy); color:var(--navy); font-size:13px; font-weight:500; padding:10px 18px; white-space:nowrap; z-index:9999; opacity:0; pointer-events:none; transition:opacity 0.2s ease, transform 0.2s ease; }
     #js-toast svg{ width:16px; height:16px; flex-shrink:0; }
@@ -738,11 +755,11 @@ $justVisited = isset($_GET['visited']);
         <?php endif; ?>
     </div>
 
-    <?php if ($canManage): ?>
+    <?php if ($canEdit || $canCreateVisit): ?>
     <div class="section-toolbar" style="margin-top:-20px;">
         <div></div>
         <div class="row-actions">
-            <button type="button" class="btn btn-secondary" id="editFromViewBtn"
+            <?php if($canEdit): ?><button type="button" class="btn btn-secondary" id="editFromViewBtn"
                 data-id="<?= (int) $viewPatient['PatientID'] ?>"
                 data-name="<?= tdc_e($viewPatient['PatientName']) ?>"
                 data-phone="<?= tdc_e((string) $viewPatient['PatientPhone']) ?>"
@@ -752,8 +769,8 @@ $justVisited = isset($_GET['visited']);
                 data-dob="<?= tdc_e((string) $viewPatient['DateOfBirth']) ?>"
                 data-type="<?= tdc_e((string) $viewPatient['PatientType']) ?>"
                 data-doctor="<?= tdc_e((string) $viewPatient['AllocatedDoctor']) ?>"
-                data-remark="<?= tdc_e((string) $viewPatient['Remark']) ?>">Edit Patient</button>
-            <a class="btn btn-primary" href="reception.php?section=consultations&amp;patient=<?= (int) $viewPatient['PatientID'] ?>">Book Consultation</a>
+                data-remark="<?= tdc_e((string) $viewPatient['Remark']) ?>">Edit Patient</button><?php endif; ?>
+            <?php if($canCreateVisit): ?><a class="btn btn-primary" href="reception.php?section=consultations&amp;patient=<?= (int) $viewPatient['PatientID'] ?>">Book Consultation</a><?php endif; ?>
         </div>
     </div>
     <?php endif; ?>
@@ -853,9 +870,7 @@ $justVisited = isset($_GET['visited']);
             <button type="submit" class="btn btn-secondary">Filter</button>
             <?php if ($patientSearch !== '' || $patientTypeFilter !== '' || $doctorFilter > 0 || $patientDateFilter !== ''): ?><a href="patients.php" class="clear-filters">Clear</a><?php endif; ?>
         </form>
-        <?php if ($canManage): ?>
-        <button type="button" id="addPatientBtn" class="btn btn-primary">+ Register Patient</button>
-        <?php endif; ?>
+        <div class="table-command-bar"><?php if($canImport):?><button type="button" id="importPatientBtn" class="btn btn-secondary">Import CSV</button><a class="btn btn-secondary" href="patients.php?download=patient-template">Download CSV Template</a><?php endif;?><?php if($canExport):?><a class="btn btn-secondary" href="patients.php?download=patients">Export CSV</a><button type="button" class="btn btn-secondary" onclick="window.print()">Export PDF</button><?php endif;?><?php if ($canCreate): ?><button type="button" id="addPatientBtn" class="btn btn-primary">Register Patient</button><?php endif; ?></div>
     </div>
 
     <div class="data-table-wrap">
@@ -883,7 +898,7 @@ $justVisited = isset($_GET['visited']);
                     <td>
                         <div class="row-actions">
                             <a href="patients.php?view=<?= (int) $p['PatientID'] ?>" class="btn-sm">View</a>
-                            <?php if ($canManage): ?>
+                            <?php if ($canEdit): ?>
                             <button type="button" class="btn-sm edit-patient-btn"
                                 data-id="<?= (int) $p['PatientID'] ?>"
                                 data-name="<?= tdc_e($p['PatientName']) ?>"
@@ -895,14 +910,13 @@ $justVisited = isset($_GET['visited']);
                                 data-type="<?= tdc_e((string) $p['PatientType']) ?>"
                                 data-doctor="<?= tdc_e((string) $p['AllocatedDoctor']) ?>"
                                 data-remark="<?= tdc_e((string) $p['Remark']) ?>">Edit</button>
-                            <a class="btn-sm" href="reception.php?section=consultations&amp;patient=<?= (int) $p['PatientID'] ?>">Book</a>
-                            <form method="POST" action="patients.php" onsubmit="return confirm('Delete this patient? This cannot be undone.');">
+                            <?php endif; ?><?php if($canCreateVisit): ?><a class="btn-sm" href="reception.php?section=consultations&amp;patient=<?= (int) $p['PatientID'] ?>">Book</a><?php endif; ?>
+                            <?php if($canDelete): ?><form method="POST" action="patients.php" onsubmit="return confirm('Delete this patient? This cannot be undone.');">
                                 <input type="hidden" name="csrf_token" value="<?= tdc_e($csrfToken) ?>">
                                 <input type="hidden" name="form_action" value="delete">
                                 <input type="hidden" name="PatientID" value="<?= (int) $p['PatientID'] ?>">
                                 <button type="submit" class="btn-sm danger">Delete</button>
-                            </form>
-                            <?php endif; ?>
+                            </form><?php endif; ?>
                         </div>
                     </td>
                 </tr>
@@ -990,6 +1004,8 @@ $justVisited = isset($_GET['visited']);
 </div>
 <?php endif; ?>
 
+<?php if($canImport):?><div class="modal-overlay" id="importPatientModal"><div class="modal-box"><div class="modal-head"><h3>Import Patients</h3><button type="button" class="modal-close" data-close-import aria-label="Close">×</button></div><form method="post" enctype="multipart/form-data"><div class="modal-body"><input type="hidden" name="csrf_token" value="<?=tdc_e($csrfToken)?>"><input type="hidden" name="form_action" value="import_csv"><div class="form-section"><div class="form-section-heading"><span><strong>CSV File</strong><span>Use the required CSV template. The import is transactional.</span></span></div><div class="form-group"><label>Select CSV</label><input type="file" name="csv_file" accept=".csv,text/csv" required></div></div><div class="modal-actions"><button type="button" class="btn btn-secondary" data-close-import>Cancel</button><button class="btn btn-primary">Import Patients</button></div></div></form></div></div><?php endif;?>
+
 </main>
 
 <div id="js-toast" role="alert" aria-live="assertive">
@@ -1041,13 +1057,60 @@ function showToast(message){
     const fDoctor = document.getElementById('pf_AllocatedDoctor');
     const fRemark = document.getElementById('pf_Remark');
 
-    fDob.addEventListener('change', function(){
-        if (!fDob.value) return;
-        const dob = new Date(fDob.value + 'T00:00:00');
+    const MAX_AGE = 150;
+    let ageDobSyncing = false;
+
+    function pad2(n){ return String(n).padStart(2, '0'); }
+
+    function dobFromAge(years){
+        if (!Number.isInteger(years) || years < 0 || years > MAX_AGE) return '';
+        const t = new Date();
+        const d = new Date(t.getFullYear() - years, t.getMonth(), t.getDate());
+        return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate());
+    }
+
+    function ageFromDob(value){
+        if (!value) return null;
+        const dob = new Date(value + 'T00:00:00');
+        if (isNaN(dob.getTime())) return null;
         const today = new Date();
         let age = today.getFullYear() - dob.getFullYear();
         if (today.getMonth() < dob.getMonth() || (today.getMonth() === dob.getMonth() && today.getDate() < dob.getDate())) age--;
-        if (age >= 0 && age <= 150) fAge.value = age;
+        return (age >= 0 && age <= MAX_AGE) ? age : null;
+    }
+
+    fAge.addEventListener('input', function(){
+        if (ageDobSyncing) return;
+        const raw = fAge.value.trim();
+        if (raw === '') { fDob.value = ''; fDob.setCustomValidity(''); return; }
+        if (!/^\d+$/.test(raw)) { fDob.value = ''; return; }
+        const years = parseInt(raw, 10);
+        if (years < 0 || years > MAX_AGE) { fDob.value = ''; return; }
+        ageDobSyncing = true;
+        fDob.value = dobFromAge(years);
+        fDob.setCustomValidity('');
+        ageDobSyncing = false;
+    });
+
+    fDob.addEventListener('change', function(){
+        if (ageDobSyncing) return;
+        const rawDob = fDob.value.trim();
+        if (rawDob === '') { fAge.value = ''; fDob.setCustomValidity(''); return; }
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(rawDob)) { fAge.value = ''; return; }
+        const today = new Date();
+        const todayKey = today.getFullYear() + '-' + pad2(today.getMonth() + 1) + '-' + pad2(today.getDate());
+        if (rawDob > todayKey) {
+            fAge.value = '';
+            fDob.setCustomValidity('Date of birth cannot be in the future.');
+            fDob.reportValidity();
+            return;
+        }
+        const age = ageFromDob(rawDob);
+        if (age === null) { fAge.value = ''; return; }
+        fDob.setCustomValidity('');
+        ageDobSyncing = true;
+        fAge.value = age;
+        ageDobSyncing = false;
     });
 
     function openModal(){ overlay.classList.add('show'); }
@@ -1060,7 +1123,7 @@ function showToast(message){
         fAddress.value = ds.address;
         fGender.value = ds.gender;
         fAge.value = ds.age;
-        fDob.value = ds.dob;
+        fDob.value = ds.dob || dobFromAge(parseInt(ds.age, 10));
         fType.value = ds.type;
         fDoctor.value = ds.doctor;
         fRemark.value = ds.remark;
@@ -1122,6 +1185,7 @@ function showToast(message){
 })();
 <?php endif; ?>
 </script>
+<?php if($canImport):?><script>(()=>{const modal=document.getElementById('importPatientModal'),open=document.getElementById('importPatientBtn');const close=()=>modal?.classList.remove('show');open?.addEventListener('click',()=>modal?.classList.add('show'));document.querySelectorAll('[data-close-import]').forEach(button=>button.addEventListener('click',close));modal?.addEventListener('click',event=>{if(event.target===modal)close()});})();</script><?php endif;?>
 
 </body>
 </html>

@@ -105,8 +105,8 @@ const NAV_ITEMS = [
         'icon'  => '<path d="M4 13a1 1 0 011-1h1a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1v-4zm5-5a1 1 0 011-1h1a1 1 0 011 1v9a1 1 0 01-1 1h-1a1 1 0 01-1-1V8zm5-4a1 1 0 011-1h1a1 1 0 011 1v13a1 1 0 01-1 1h-1a1 1 0 01-1-1V4z"/>',
     ],
     [
-        'href'  => 'settings.php',
-        'label' => 'Settings',
+        'href'  => 'setup.php',
+        'label' => 'Setup',
         'icon'  => '<path fill-rule="evenodd" d="M8.34 1.804A1 1 0 019.32 1h1.36a1 1 0 01.98.804l.331 1.652a6.993 6.993 0 011.929 1.115l1.598-.54a1 1 0 011.186.447l.68 1.178a1 1 0 01-.223 1.28l-1.281 1.05a7.05 7.05 0 010 2.228l1.28 1.05a1 1 0 01.224 1.28l-.68 1.178a1 1 0 01-1.187.447l-1.598-.54a6.993 6.993 0 01-1.929 1.115l-.33 1.652a1 1 0 01-.98.804H9.32a1 1 0 01-.98-.804l-.331-1.652a6.993 6.993 0 01-1.929-1.115l-1.598.54a1 1 0 01-1.186-.447l-.68-1.178a1 1 0 01.223-1.28l1.281-1.05a7.05 7.05 0 010-2.228l-1.28-1.05a1 1 0 01-.224-1.28l.68-1.178a1 1 0 011.187-.447l1.598.54A6.993 6.993 0 018.01 3.456l.33-1.652zM10 13a3 3 0 100-6 3 3 0 000 6z" clip-rule="evenodd"/>',
     ],
 ];
@@ -289,17 +289,31 @@ if (empty($_SESSION['user_id'])) {
 
 require_once __DIR__ . '/../../db.php';
 require_once __DIR__ . '/../includes/workflow.php';
+require_once __DIR__ . '/../includes/data-transfer.php';
+require_once __DIR__ . '/../includes/ui.php';
 
 if (empty($_SESSION['csrf_token'])) {
     $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
 }
 
-if (($_SESSION['role'] ?? '') === 'doctoruser') {
+$doctorWorkspaceRequested = isset($_GET['visit']) || (string) ($_GET['workspace'] ?? '') === '1';
+if (tdc_can('doctor.workspace') && (!tdc_can('doctors.manage') || $doctorWorkspaceRequested)) {
     require __DIR__ . '/../includes/doctor-portal.php';
     exit;
 }
 
-$canManage = in_array($_SESSION['role'] ?? '', ALLOWED_MANAGE_ROLES, true);
+$canManage = tdc_can('doctors.manage');
+$canWorkspace = tdc_can('doctor.workspace');
+$canImport = tdc_can('doctors.import');
+$canExport = tdc_can('doctors.export');
+
+if (($_GET['download'] ?? '') === 'doctor-template') {
+    tdc_require_permission('doctors.import');
+    tdc_csv_download('doctor-import-example.csv',['doctor_name','specialization','consultation_fee','joined_date'],[['Example Doctor','Dermatology','25.00',date('Y-m-d')]]);
+}
+if (($_GET['download'] ?? '') === 'doctors') {
+    tdc_require_permission('doctors.export');$rows=[];foreach($pdo->query('SELECT d.DoctorID,d.DoctorName,d.Specialty,d.ConsultationFee,d.JoinedDate,u.username FROM Doctors d LEFT JOIN users u ON u.id=d.UserID ORDER BY d.DoctorID')->fetchAll() as $row)$rows[]=array_values($row);tdc_csv_download('doctors-'.date('Y-m-d').'.csv',['doctor_id','doctor_name','specialization','consultation_fee','joined_date','linked_username'],$rows);
+}
 
 // =======================================================================
 // SECTION 8 — Request-scoped state
@@ -330,13 +344,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } else {
         $formAction = (string) ($_POST['form_action'] ?? 'save');
 
-        if ($formAction === 'delete') {
+        if ($formAction === 'import_csv') {
+            tdc_require_permission('doctors.import');
+            try{$rows=tdc_csv_upload_rows($_FILES['csv_file']??[],['doctor_name','consultation_fee']);if(!$rows)throw new RuntimeException('The CSV file contains no doctor rows.');$pdo->beginTransaction();$imported=0;foreach($rows as $index=>$row){$input=['DoctorName'=>trim((string)($row['doctor_name']??'')),'Specialty'=>trim((string)($row['specialization']??'')),'ConsultationFee'=>trim((string)($row['consultation_fee']??'')),'JoinedDate'=>trim((string)($row['joined_date']??''))];$rowErrors=tdc_validate_doctor_form($input);$stmt=$pdo->prepare('SELECT COUNT(*) FROM Doctors WHERE LOWER(TRIM(DoctorName))=LOWER(TRIM(?))');$stmt->execute([$input['DoctorName']]);if((int)$stmt->fetchColumn())$rowErrors[]='doctor name already exists';if($rowErrors)throw new RuntimeException('Row '.($index+2).': '.implode(' ',$rowErrors));tdc_save_doctor($pdo,$input,false,0);$imported++;}tdc_audit($pdo,'doctors.imported','Doctors',null,"Imported $imported doctor records.");$pdo->commit();tdc_redirect('imported');}catch(RuntimeException $e){if($pdo->inTransaction())$pdo->rollBack();$errors[]=$e->getMessage();}
+        } elseif ($formAction === 'delete') {
+            tdc_require_permission('doctors.manage');
             $deleteId = (int) ($_POST['DoctorID'] ?? 0);
             $errors   = $deleteId > 0 ? tdc_delete_doctor($pdo, $deleteId) : ['Invalid doctor selected.'];
             if (empty($errors)) {
                 tdc_redirect('deleted');
             }
         } else {
+            tdc_require_permission('doctors.manage');
             $old['DoctorID']        = trim((string) ($_POST['DoctorID'] ?? ''));
             $old['DoctorName']      = trim((string) ($_POST['DoctorName'] ?? ''));
             $old['ConsultationFee'] = trim((string) ($_POST['ConsultationFee'] ?? ''));
@@ -388,6 +407,9 @@ $currentPage   = basename((string) ($_SERVER['SCRIPT_NAME'] ?? 'doctors.php'));
 
 $justSaved   = isset($_GET['success']);
 $justDeleted = isset($_GET['deleted']);
+
+$workspaceDoctorId = ctype_digit((string) ($_GET['doctor'] ?? '')) ? (int) $_GET['doctor'] : 0;
+$workspaceUrl      = 'doctors.php?workspace=1' . ($workspaceDoctorId > 0 ? '&doctor=' . $workspaceDoctorId : '');
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -399,118 +421,9 @@ $justDeleted = isset($_GET['deleted']);
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Google+Sans:ital,opsz,wght@0,17..18,400..700;1,17..18,400..700&display=swap" rel="stylesheet">
 <style>
-    :root{
-        --navy: #2E3192;
-        --navy-30: rgba(46,49,146,0.3);
-        --navy-10: rgba(46,49,146,0.08);
-        --navy-55: rgba(46,49,146,0.55);
-        --orange: #F15A24;
-        --white: #ffffff;
-        --border: 2px solid var(--navy);
-        --on-navy-70: rgba(255,255,255,0.7);
-    }
-    *, *::before, *::after{ box-sizing:border-box; margin:0; padding:0; }
-    body{ font-family:'Google Sans', sans-serif; background:var(--white); color:var(--navy); min-height:100vh; }
-    .app-header{ position:relative; z-index:100; }
-    .nav-item{ position:relative; flex-shrink:0; }
-    .utility-bar{ display:flex; align-items:center; justify-content:space-between; background:var(--navy); padding:8px 24px; }
-    .brand-chip{ background:var(--white); display:flex; align-items:center; padding:5px 14px; flex-shrink:0; }
-    .brand-chip img{ height:30px; width:auto; object-fit:contain; display:block; }
-    .utility-right{ display:flex; align-items:center; gap:2px; }
-    .icon-btn{ appearance:none; background:none; border:2px solid transparent; cursor:pointer; display:flex; align-items:center; justify-content:center; width:38px; height:38px; position:relative; color:var(--on-navy-70); transition:color 0.12s; }
-    .icon-btn:hover{ color:var(--white); }
-    .icon-btn svg{ width:20px; height:20px; stroke:currentColor; fill:none; stroke-width:2; stroke-linecap:round; stroke-linejoin:round; }
-    .icon-btn .badge{ position:absolute; top:6px; right:7px; width:7px; height:7px; background:var(--orange); border:2px solid var(--navy); }
-    .nav-item.open > .icon-btn{ color:var(--orange); }
-    .profile-static{ display:flex; align-items:center; gap:9px; padding:6px 8px; font-family:'Google Sans', sans-serif; color:var(--white); }
-    .avatar{ width:30px; height:30px; flex-shrink:0; background:var(--white); color:var(--navy); display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:700; letter-spacing:0.02em; }
-    .profile-name{ font-size:13.5px; font-weight:600; }
-    .menu-bar{ background:var(--white); padding:0 24px; display:flex; justify-content:safe center; overflow-x:auto; overflow-y:hidden; scrollbar-width:thin; scrollbar-color:var(--navy-30) transparent; }
-    .menu-bar::-webkit-scrollbar{ height:4px; }
-    .menu-bar::-webkit-scrollbar-track{ background:transparent; }
-    .menu-bar::-webkit-scrollbar-thumb{ background:var(--navy-30); border-radius:2px; }
-    .menu-bar::-webkit-scrollbar-thumb:hover{ background:var(--navy-55); }
-    .nav-items{ list-style:none; display:flex; align-items:center; gap:4px; flex-wrap:nowrap; flex-shrink:0; }
-    .nav-link{ appearance:none; background:none; border:none; cursor:pointer; display:flex; align-items:center; gap:7px; font-family:'Google Sans', sans-serif; font-size:13.5px; font-weight:600; letter-spacing:0.01em; color:var(--navy); text-decoration:none; padding:12px; white-space:nowrap; flex-shrink:0; transition:color 0.12s; }
-    .nav-link svg{ width:16px; height:16px; fill:var(--navy-55); flex-shrink:0; transition:fill 0.12s; }
-    .nav-link:hover{ color:var(--orange); }
-    .nav-link:hover svg{ fill:var(--orange); }
-    .nav-item.active > .nav-link{ color:var(--navy); box-shadow:inset 0 -2px 0 var(--orange); }
-    .nav-item.active > .nav-link svg{ fill:var(--navy); }
-    .dropdown-menu{ position:absolute; top:calc(100% + 6px); left:0; min-width:220px; background:var(--white); border:var(--border); display:none; flex-direction:column; padding:6px 0; }
-    .nav-item.open > .dropdown-menu{ display:flex; }
-    .dropdown-menu a{ display:block; text-decoration:none; color:var(--navy); font-size:13.5px; font-weight:500; padding:9px 16px; transition:background 0.12s, color 0.12s; }
-    .dropdown-menu a:hover{ background:var(--navy-10); color:var(--orange); }
-    .notif-menu{ right:0; left:auto; min-width:260px; }
-    .notif-menu .notif-title{ padding:10px 16px 8px; font-size:12px; font-weight:700; letter-spacing:0.04em; text-transform:uppercase; color:var(--navy-55); }
-    .notif-empty{ padding:20px 16px 22px; font-size:13px; color:var(--navy-55); text-align:center; }
-    .page-body{ padding:40px 32px; }
-    .welcome-eyebrow{ font-size:11px; font-weight:600; letter-spacing:0.08em; text-transform:uppercase; color:var(--navy-55); margin-bottom:8px; }
-    .welcome-title{ font-size:26px; font-weight:700; color:var(--navy); }
-    .welcome-sub{ font-size:14px; color:var(--navy-55); margin-top:6px; margin-bottom:28px; }
-
-    .error-msg{ display:flex; flex-direction:column; gap:4px; background:var(--white); border:2px solid var(--navy); color:var(--navy); font-size:13px; font-weight:500; padding:14px 16px; margin-bottom:24px; max-width:1040px; }
-    .error-msg .error-title{ display:flex; align-items:center; gap:8px; font-weight:700; }
-    .error-msg svg{ width:16px; height:16px; flex-shrink:0; }
-    .error-msg ul{ list-style:none; padding-left:24px; }
-    .error-msg li::before{ content:"— "; }
-
-    .form-group{ display:flex; flex-direction:column; }
-    .form-group label{ font-size:11px; font-weight:600; letter-spacing:0.06em; text-transform:uppercase; color:var(--navy); margin-bottom:6px; }
-    .form-group input, .form-group select{ width:100%; padding:11px 12px; border:2px solid rgba(46,49,146,0.3); font-size:14px; font-family:'Google Sans', sans-serif; color:var(--navy); background:var(--white); outline:none; transition:border-color 0.15s; }
-    .form-group input::placeholder{ color:rgba(46,49,146,0.45); }
-    .form-group input:focus, .form-group select:focus{ border-color:var(--orange); }
-    .form-row{ display:flex; gap:16px; flex-wrap:wrap; }
-    .form-row .form-group{ flex:1; min-width:180px; }
-    .btn{ padding:11px 22px; font-size:14px; font-weight:600; border:2px solid var(--navy); cursor:pointer; letter-spacing:0.02em; transition:background 0.12s, color 0.12s, border-color 0.12s; text-decoration:none; display:inline-flex; align-items:center; gap:6px; }
-    .btn-primary{ background:var(--navy); color:var(--white); }
-    .btn-primary:hover{ background:var(--orange); border-color:var(--orange); }
-    .btn-secondary{ background:var(--white); color:var(--navy); }
-    .btn-secondary:hover{ color:var(--orange); border-color:var(--orange); }
-
-    .section-toolbar{ display:flex; align-items:center; justify-content:space-between; gap:12px; max-width:1040px; margin-bottom:16px; flex-wrap:wrap; }
-    .search-box{ display:flex; gap:8px; }
-    .search-box input{ padding:10px 12px; border:2px solid rgba(46,49,146,0.3); font-size:13.5px; font-family:'Google Sans',sans-serif; color:var(--navy); min-width:240px; }
-    .search-box input:focus{ outline:none; border-color:var(--orange); }
-
-    .data-table-wrap{ max-width:1040px; border:2px solid var(--navy); overflow-x:auto; }
-    .data-table{ width:100%; border-collapse:collapse; }
-    .data-table th, .data-table td{ padding:12px 14px; font-size:13px; text-align:left; border-bottom:1px solid var(--navy-30); white-space:nowrap; }
-    .data-table th{ background:var(--navy-10); font-weight:700; text-transform:uppercase; font-size:11px; letter-spacing:.05em; color:var(--navy); }
-    .data-table tbody tr:last-child td{ border-bottom:none; }
-    .data-table tbody tr:hover{ background:var(--navy-10); }
-    .empty-row td{ text-align:center; padding:28px; color:var(--navy-55); }
-
-    .row-actions{ display:flex; gap:8px; }
-    .row-actions form{ display:inline; }
-    .btn-sm{ padding:6px 12px; font-size:12px; font-weight:600; border:2px solid var(--navy); cursor:pointer; background:var(--white); color:var(--navy); }
-    .btn-sm:hover{ background:var(--orange); border-color:var(--orange); color:var(--white); }
-    .btn-sm.danger{ border-color:#c0392b; color:#c0392b; }
-    .btn-sm.danger:hover{ background:#c0392b; border-color:#c0392b; color:var(--white); }
-
-    .modal-overlay{ position:fixed; inset:0; background:rgba(46,49,146,0.35); display:none; align-items:center; justify-content:center; z-index:1000; padding:20px; }
-    .modal-overlay.show{ display:flex; }
-    .modal-box{ background:var(--white); border:2px solid var(--navy); width:100%; max-width:480px; max-height:90vh; overflow-y:auto; }
-    .modal-head{ display:flex; align-items:center; justify-content:space-between; padding:18px 22px; border-bottom:2px solid var(--navy); }
-    .modal-head h3{ font-size:16px; font-weight:700; color:var(--navy); }
-    .modal-close{ appearance:none; background:none; border:none; cursor:pointer; color:var(--navy-55); width:26px; height:26px; }
-    .modal-close:hover{ color:var(--orange); }
-    .modal-close svg{ width:100%; height:100%; }
-    .modal-body{ padding:22px; }
-    .modal-body .form-group{ margin-bottom:16px; }
-    .modal-actions{ display:flex; justify-content:flex-end; gap:10px; margin-top:6px; }
-
-    #js-toast{ position:fixed; bottom:28px; left:50%; transform:translateX(-50%) translateY(20px); display:flex; align-items:center; gap:8px; background:var(--white); border:2px solid var(--navy); color:var(--navy); font-size:13px; font-weight:500; padding:10px 18px; white-space:nowrap; z-index:9999; opacity:0; pointer-events:none; transition:opacity 0.2s ease, transform 0.2s ease; }
-    #js-toast svg{ width:16px; height:16px; flex-shrink:0; }
+    #js-toast{ position:fixed; bottom:28px; left:50%; transform:translateX(-50%) translateY(20px); display:flex; align-items:center; gap:8px; background:var(--surface); border:1px solid var(--border-ui); border-radius:var(--radius); color:var(--text-primary); font-size:13px; font-weight:600; padding:11px 18px; white-space:nowrap; z-index:9999; opacity:0; pointer-events:none; box-shadow:var(--shadow-card); transition:opacity 0.2s ease, transform 0.2s ease; }
+    #js-toast svg{ width:16px; height:16px; flex-shrink:0; color:var(--success); }
     #js-toast.show{ opacity:1; transform:translateX(-50%) translateY(0); }
-
-    .logout-fab{ position:fixed; bottom:20px; right:20px; width:40px; height:40px; border-radius:50%; display:flex; align-items:center; justify-content:center; background:var(--navy); border:2px solid var(--white); cursor:pointer; text-decoration:none; z-index:9999; box-shadow:0 2px 6px rgba(46,49,146,0.35); transition:transform 0.15s ease, background 0.15s ease, box-shadow 0.15s ease; }
-    .logout-fab svg{ width:18px; height:18px; stroke:var(--white); fill:none; stroke-width:2; stroke-linecap:round; stroke-linejoin:round; transition:stroke 0.15s ease; }
-    .logout-fab:hover{ background:var(--orange); transform:scale(1.08); box-shadow:0 4px 10px rgba(241,90,36,0.4); }
-    .logout-fab:active{ transform:scale(0.96); }
-    .logout-fab:focus-visible{ outline:2px solid var(--orange); outline-offset:3px; }
-    .logout-fab::after{ content:'Log Out'; position:absolute; bottom:calc(100% + 8px); right:0; background:var(--navy); color:var(--white); font-family:'Google Sans', sans-serif; font-size:12px; font-weight:600; padding:6px 10px; white-space:nowrap; opacity:0; visibility:hidden; transform:translateY(4px); transition:opacity 0.15s ease, transform 0.15s ease, visibility 0.15s ease; pointer-events:none; }
-    .logout-fab:hover::after, .logout-fab:focus-visible::after{ opacity:1; visibility:visible; transform:translateY(0); }
 </style>
 <link rel="stylesheet" href="../assets/clinic.css">
 <script src="../assets/clinic.js" defer></script>
@@ -560,6 +473,11 @@ $justDeleted = isset($_GET['deleted']);
     <div class="welcome-title">Doctors</div>
     <div class="welcome-sub">Consultation fees, specialties, and join dates for clinic doctors.</div>
 
+    <nav class="setup-section-nav" aria-label="Doctors sections">
+        <a href="doctors.php" class="active" aria-current="page"><?= tdc_icon('users', 16) ?><span>Directory</span></a>
+        <?php if ($canWorkspace): ?><a href="<?= tdc_e($workspaceUrl) ?>"><?= tdc_icon('stethoscope', 16) ?><span>Clinical Workspace</span></a><?php endif; ?>
+    </nav>
+
     <?php if (!empty($errors)): ?>
     <div class="error-msg">
         <div class="error-title">
@@ -577,9 +495,7 @@ $justDeleted = isset($_GET['deleted']);
             <input type="text" name="q" placeholder="Search by name or specialty..." value="<?= tdc_e($search) ?>">
             <button type="submit" class="btn btn-secondary">Search</button>
         </form>
-        <?php if ($canManage): ?>
-        <button type="button" id="addDoctorBtn" class="btn btn-primary">+ Add Doctor</button>
-        <?php endif; ?>
+        <div class="table-command-bar"><?php if($canImport):?><button type="button" id="importDoctorBtn" class="btn btn-secondary"><?= tdc_icon('upload', 14) ?><span>Import CSV</span></button><a class="btn btn-secondary" href="doctors.php?download=doctor-template"><?= tdc_icon('download', 14) ?><span>Download CSV Template</span></a><?php endif;?><?php if($canExport):?><a class="btn btn-secondary" href="doctors.php?download=doctors"><?= tdc_icon('download', 14) ?><span>Export CSV</span></a><button type="button" class="btn btn-secondary" onclick="window.print()"><?= tdc_icon('printer', 14) ?><span>Print</span></button><?php endif;?><?php if ($canManage): ?><button type="button" id="addDoctorBtn" class="btn btn-primary"><?= tdc_icon('plus', 14) ?><span>Add Doctor</span></button><?php endif; ?></div>
     </div>
 
     <div class="data-table-wrap">
@@ -591,34 +507,29 @@ $justDeleted = isset($_GET['deleted']);
                 </tr>
             </thead>
             <tbody>
-                <?php if (empty($doctors)): ?>
-                <tr class="empty-row">
-                    <td colspan="<?= $canManage ? 6 : 5 ?>">
-                        No doctors found<?= $search !== '' ? ' for "' . tdc_e($search) . '"' : '' ?>.
-                        <?= $canManage ? ' Click "Add Doctor" to add one.' : '' ?>
-                    </td>
-                </tr>
+                                <?php if (empty($doctors)): ?>
+                <?= tdc_empty_state('stethoscope', 'No doctors found', $search !== '' ? 'No directory records match "' . $search . '".' : 'Doctors added to the directory will appear here.', $canManage ? '<button type="button" class="btn btn-primary" data-open-add-doctor>' . tdc_icon('plus', 14) . '<span>Add Doctor</span></button>' : '', $canManage ? 6 : 5) ?>
                 <?php else: foreach ($doctors as $d): ?>
                 <tr>
                     <td>#<?= (int) $d['DoctorID'] ?></td>
                     <td><?= tdc_e($d['DoctorName']) ?></td>
-                    <td><?= tdc_e($d['Specialty'] ?: '—') ?></td>
+                    <td><?= tdc_e($d['Specialty'] ?: "\u{2014}") ?></td>
                     <td><?= number_format((float) $d['ConsultationFee'], 2) ?></td>
-                    <td><?= tdc_e($d['JoinedDate'] ? date('Y-m-d', strtotime((string) $d['JoinedDate'])) : '—') ?></td>
+                    <td><?= tdc_e($d['JoinedDate'] ? date('Y-m-d', strtotime((string) $d['JoinedDate'])) : "\u{2014}") ?></td>
                     <?php if ($canManage): ?>
                     <td>
                         <div class="row-actions">
-                            <button type="button" class="btn-sm edit-doctor-btn"
+                            <button type="button" class="icon-action edit-doctor-btn" title="Edit doctor" aria-label="Edit doctor"
                                 data-id="<?= (int) $d['DoctorID'] ?>"
                                 data-name="<?= tdc_e($d['DoctorName']) ?>"
                                 data-specialty="<?= tdc_e((string) $d['Specialty']) ?>"
                                 data-fee="<?= tdc_e((string) $d['ConsultationFee']) ?>"
-                                data-joined="<?= tdc_e((string) $d['JoinedDate']) ?>">Edit</button>
+                                data-joined="<?= tdc_e((string) $d['JoinedDate']) ?>"><?= tdc_icon('pencil', 15) ?></button>
                             <form method="POST" action="doctors.php" onsubmit="return confirm('Delete this doctor? This cannot be undone.');">
                                 <input type="hidden" name="csrf_token" value="<?= tdc_e($csrfToken) ?>">
                                 <input type="hidden" name="form_action" value="delete">
                                 <input type="hidden" name="DoctorID" value="<?= (int) $d['DoctorID'] ?>">
-                                <button type="submit" class="btn-sm danger">Delete</button>
+                                <button type="submit" class="icon-action danger" title="Delete doctor" aria-label="Delete doctor"><?= tdc_icon('trash', 15) ?></button>
                             </form>
                         </div>
                     </td>
@@ -630,6 +541,7 @@ $justDeleted = isset($_GET['deleted']);
     </div>
 
     <?php if ($canManage): ?>
+    <?php if($canImport):?><div class="modal-overlay" id="importDoctorModal"><div class="modal-box"><div class="modal-head"><h3>Import Doctors</h3><button type="button" class="modal-close" data-close-doctor-import aria-label="Close">×</button></div><form method="post" enctype="multipart/form-data"><div class="modal-body"><input type="hidden" name="csrf_token" value="<?=tdc_e($csrfToken)?>"><input type="hidden" name="form_action" value="import_csv"><div class="form-section"><div class="form-section-heading"><span><strong>CSV File</strong><span>Doctor accounts are linked separately in Setup after import.</span></span></div><div class="form-group"><label>Select CSV</label><input type="file" name="csv_file" accept=".csv,text/csv" required></div></div><div class="modal-actions"><button type="button" class="btn btn-secondary" data-close-doctor-import>Cancel</button><button class="btn btn-primary">Import Doctors</button></div></div></form></div></div><?php endif;?>
     <div class="modal-overlay" id="doctorModalOverlay">
         <div class="modal-box">
             <div class="modal-head">
@@ -716,12 +628,14 @@ function showToast(message){
     function openModal(){ overlay.classList.add('show'); }
     function closeModal(){ overlay.classList.remove('show'); }
 
-    document.getElementById('addDoctorBtn').addEventListener('click', function(){
+    function openAddModal(){
         form.reset();
         fId.value = '';
         modalTitle.textContent = 'Add Doctor';
         openModal();
-    });
+    }
+    document.getElementById('addDoctorBtn')?.addEventListener('click', openAddModal);
+    document.querySelectorAll('[data-open-add-doctor]').forEach(function(btn){ btn.addEventListener('click', openAddModal); });
 
     document.querySelectorAll('.edit-doctor-btn').forEach(function(btn){
         btn.addEventListener('click', function(){
@@ -758,6 +672,7 @@ function showToast(message){
 })();
 <?php endif; ?>
 </script>
+<?php if($canImport):?><script>(()=>{const modal=document.getElementById('importDoctorModal'),open=document.getElementById('importDoctorBtn');const close=()=>modal?.classList.remove('show');open?.addEventListener('click',()=>modal?.classList.add('show'));document.querySelectorAll('[data-close-doctor-import]').forEach(button=>button.addEventListener('click',close));modal?.addEventListener('click',event=>{if(event.target===modal)close()});})();</script><?php endif;?>
 
 </body>
 </html>

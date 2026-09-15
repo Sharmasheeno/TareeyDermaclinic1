@@ -1,16 +1,20 @@
 # Role access and connected workflow
 
-The clinic keeps its existing horizontal navigation, color system, and in-body section menus. Access is enforced on the server for these five login roles only.
+The clinic keeps its horizontal navigation, color system, and in-body section menus. Access is enforced through database-backed roles and business-action permissions at navigation, page, UI-action, and backend levels.
 
 | Account role | Access |
 | --- | --- |
-| SuperAdmin (`superuser`) | Full access to every module and CRUD operation, including staff accounts, doctors, patients, laboratory, pharmacy purchases and inventory, accounting, reports, and settings. |
+| SuperAdmin (`superuser`) | Full access to every module and operation, including protected Setup administration. The root SuperAdmin cannot be deactivated, deleted, downgraded, or restricted. |
 | Receptionist (`receptionuser`) | Reception dashboard, patient registration and updates, consultation booking, consultation payment, laboratory billing/payment, and reception pharmacy billing. |
 | Doctor (`doctoruser`) | Assigned paid consultation queue, clinical notes, diagnosis, treatment and follow-up plans, prescriptions, laboratory requests, returned results, and result review. A Doctor account must be linked to one doctor directory profile. |
-| Pharmacist (`pharmacyuser`) | Pharmacy dashboard, prescription queue, dispensing, point of sale, purchases, inventory, stock alerts, and pharmacy receipts. No accounting, reports, settings, or user management. |
+| Pharmacist (`pharmacyuser`) | Pharmacy dashboard, prescription queue, dispensing, and point of sale by default. Purchase and inventory permissions can be granted separately. |
 | Laboratory Staff (`labuser`) | Paid laboratory work queue, result entry, completion, and test availability. Patient identity, test pricing, payment status, and order deletion are read-only. |
 
-There is no Accountant login role. Accounting and financial reports are SuperAdmin-only.
+SuperAdmin can create custom roles, copy an existing permission preset, and grant only the required modules and actions. For example, an Accountant can receive `accounting.view`, `reports.view`, and `reports.export` without changing PHP source.
+
+## Setup
+
+`Setup` is the single configuration center. The former Settings URL redirects to Setup and is no longer shown in navigation. Setup contains only connected functionality: clinic profile and departments, users, roles, permissions, doctor configuration and account linking, specializations, laboratory catalogue, pharmacy master-data visibility, payment methods, and audit history.
 
 ## Workflow
 
@@ -29,9 +33,10 @@ With XAMPP MySQL running, apply the idempotent workflow migration from the proje
 
 ```powershell
 C:\xampp\php\php.exe scripts\migrate_connected_workflow.php
+C:\xampp\php\php.exe scripts\migrate_setup_rbac.php
 ```
 
-The full `tareydermaclinic.sql` export also contains the connected workflow schema for a fresh installation.
+Both migrations are idempotent. Existing role strings and historical transactions are preserved while users are linked to database role records.
 
 ## Local verification
 
