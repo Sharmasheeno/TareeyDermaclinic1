@@ -49,6 +49,8 @@ session_set_cookie_params([
     'samesite' => 'Strict',
 ]);
 session_start();
+require_once __DIR__ . '/../includes/access.php';
+tdc_require_access();
 
 header('X-Frame-Options: DENY');
 header('X-Content-Type-Options: nosniff');
@@ -159,6 +161,11 @@ function tdc_is_valid_date(string $date): bool
     return $d !== false && $d->format('Y-m-d') === $date;
 }
 
+function tdc_age_from_birth_date(string $date): int
+{
+    return (new DateTimeImmutable($date))->diff(new DateTimeImmutable('today'))->y;
+}
+
 /**
  * Self-contained, CSRF-guarded logout (?logout=1&csrf=...).
  * Exits the script when a logout is processed; otherwise returns.
@@ -231,6 +238,8 @@ function tdc_validate_patient_form(array $input): array
     }
     if ($input['DateOfBirth'] !== '' && !tdc_is_valid_date($input['DateOfBirth'])) {
         $errors[] = 'Date of birth is not a valid date.';
+    } elseif ($input['DateOfBirth'] !== '' && $input['DateOfBirth'] > date('Y-m-d')) {
+        $errors[] = 'Date of birth cannot be in the future.';
     }
     if ($input['PatientType'] !== '' && !array_key_exists($input['PatientType'], PATIENT_TYPE_OPTIONS)) {
         $errors[] = 'Please select a valid patient type.';
@@ -292,20 +301,16 @@ function tdc_delete_patient(PDO $pdo, int $id): array
 {
     $labCount = (int) tdc_scalar($pdo, 'SELECT COUNT(*) FROM Laboratory WHERE PatientID = :id', ['id' => $id]);
     $rxCount  = (int) tdc_scalar($pdo, 'SELECT COUNT(*) FROM Prescriptions WHERE PatientID = :id', ['id' => $id]);
+    $visitCount = (int) tdc_scalar($pdo, 'SELECT COUNT(*) FROM Visits WHERE PatientID = :id', ['id' => $id]);
+    $paymentCount = (int) tdc_scalar($pdo, 'SELECT COUNT(*) FROM Payments WHERE PatientID = :id', ['id' => $id]);
 
-    if ($labCount > 0 || $rxCount > 0) {
-        return ['This patient has existing laboratory or pharmacy bills and cannot be deleted.'];
+    if ($labCount > 0 || $rxCount > 0 || $visitCount > 0 || $paymentCount > 0) {
+        return ['This patient has clinical or financial history and cannot be deleted.'];
     }
 
     $stmt = $pdo->prepare('DELETE FROM Patients WHERE PatientID = :id');
     $stmt->execute(['id' => $id]);
     return [];
-}
-
-function tdc_record_patient_visit(PDO $pdo, int $id): void
-{
-    $stmt = $pdo->prepare('UPDATE Patients SET VisitNumber = VisitNumber + 1 WHERE PatientID = :id');
-    $stmt->execute(['id' => $id]);
 }
 
 // =======================================================================
@@ -363,11 +368,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 tdc_redirect('deleted');
             }
         } elseif ($formAction === 'visit') {
-            $visitId = (int) ($_POST['PatientID'] ?? 0);
-            if ($visitId > 0) {
-                tdc_record_patient_visit($pdo, $visitId);
-            }
-            tdc_redirect('visited');
+            $patientId = (int) ($_POST['PatientID'] ?? 0);
+            header('Location: reception.php?section=consultations&patient=' . $patientId);
+            exit;
         } else {
             $old['PatientID']       = trim((string) ($_POST['PatientID'] ?? ''));
             $old['PatientName']     = trim((string) ($_POST['PatientName'] ?? ''));
@@ -376,12 +379,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $old['Gender']          = (string) ($_POST['Gender'] ?? '');
             $old['Age']             = trim((string) ($_POST['Age'] ?? ''));
             $old['DateOfBirth']     = trim((string) ($_POST['DateOfBirth'] ?? ''));
+            if ($old['DateOfBirth'] !== '' && tdc_is_valid_date($old['DateOfBirth']) && $old['DateOfBirth'] <= date('Y-m-d')) {
+                $old['Age'] = (string)tdc_age_from_birth_date($old['DateOfBirth']);
+            }
             $old['PatientType']     = (string) ($_POST['PatientType'] ?? '');
             $old['AllocatedDoctor'] = trim((string) ($_POST['AllocatedDoctor'] ?? ''));
             $old['Remark']          = trim((string) ($_POST['Remark'] ?? ''));
 
             $isEdit = $old['PatientID'] !== '' && ctype_digit($old['PatientID']);
             $errors = tdc_validate_patient_form($old);
+            if (!$isEdit && $old['PatientPhone'] !== '') {
+                $stmt = $pdo->prepare('SELECT PatientID,PatientName FROM Patients WHERE REPLACE(REPLACE(REPLACE(PatientPhone,\' \',\'\'),\'-\',\'\'),\'+\',\'\') = REPLACE(REPLACE(REPLACE(?,\' \',\'\'),\'-\',\'\'),\'+\',\'\') LIMIT 1');
+                $stmt->execute([$old['PatientPhone']]);
+                if ($duplicate = $stmt->fetch()) {
+                    $errors[] = 'Possible existing patient found: '.$duplicate['PatientName'].' (#'.$duplicate['PatientID'].'). Open the existing record and create a new visit instead.';
+                }
+            }
 
             if (empty($errors)) {
                 try {
@@ -412,6 +425,8 @@ $viewId            = isset($_GET['view']) && ctype_digit((string) $_GET['view'])
 $viewPatient       = null;
 $viewLabBills      = [];
 $viewPharmacyBills = [];
+$viewVisits        = [];
+$viewPayments      = [];
 
 if ($viewId > 0) {
     $stmt = $pdo->prepare(
@@ -422,6 +437,9 @@ if ($viewId > 0) {
     $viewPatient = $stmt->fetch() ?: null;
 
     if ($viewPatient !== null) {
+        $stmt = $pdo->prepare('SELECT v.*,d.DoctorName FROM Visits v JOIN Doctors d ON d.DoctorID=v.DoctorID WHERE v.PatientID=:id ORDER BY v.VisitDate DESC');
+        $stmt->execute(['id'=>$viewId]);
+        $viewVisits = $stmt->fetchAll();
         $stmt = $pdo->prepare('SELECT * FROM Laboratory WHERE PatientID = :id ORDER BY OrderDate DESC');
         $stmt->execute(['id' => $viewId]);
         $viewLabBills = $stmt->fetchAll();
@@ -435,6 +453,10 @@ if ($viewId > 0) {
         );
         $stmt->execute(['id' => $viewId]);
         $viewPharmacyBills = $stmt->fetchAll();
+
+        $stmt = $pdo->prepare('SELECT PaymentReference,PaymentType,Amount,PaymentMethod,PaymentStatus,PaidAt FROM Payments WHERE PatientID=:id ORDER BY PaidAt DESC');
+        $stmt->execute(['id' => $viewId]);
+        $viewPayments = $stmt->fetchAll();
     } else {
         $viewId = 0; // Unknown / stale id — fall back to the list view.
     }
@@ -444,21 +466,35 @@ if ($viewId > 0) {
 $patients      = [];
 $patientSearch = '';
 $doctorFilter  = 0;
+$patientTypeFilter = '';
+$patientDateFilter = '';
 
 if ($viewId === 0) {
     $patientSearch = trim((string) ($_GET['q'] ?? ''));
     $doctorFilter  = isset($_GET['doctor']) && ctype_digit((string) $_GET['doctor']) ? (int) $_GET['doctor'] : 0;
+    $requestedType = (string) ($_GET['type'] ?? '');
+    $patientTypeFilter = array_key_exists($requestedType, PATIENT_TYPE_OPTIONS) ? $requestedType : '';
+    $requestedDate = trim((string) ($_GET['registered'] ?? ''));
+    $patientDateFilter = $requestedDate !== '' && tdc_is_valid_date($requestedDate) ? $requestedDate : '';
 
     $conditions = [];
     $params     = [];
 
     if ($patientSearch !== '') {
-        $conditions[] = '(p.PatientName LIKE :q OR p.PatientPhone LIKE :q)';
-        $params['q']  = '%' . $patientSearch . '%';
+        $conditions[] = '(p.PatientName LIKE :q1 OR p.PatientPhone LIKE :q2)';
+        $params['q1'] = $params['q2']  = '%' . $patientSearch . '%';
     }
     if ($doctorFilter > 0) {
         $conditions[]       = 'p.AllocatedDoctor = :doctor';
         $params['doctor']   = $doctorFilter;
+    }
+    if ($patientTypeFilter !== '') {
+        $conditions[] = 'p.PatientType = :patient_type';
+        $params['patient_type'] = $patientTypeFilter;
+    }
+    if ($patientDateFilter !== '') {
+        $conditions[] = 'DATE(p.RegisteredAt) = :registered';
+        $params['registered'] = $patientDateFilter;
     }
 
     $where = $conditions !== [] ? 'WHERE ' . implode(' AND ', $conditions) : '';
@@ -622,6 +658,8 @@ $justVisited = isset($_GET['visited']);
     .logout-fab::after{ content:'Log Out'; position:absolute; bottom:calc(100% + 8px); right:0; background:var(--navy); color:var(--white); font-family:'Google Sans', sans-serif; font-size:12px; font-weight:600; padding:6px 10px; white-space:nowrap; opacity:0; visibility:hidden; transform:translateY(4px); transition:opacity 0.15s ease, transform 0.15s ease, visibility 0.15s ease; pointer-events:none; }
     .logout-fab:hover::after, .logout-fab:focus-visible::after{ opacity:1; visibility:visible; transform:translateY(0); }
 </style>
+<link rel="stylesheet" href="../assets/clinic.css">
+<script src="../assets/clinic.js" defer></script>
 </head>
 <body>
 
@@ -637,20 +675,16 @@ $justVisited = isset($_GET['visited']);
                     <span class="badge"></span>
                 </button>
                 <div class="dropdown-menu notif-menu">
-                    <div class="notif-title">Notifications</div>
-                    <div class="notif-empty">You're all caught up.</div>
+                    <?php require __DIR__ . '/../includes/notifications.php'; ?>
                 </div>
             </div>
-            <div class="profile-static">
-                <div class="avatar"><?= tdc_e($avatarLetters) ?></div>
-                <span class="profile-name"><?= tdc_e($displayName) ?></span>
-            </div>
+            <?php require __DIR__ . '/../includes/profile.php'; ?>
         </div>
     </div>
 
     <nav class="menu-bar">
         <ul class="nav-items">
-            <?php foreach (NAV_ITEMS as $item): ?>
+            <?php foreach (tdc_navigation(NAV_ITEMS) as $item): ?>
                 <li class="nav-item<?= $item['href'] === $currentPage ? ' active' : '' ?>">
                     <a href="<?= tdc_e($item['href']) ?>" class="nav-link">
                         <svg viewBox="0 0 20 20"><?= $item['icon'] ?></svg>
@@ -719,15 +753,15 @@ $justVisited = isset($_GET['visited']);
                 data-type="<?= tdc_e((string) $viewPatient['PatientType']) ?>"
                 data-doctor="<?= tdc_e((string) $viewPatient['AllocatedDoctor']) ?>"
                 data-remark="<?= tdc_e((string) $viewPatient['Remark']) ?>">Edit Patient</button>
-            <form method="POST" action="patients.php" onsubmit="return confirm('Record a new visit for this patient?');">
-                <input type="hidden" name="csrf_token" value="<?= tdc_e($csrfToken) ?>">
-                <input type="hidden" name="form_action" value="visit">
-                <input type="hidden" name="PatientID" value="<?= (int) $viewPatient['PatientID'] ?>">
-                <button type="submit" class="btn btn-primary">Record New Visit</button>
-            </form>
+            <a class="btn btn-primary" href="reception.php?section=consultations&amp;patient=<?= (int) $viewPatient['PatientID'] ?>">Book Consultation</a>
         </div>
     </div>
     <?php endif; ?>
+
+    <div class="subsection-title"><span>Consultation History</span><a href="reception.php?section=consultations" class="btn-sm">Book Consultation</a></div>
+    <div class="data-table-wrap" style="margin-bottom:32px"><table class="data-table"><thead><tr><th>Visit</th><th>Doctor</th><th>Date</th><th>Payment</th><th>Status</th><th>Diagnosis</th><th>Treatment / Follow-up</th></tr></thead><tbody>
+    <?php if(!$viewVisits): ?><tr class="empty-row"><td colspan="7">No consultation history for this patient.</td></tr><?php else:foreach($viewVisits as $visit): ?><tr><td><?= tdc_e($visit['VisitReference']) ?></td><td><?= tdc_e($visit['DoctorName']) ?></td><td><?= tdc_e(date('d M Y H:i',strtotime($visit['VisitDate']))) ?></td><td><span class="status-badge<?= $visit['PaymentStatus']==='Unpaid'?' danger':($visit['PaymentStatus']==='Partial'?' warn':'') ?>"><?= tdc_e($visit['PaymentStatus']) ?></span></td><td><span class="status-badge"><?= tdc_e($visit['QueueStatus']) ?></span></td><td><?= nl2br(tdc_e($visit['Diagnosis'] ?: '—')) ?></td><td><?= nl2br(tdc_e(trim(($visit['TreatmentPlan'] ?: '')."\n".($visit['FollowUpPlan'] ?: '')) ?: '—')) ?></td></tr><?php endforeach;endif; ?>
+    </tbody></table></div>
 
     <div class="subsection-title">
         <span>Laboratory History</span>
@@ -735,22 +769,30 @@ $justVisited = isset($_GET['visited']);
     </div>
     <div class="data-table-wrap" style="margin-bottom:32px;">
         <table class="data-table">
-            <thead><tr><th>Bill ID</th><th>Test</th><th>Price</th><th>Result</th><th>Payment</th><th>Ordered</th></tr></thead>
+            <thead><tr><th>Bill ID</th><th>Test</th><th>Price</th><th>Result</th><th>Clinical Findings</th><th>Payment</th><th>Ordered</th></tr></thead>
             <tbody>
                 <?php if (empty($viewLabBills)): ?>
-                <tr class="empty-row"><td colspan="6">No laboratory bills on record for this patient.</td></tr>
+                <tr class="empty-row"><td colspan="7">No laboratory bills on record for this patient.</td></tr>
                 <?php else: foreach ($viewLabBills as $l): ?>
                 <tr>
                     <td><?= tdc_e($l['LaboratoryID']) ?></td>
                     <td><?= tdc_e($l['TestName']) ?></td>
-                    <td><?= number_format((float) $l['Price'], 2) ?></td>
+                    <td><?= number_format((float) $l['TotalAmount'], 2) ?></td>
                     <td><span class="status-badge<?= $l['Result'] === 'Positive' ? ' danger' : ($l['Result'] === 'Pending' ? ' warn' : '') ?>"><?= tdc_e($l['Result']) ?></span></td>
+                    <td><?= nl2br(tdc_e($l['ClinicalResult'] ?: '—')) ?></td>
                     <td><span class="status-badge<?= $l['PaymentStatus'] === 'Unpaid' ? ' danger' : ($l['PaymentStatus'] === 'Partial' ? ' warn' : '') ?>"><?= tdc_e($l['PaymentStatus']) ?></span></td>
                     <td><?= tdc_e(date('Y-m-d', strtotime((string) $l['OrderDate']))) ?></td>
                 </tr>
                 <?php endforeach; endif; ?>
             </tbody>
         </table>
+    </div>
+
+    <div class="subsection-title"><span>Payment History</span></div>
+    <div class="data-table-wrap" style="margin-top:0">
+        <table class="data-table"><thead><tr><th>Reference</th><th>Type</th><th>Amount</th><th>Method</th><th>Status</th><th>Date</th></tr></thead><tbody>
+        <?php if(!$viewPayments): ?><tr class="empty-row"><td colspan="6">No payments recorded for this patient.</td></tr><?php else:foreach($viewPayments as $payment): ?><tr><td><?= tdc_e($payment['PaymentReference']) ?></td><td><?= tdc_e($payment['PaymentType']) ?></td><td><?= number_format((float)$payment['Amount'],2) ?></td><td><?= tdc_e($payment['PaymentMethod']) ?></td><td><span class="status-badge<?= $payment['PaymentStatus']==='Voided'?' danger':'' ?>"><?= tdc_e($payment['PaymentStatus']) ?></span></td><td><?= tdc_e(date('d M Y H:i',strtotime($payment['PaidAt']))) ?></td></tr><?php endforeach;endif; ?>
+        </tbody></table>
     </div>
 
     <div class="subsection-title">
@@ -797,13 +839,19 @@ $justVisited = isset($_GET['visited']);
     <div class="section-toolbar">
         <form method="GET" action="patients.php" class="filter-box">
             <input type="text" name="q" placeholder="Search by name or phone..." value="<?= tdc_e($patientSearch) ?>">
-            <select name="doctor" onchange="this.form.submit()">
+            <select name="type" aria-label="Patient type">
+                <option value="">All Types</option>
+                <?php foreach (PATIENT_TYPE_OPTIONS as $v => $l): ?><option value="<?= tdc_e($v) ?>" <?= $patientTypeFilter === $v ? 'selected' : '' ?>><?= tdc_e($l) ?></option><?php endforeach; ?>
+            </select>
+            <select name="doctor" aria-label="Allocated doctor">
                 <option value="0">All Doctors</option>
                 <?php foreach ($doctors as $d): ?>
                     <option value="<?= (int) $d['DoctorID'] ?>" <?= $doctorFilter === (int) $d['DoctorID'] ? 'selected' : '' ?>><?= tdc_e($d['DoctorName']) ?></option>
                 <?php endforeach; ?>
             </select>
-            <button type="submit" class="btn btn-secondary">Search</button>
+            <input type="date" name="registered" value="<?= tdc_e($patientDateFilter) ?>" aria-label="Registration date">
+            <button type="submit" class="btn btn-secondary">Filter</button>
+            <?php if ($patientSearch !== '' || $patientTypeFilter !== '' || $doctorFilter > 0 || $patientDateFilter !== ''): ?><a href="patients.php" class="clear-filters">Clear</a><?php endif; ?>
         </form>
         <?php if ($canManage): ?>
         <button type="button" id="addPatientBtn" class="btn btn-primary">+ Register Patient</button>
@@ -827,7 +875,7 @@ $justVisited = isset($_GET['visited']);
                     <td><?= tdc_e($p['PatientName']) ?></td>
                     <td><?= tdc_e($p['PatientPhone'] ?: '—') ?></td>
                     <td><?= tdc_e(($p['Gender'] ?: '—') . ' / ' . ($p['Age'] !== null ? $p['Age'] : '—')) ?></td>
-                    <td><?= tdc_e($p['PatientType'] ?: '—') ?></td>
+                    <td><span class="status-badge<?= $p['PatientType'] ? '' : ' muted' ?>"><?= tdc_e($p['PatientType'] ?: 'Unspecified') ?></span></td>
                     <td><?= (int) $p['VisitNumber'] ?></td>
                     <td><?= tdc_e($p['DoctorName'] ?: 'Unassigned') ?></td>
                     <td><?= number_format((float) $p['DueBalance'], 2) ?></td>
@@ -847,12 +895,7 @@ $justVisited = isset($_GET['visited']);
                                 data-type="<?= tdc_e((string) $p['PatientType']) ?>"
                                 data-doctor="<?= tdc_e((string) $p['AllocatedDoctor']) ?>"
                                 data-remark="<?= tdc_e((string) $p['Remark']) ?>">Edit</button>
-                            <form method="POST" action="patients.php" onsubmit="return confirm('Record a new visit for this patient?');">
-                                <input type="hidden" name="csrf_token" value="<?= tdc_e($csrfToken) ?>">
-                                <input type="hidden" name="form_action" value="visit">
-                                <input type="hidden" name="PatientID" value="<?= (int) $p['PatientID'] ?>">
-                                <button type="submit" class="btn-sm">New Visit</button>
-                            </form>
+                            <a class="btn-sm" href="reception.php?section=consultations&amp;patient=<?= (int) $p['PatientID'] ?>">Book</a>
                             <form method="POST" action="patients.php" onsubmit="return confirm('Delete this patient? This cannot be undone.');">
                                 <input type="hidden" name="csrf_token" value="<?= tdc_e($csrfToken) ?>">
                                 <input type="hidden" name="form_action" value="delete">
@@ -875,7 +918,7 @@ $justVisited = isset($_GET['visited']);
       // ==================================================================== ?>
 <?php if ($canManage): ?>
 <div class="modal-overlay" id="patientModalOverlay">
-    <div class="modal-box">
+    <div class="modal-box patient-modal">
         <div class="modal-head">
             <h3 id="patientModalTitle">Register Patient</h3>
             <button type="button" class="modal-close" id="patientModalCloseBtn" aria-label="Close">
@@ -888,44 +931,54 @@ $justVisited = isset($_GET['visited']);
                 <input type="hidden" name="form_action" value="save">
                 <input type="hidden" name="PatientID" id="pf_PatientID" value="">
 
-                <div class="form-group"><label for="pf_PatientName">Patient Name</label>
-                    <input type="text" id="pf_PatientName" name="PatientName" placeholder="e.g. Mahamed Omar Madobe" required></div>
+                    <section class="form-section">
+                        <div class="form-section-heading">
+                            <span class="form-section-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg></span>
+                            <span><strong>Personal Information</strong><span>Enter the patient's basic details.</span></span>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group"><label for="pf_PatientName">Patient Name</label>
+                                <input type="text" id="pf_PatientName" name="PatientName" placeholder="e.g. Mahamed Omar Madobe" required></div>
+                            <div class="form-group"><label for="pf_PatientPhone">Phone</label>
+                                <input type="text" id="pf_PatientPhone" name="PatientPhone" placeholder="e.g. 615019253"></div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group"><label for="pf_Gender">Gender</label>
+                                <select id="pf_Gender" name="Gender">
+                                    <option value="">Select gender</option>
+                                    <?php foreach (GENDER_OPTIONS as $v => $l): ?><option value="<?= tdc_e($v) ?>"><?= tdc_e($l) ?></option><?php endforeach; ?>
+                                </select></div>
+                            <div class="form-group"><label for="pf_DateOfBirth">Date of Birth</label>
+                                <input type="date" id="pf_DateOfBirth" name="DateOfBirth"></div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group"><label for="pf_Age">Age</label>
+                                <input type="number" id="pf_Age" name="Age" min="0" max="150" placeholder="e.g. 34"></div>
+                            <div class="form-group"><label for="pf_PatientAddress">Address</label>
+                                <input type="text" id="pf_PatientAddress" name="PatientAddress" placeholder="e.g. Degmada Hodan, Isgoyska Al-barako"></div>
+                        </div>
+                    </section>
 
-                <div class="form-row">
-                    <div class="form-group"><label for="pf_PatientPhone">Phone</label>
-                        <input type="text" id="pf_PatientPhone" name="PatientPhone" placeholder="e.g. 615019253"></div>
-                    <div class="form-group"><label for="pf_Gender">Gender</label>
-                        <select id="pf_Gender" name="Gender">
-                            <option value="">Select gender</option>
-                            <?php foreach (GENDER_OPTIONS as $v => $l): ?><option value="<?= tdc_e($v) ?>"><?= tdc_e($l) ?></option><?php endforeach; ?>
-                        </select></div>
-                </div>
-
-                <div class="form-row">
-                    <div class="form-group"><label for="pf_Age">Age</label>
-                        <input type="number" id="pf_Age" name="Age" min="0" max="150"></div>
-                    <div class="form-group"><label for="pf_DateOfBirth">Date of Birth</label>
-                        <input type="date" id="pf_DateOfBirth" name="DateOfBirth"></div>
-                </div>
-
-                <div class="form-group"><label for="pf_PatientAddress">Address</label>
-                    <input type="text" id="pf_PatientAddress" name="PatientAddress" placeholder="e.g. Degmada Hodan, Isgoyska Al-barako"></div>
-
-                <div class="form-row">
-                    <div class="form-group"><label for="pf_PatientType">Patient Type</label>
-                        <select id="pf_PatientType" name="PatientType">
-                            <option value="">Select type</option>
-                            <?php foreach (PATIENT_TYPE_OPTIONS as $v => $l): ?><option value="<?= tdc_e($v) ?>"><?= tdc_e($l) ?></option><?php endforeach; ?>
-                        </select></div>
-                    <div class="form-group"><label for="pf_AllocatedDoctor">Allocated Doctor</label>
-                        <select id="pf_AllocatedDoctor" name="AllocatedDoctor">
-                            <option value="">Unassigned</option>
-                            <?php foreach ($doctors as $d): ?><option value="<?= (int) $d['DoctorID'] ?>"><?= tdc_e($d['DoctorName']) ?></option><?php endforeach; ?>
-                        </select></div>
-                </div>
-
-                <div class="form-group"><label for="pf_Remark">Remark</label>
-                    <textarea id="pf_Remark" name="Remark" placeholder="Optional notes"></textarea></div>
+                    <section class="form-section">
+                        <div class="form-section-heading">
+                            <span class="form-section-icon"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 11h18"/></svg></span>
+                            <span><strong>Visit Information</strong><span>Set patient type and allocated doctor.</span></span>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group"><label for="pf_PatientType">Patient Type</label>
+                                <select id="pf_PatientType" name="PatientType">
+                                    <option value="">Select type</option>
+                                    <?php foreach (PATIENT_TYPE_OPTIONS as $v => $l): ?><option value="<?= tdc_e($v) ?>"><?= tdc_e($l) ?></option><?php endforeach; ?>
+                                </select></div>
+                            <div class="form-group"><label for="pf_AllocatedDoctor">Allocated Doctor</label>
+                                <select id="pf_AllocatedDoctor" name="AllocatedDoctor">
+                                    <option value="">Unassigned</option>
+                                    <?php foreach ($doctors as $d): ?><option value="<?= (int) $d['DoctorID'] ?>"><?= tdc_e($d['DoctorName']) ?></option><?php endforeach; ?>
+                                </select></div>
+                        </div>
+                        <div class="form-group"><label for="pf_Remark">Remark (Optional)</label>
+                            <textarea id="pf_Remark" name="Remark" placeholder="Optional notes about the patient"></textarea></div>
+                    </section>
 
                 <div class="modal-actions">
                     <button type="button" class="btn btn-secondary" id="patientModalCancelBtn">Cancel</button>
@@ -987,6 +1040,15 @@ function showToast(message){
     const fType = document.getElementById('pf_PatientType');
     const fDoctor = document.getElementById('pf_AllocatedDoctor');
     const fRemark = document.getElementById('pf_Remark');
+
+    fDob.addEventListener('change', function(){
+        if (!fDob.value) return;
+        const dob = new Date(fDob.value + 'T00:00:00');
+        const today = new Date();
+        let age = today.getFullYear() - dob.getFullYear();
+        if (today.getMonth() < dob.getMonth() || (today.getMonth() === dob.getMonth() && today.getDate() < dob.getDate())) age--;
+        if (age >= 0 && age <= 150) fAge.value = age;
+    });
 
     function openModal(){ overlay.classList.add('show'); }
     function closeModal(){ overlay.classList.remove('show'); }

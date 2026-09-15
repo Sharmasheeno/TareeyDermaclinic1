@@ -59,6 +59,8 @@ session_set_cookie_params([
     'samesite' => 'Strict',
 ]);
 session_start();
+require_once __DIR__ . '/../includes/access.php';
+tdc_require_access();
 
 header('X-Frame-Options: DENY');
 header('X-Content-Type-Options: nosniff');
@@ -68,7 +70,7 @@ header('Cache-Control: no-store, no-cache, must-revalidate');
 // =======================================================================
 // SECTION 2 — Reference data & shared constants
 // =======================================================================
-const ALLOWED_SECTIONS       = ['pos', 'purchases', 'inventory'];
+const ALLOWED_SECTIONS       = ['prescriptions', 'pos', 'purchases', 'inventory'];
 const ALLOWED_PHARMACY_ROLES = ['superuser', 'pharmacyuser'];
 
 /**
@@ -432,11 +434,6 @@ function tdc_validate_pos_form(array $input, array $stockByItemId): array
             continue;
         }
 
-        $unitPrice = trim((string) ($input['UnitPrice'][$i] ?? ''));
-        if ($unitPrice === '' || !is_numeric($unitPrice) || (float) $unitPrice < 0) {
-            $errors[] = "Line {$lineNo}: unit price must be a valid non-negative number.";
-        }
-
         $requestedQtyByItem[$itemId] = ($requestedQtyByItem[$itemId] ?? 0) + (int) $qty;
     }
     if (!$hasLine) {
@@ -449,6 +446,16 @@ function tdc_validate_pos_form(array $input, array $stockByItemId): array
             $stock = $stockByItemId[$itemId]['stock'];
             $errors[] = "\"{$name}\" only has {$stock} in stock (requested {$qty}).";
         }
+    }
+
+    $authoritativeTotal = 0.0;
+    foreach ($requestedQtyByItem as $itemId => $qty) {
+        if (isset($stockByItemId[$itemId])) {
+            $authoritativeTotal += $qty * $stockByItemId[$itemId]['price'];
+        }
+    }
+    if ($input['AmountPaid'] !== '' && is_numeric($input['AmountPaid']) && (float)$input['AmountPaid'] > $authoritativeTotal) {
+        $errors[] = 'Amount paid cannot exceed the sale total.';
     }
 
     return $errors;
@@ -714,7 +721,7 @@ function tdc_save_sale(PDO $pdo, array $input, array $stockByItemId): string
         if ($qty < 1) {
             continue;
         }
-        $unitPrice = round((float) ($input['UnitPrice'][$i] ?? 0), 2);
+        $unitPrice = round((float) $stockByItemId[$itemId]['price'], 2);
         $lineTotal = round($qty * $unitPrice, 2);
         $totalAmount += $lineTotal;
 
@@ -774,6 +781,8 @@ function tdc_save_sale(PDO $pdo, array $input, array $stockByItemId): string
             }
         }
 
+        tdc_workflow_post_revenue($pdo, 'REV-PHARM', 'Pharmacy Revenue', $base, 'Point of sale collection ' . $base, $amountPaid);
+
         $pdo->commit();
     } catch (Throwable $e) {
         $pdo->rollBack();
@@ -804,6 +813,9 @@ function tdc_void_sale(PDO $pdo, string $base): array
         $del = $pdo->prepare('DELETE FROM PharmacySales WHERE SaleID LIKE :pattern');
         $del->execute(['pattern' => $base . '-%']);
 
+        $delAccounting = $pdo->prepare("DELETE FROM Accounting WHERE ReferenceID=? AND AccountID='REV-PHARM'");
+        $delAccounting->execute([$base]);
+
         $pdo->commit();
     } catch (Throwable $e) {
         $pdo->rollBack();
@@ -832,6 +844,7 @@ if (!in_array($_SESSION['role'] ?? '', ALLOWED_PHARMACY_ROLES, true)) {
 }
 
 require_once __DIR__ . '/../../db.php';
+require_once __DIR__ . '/../includes/workflow.php';
 
 if (empty($_SESSION['csrf_token'])) {
     $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
@@ -876,8 +889,37 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($section, ALLOWED_SECTIONS
     } else {
         $formAction = (string) ($_POST['form_action'] ?? 'save');
 
+        // --- Doctor prescriptions -----------------------------------
+        if ($section === 'prescriptions') {
+            $base = preg_replace('/[^A-Za-z0-9]/','',(string)($_POST['PrescriptionReference'] ?? ''));
+            $amountPaid = is_numeric($_POST['AmountPaid'] ?? null) ? round((float)$_POST['AmountPaid'],2) : -1;
+            $paymentMethod = (string)($_POST['PaymentMethod'] ?? 'Cash');
+            $pdo->beginTransaction();
+            try {
+                $stmt=$pdo->prepare("SELECT * FROM Prescriptions WHERE PrescriptionID LIKE ? AND Status='Pending' ORDER BY PrescriptionID FOR UPDATE");
+                $stmt->execute([$base.'-%']);$lines=$stmt->fetchAll();
+                if(!$lines) throw new RuntimeException('Prescription is no longer pending.');
+                $saleLines=[];$total=0;
+                foreach($lines as $line){
+                    $stmt=$pdo->prepare('SELECT * FROM Inventory WHERE LOWER(TRIM(ItemName))=LOWER(TRIM(?)) LIMIT 1 FOR UPDATE');$stmt->execute([$line['MedicationName']]);$item=$stmt->fetch();
+                    $qty=max(1,(int)$line['Quantity']);
+                    if(!$item) throw new RuntimeException('No inventory item matches '.$line['MedicationName'].'.');
+                    if((int)$item['QuantityInStock']<$qty) throw new RuntimeException('Insufficient stock for '.$line['MedicationName'].'.');
+                    $lineTotal=round($qty*(float)$item['SellingPrice'],2);$total+=$lineTotal;$saleLines[]=[$line,$item,$qty,$lineTotal];
+                }
+                if($amountPaid<0||$amountPaid>$total) throw new RuntimeException('Amount paid must be between zero and the bill total.');
+                $saleBase=tdc_next_bill_base($pdo,'PharmacySales','SaleID','POS');$status=tdc_workflow_payment_status($total,$amountPaid);$n=0;
+                $insert=$pdo->prepare('INSERT INTO PharmacySales (SaleID,ItemID,ItemName,Quantity,UnitPrice,LineTotal,TotalAmount,AmountPaid,DueBalance,PaymentStatus,CustomerName,CustomerPhone,SoldBy) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)');
+                $stock=$pdo->prepare('UPDATE Inventory SET QuantityInStock=QuantityInStock-? WHERE ItemID=? AND QuantityInStock>=?');
+                foreach($saleLines as [$line,$item,$qty,$lineTotal]){$n++;$insert->execute([$saleBase.'-'.str_pad((string)$n,2,'0',STR_PAD_LEFT),$item['ItemID'],$item['ItemName'],$qty,$item['SellingPrice'],$lineTotal,$total,$amountPaid,max(0,$total-$amountPaid),$status,$line['PatientName'],$line['PatientPhone'],$_SESSION['user_id']]);$stock->execute([$qty,$item['ItemID'],$qty]);if(!$stock->rowCount())throw new RuntimeException('Stock changed while dispensing. Please retry.');}
+                $stmt=$pdo->prepare("UPDATE Prescriptions SET Status='Dispensed',DispensedAt=NOW(),DispensedBy=?,PharmacySaleReference=?,TotalAmount=?,AmountPaid=?,DueBalance=? WHERE PrescriptionID LIKE ?");$stmt->execute([$_SESSION['user_id'],$saleBase,$total,$amountPaid,max(0,$total-$amountPaid),$base.'-%']);
+                $patientId=(int)$lines[0]['PatientID'];$payRef=tdc_workflow_record_payment($pdo,$patientId,'Pharmacy',$amountPaid,(int)$_SESSION['user_id'],['PrescriptionReference'=>$base,'PaymentMethod'=>$paymentMethod]);if($payRef)tdc_workflow_post_revenue($pdo,'REV-PHARM','Pharmacy Revenue',$payRef,'Dispensing payment for '.$base,$amountPaid);
+                $stmt=$pdo->prepare('SELECT UserID FROM Doctors WHERE DoctorID=?');$stmt->execute([$lines[0]['DoctorID']]);tdc_workflow_notify($pdo,(int)$stmt->fetchColumn(),'doctoruser','prescription_dispensed','Prescription dispensed',$base.' was dispensed as '.$saleBase,'doctors.php?visit='.(int)$lines[0]['VisitID']);
+                $pdo->commit();tdc_redirect('prescriptions','success');
+            }catch(Throwable $e){if($pdo->inTransaction())$pdo->rollBack();$errors[]=$e instanceof RuntimeException?$e->getMessage():'The prescription could not be dispensed.';}
+
         // --- Point of Sale ------------------------------------------
-        if ($section === 'pos') {
+        } elseif ($section === 'pos') {
             if ($formAction === 'void') {
                 $base = preg_replace('/[^A-Za-z0-9]/', '', (string) ($_POST['SaleRef'] ?? ''));
                 if ($base === '') {
@@ -1026,8 +1068,8 @@ if ($section === 'pos') {
     $params     = [];
     $where      = '';
     if ($saleSearch !== '') {
-        $where  = 'WHERE CustomerName LIKE :q OR CustomerPhone LIKE :q OR SaleID LIKE :q';
-        $params = ['q' => '%' . $saleSearch . '%'];
+        $where  = 'WHERE CustomerName LIKE :q1 OR CustomerPhone LIKE :q2 OR SaleID LIKE :q3';
+        $params = ['q1' => '%' . $saleSearch . '%', 'q2' => '%' . $saleSearch . '%', 'q3' => '%' . $saleSearch . '%'];
     }
     $stmt = $pdo->prepare(
         "SELECT SUBSTRING_INDEX(SaleID, '-', 1) AS SaleRef, MIN(CustomerName) AS CustomerName,
@@ -1055,6 +1097,11 @@ if ($section === 'pos') {
     }
 }
 
+$pendingPrescriptions=[];
+if($section==='prescriptions'){
+    $pendingPrescriptions=$pdo->query("SELECT SUBSTRING_INDEX(pr.PrescriptionID,'-',1) PrescriptionReference,MIN(pr.PatientName) PatientName,MIN(pr.PatientPhone) PatientPhone,MIN(d.DoctorName) DoctorName,COUNT(*) ItemCount,MIN(pr.PrescriptionDate) PrescriptionDate FROM Prescriptions pr JOIN Doctors d ON d.DoctorID=pr.DoctorID WHERE pr.Status='Pending' GROUP BY PrescriptionReference ORDER BY PrescriptionDate")->fetchAll();
+}
+
 // --- 10B. Purchases -----------------------------------------------------
 $itemNamesForDatalist = [];
 $purchaseSearch       = '';
@@ -1070,8 +1117,8 @@ if ($section === 'purchases') {
     $params         = [];
     $where          = '';
     if ($purchaseSearch !== '') {
-        $where  = 'WHERE SupplierName LIKE :q OR PurchaseID LIKE :q';
-        $params = ['q' => '%' . $purchaseSearch . '%'];
+        $where  = 'WHERE SupplierName LIKE :q1 OR PurchaseID LIKE :q2';
+        $params = ['q1' => '%' . $purchaseSearch . '%', 'q2' => '%' . $purchaseSearch . '%'];
     }
     $stmt = $pdo->prepare(
         "SELECT SUBSTRING_INDEX(PurchaseID, '-', 1) AS PORef, MIN(SupplierName) AS SupplierName,
@@ -1111,8 +1158,8 @@ if ($section === 'inventory') {
     $conditions = [];
     $params     = [];
     if ($inventorySearch !== '') {
-        $conditions[] = '(ItemName LIKE :q OR Category LIKE :q)';
-        $params['q']  = '%' . $inventorySearch . '%';
+        $conditions[] = '(ItemName LIKE :q1 OR Category LIKE :q2)';
+        $params['q1'] = $params['q2']  = '%' . $inventorySearch . '%';
     }
     if ($lowStockOnly) {
         $conditions[] = 'QuantityInStock <= ReorderLevel';
@@ -1130,9 +1177,11 @@ $hubTodaySales    = 0;
 $hubOpenPOCount   = 0;
 
 if ($section === null) {
-    $hubLowStockCount = (int) tdc_scalar($pdo, 'SELECT COUNT(*) FROM Inventory WHERE QuantityInStock <= ReorderLevel');
     $hubTodaySales    = (int) tdc_scalar($pdo, "SELECT COUNT(DISTINCT SUBSTRING_INDEX(SaleID, '-', 1)) FROM PharmacySales WHERE DATE(SaleDate) = CURDATE()");
-    $hubOpenPOCount   = (int) tdc_scalar($pdo, "SELECT COUNT(DISTINCT SUBSTRING_INDEX(PurchaseID, '-', 1)) FROM Purchases WHERE DueBalance > 0");
+    if (in_array($_SESSION['role'], ALLOWED_PHARMACY_ROLES, true)) {
+        $hubLowStockCount = (int) tdc_scalar($pdo, 'SELECT COUNT(*) FROM Inventory WHERE QuantityInStock <= ReorderLevel');
+        $hubOpenPOCount = (int) tdc_scalar($pdo, "SELECT COUNT(DISTINCT SUBSTRING_INDEX(PurchaseID, '-', 1)) FROM Purchases WHERE DueBalance > 0");
+    }
 }
 
 // =======================================================================
@@ -1320,6 +1369,8 @@ $justVoided  = isset($_GET['voided']);
         .info-grid, .data-table-wrap{ max-width:100%; }
     }
 </style>
+<link rel="stylesheet" href="../assets/clinic.css">
+<script src="../assets/clinic.js" defer></script>
 </head>
 <body>
 
@@ -1335,20 +1386,16 @@ $justVoided  = isset($_GET['voided']);
                     <span class="badge"></span>
                 </button>
                 <div class="dropdown-menu notif-menu">
-                    <div class="notif-title">Notifications</div>
-                    <div class="notif-empty">You're all caught up.</div>
+                    <?php require __DIR__ . '/../includes/notifications.php'; ?>
                 </div>
             </div>
-            <div class="profile-static">
-                <div class="avatar"><?= tdc_e($avatarLetters) ?></div>
-                <span class="profile-name"><?= tdc_e($displayName) ?></span>
-            </div>
+            <?php require __DIR__ . '/../includes/profile.php'; ?>
         </div>
     </div>
 
     <nav class="menu-bar">
         <ul class="nav-items">
-            <?php foreach (NAV_ITEMS as $item): ?>
+            <?php foreach (tdc_navigation(NAV_ITEMS) as $item): ?>
                 <li class="nav-item<?= $item['href'] === $currentPage ? ' active' : '' ?>">
                     <a href="<?= tdc_e($item['href']) ?>" class="nav-link">
                         <svg viewBox="0 0 20 20"><?= $item['icon'] ?></svg>
@@ -1370,9 +1417,9 @@ $justVoided  = isset($_GET['voided']);
 
     <div class="welcome-eyebrow">Pharmacy</div>
     <div class="welcome-title">Pharmacy Operations</div>
-    <div class="welcome-sub">Point of sale, supplier purchases, and stock management.</div>
 
     <div class="setup-grid">
+        <a href="pharmacy.php?section=prescriptions" class="setup-card"><div class="setup-icon"><svg viewBox="0 0 24 24"><path d="m10.5 20.5-7-7a5 5 0 0 1 7-7l7 7a5 5 0 0 1-7 7Z"/><path d="m8 11 7 7"/></svg></div><div><div class="setup-card-title">Pending Prescriptions</div><div class="setup-card-desc">Doctor prescriptions ready for dispensing</div></div></a>
         <a href="pharmacy.php?section=pos" class="setup-card">
             <div class="setup-icon"><svg viewBox="0 0 24 24"><path d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293A1 1 0 005.414 17H17"/><circle cx="9" cy="20" r="1"/><circle cx="17" cy="20" r="1"/></svg></div>
             <div>
@@ -1380,6 +1427,7 @@ $justVoided  = isset($_GET['voided']);
                 <div class="setup-card-desc"><?= $hubTodaySales ?> sale<?= $hubTodaySales === 1 ? '' : 's' ?> today</div>
             </div>
         </a>
+        <?php if (in_array($_SESSION['role'], ALLOWED_PHARMACY_ROLES, true)): ?>
         <a href="pharmacy.php?section=purchases" class="setup-card">
             <div class="setup-icon"><svg viewBox="0 0 24 24"><path d="M20 7h-3V6a4 4 0 00-8 0v1H6a1 1 0 00-1 1v11a2 2 0 002 2h10a2 2 0 002-2V8a1 1 0 00-1-1zM9 6a3 3 0 016 0v1H9V6z"/></svg></div>
             <div>
@@ -1394,6 +1442,7 @@ $justVoided  = isset($_GET['voided']);
                 <div class="setup-card-desc"><?= $hubLowStockCount ?> item<?= $hubLowStockCount === 1 ? '' : 's' ?> low on stock</div>
             </div>
         </a>
+        <?php endif; ?>
     </div>
 
 <?php else: ?>
@@ -1415,7 +1464,11 @@ $justVoided  = isset($_GET['voided']);
     <?php // ============================================================
           // POINT OF SALE
           // ============================================================ ?>
-    <?php if ($section === 'pos'): ?>
+    <?php if ($section === 'prescriptions'): ?>
+        <div class="welcome-title">Pending Prescriptions</div><div class="welcome-sub">Dispense doctor orders directly from available inventory.</div>
+        <div class="data-table-wrap" style="margin-top:24px"><table class="data-table"><thead><tr><th>Prescription</th><th>Patient</th><th>Doctor</th><th>Items</th><th>Created</th><th>Dispense</th></tr></thead><tbody><?php if(!$pendingPrescriptions): ?><tr class="empty-row"><td colspan="6">No pending prescriptions.</td></tr><?php else:foreach($pendingPrescriptions as $rx): ?><tr><td><?= tdc_e($rx['PrescriptionReference']) ?></td><td><?= tdc_e($rx['PatientName']) ?><br><span class="cell-sub"><?= tdc_e($rx['PatientPhone']) ?></span></td><td><?= tdc_e($rx['DoctorName']) ?></td><td><?= (int)$rx['ItemCount'] ?></td><td><?= tdc_e(date('d M Y H:i',strtotime($rx['PrescriptionDate']))) ?></td><td><form method="post" class="row-actions"><input type="hidden" name="csrf_token" value="<?= tdc_e($csrfToken) ?>"><input type="hidden" name="form_action" value="dispense"><input type="hidden" name="PrescriptionReference" value="<?= tdc_e($rx['PrescriptionReference']) ?>"><input class="compact-input" type="number" min="0" step=".01" name="AmountPaid" placeholder="Amount paid" required><select class="compact-input" name="PaymentMethod"><option>Cash</option><option>Card</option><option>Mobile Money</option><option>Bank</option><option>Other</option></select><button class="btn-sm">Dispense</button></form></td></tr><?php endforeach;endif; ?></tbody></table></div>
+
+    <?php elseif ($section === 'pos'): ?>
 
         <?php if ($viewSaleRef !== ''): ?>
         <?php $head = $viewSaleLines[0]; ?>
@@ -1500,7 +1553,7 @@ $justVoided  = isset($_GET['voided']);
                                 </div>
                             </td>
                             <td><input type="number" min="1" name="Quantity[]" class="qty-input" value="<?= tdc_e($oldSale['Quantity'][$i] ?? '1') ?>"></td>
-                            <td><input type="number" step="0.01" min="0" name="UnitPrice[]" class="price-input" value="<?= tdc_e($oldSale['UnitPrice'][$i] ?? '') ?>"></td>
+                            <td><input type="number" step="0.01" min="0" name="UnitPrice[]" class="price-input" value="<?= tdc_e($oldSale['UnitPrice'][$i] ?? '') ?>" readonly aria-label="Inventory unit price"></td>
                             <td class="line-total-display">0.00</td>
                             <td><button type="button" class="remove-line-btn" title="Remove line">&times;</button></td>
                         </tr>

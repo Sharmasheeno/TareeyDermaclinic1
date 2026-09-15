@@ -240,7 +240,7 @@ CREATE TABLE `purchases` (
 CREATE TABLE `users` (
   `id` int(11) NOT NULL,
   `userlegalname` varchar(255) NOT NULL,
-  `role` enum('superuser','receptionuser','pharmacyuser','doctor','labuser') NOT NULL,
+  `role` enum('superuser','receptionuser','pharmacyuser','labuser') NOT NULL,
   `username` varchar(100) NOT NULL,
   `password` varchar(255) NOT NULL,
   `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
@@ -254,7 +254,7 @@ CREATE TABLE `users` (
 INSERT INTO `users` (`id`, `userlegalname`, `role`, `username`, `password`, `created_at`, `updated_at`) VALUES
 (5, 'Moalio Tech Solutions', 'superuser', 'Moalio', '$2b$10$X9uCZSx2CJICHwu5N3OcU.mMqr3N93HMmC2BvxK9xpHXBXPoWvz.C', '2026-07-16 10:21:29', '2026-08-30 09:55:14'),
 (6, 'Dr. Mohamed Abdi Hashi', 'superuser', 'tarey', '$2y$10$A8VRiu9mw3zW88X9EPPQ9uwzh9H.RIhdANZcwkyjBPq3XCbUXUO/6', '2026-07-16 11:10:33', '2026-08-30 11:56:11'),
-(7, 'Dr. Abdalla Mohamed Hashi', 'doctor', 'Tareey', '$2y$10$XRlDCCSx9liqleo3vz0DuOu728wRKWmucbzQk.jVhnZuOyRIt0XnG', '2026-08-29 08:35:23', '2026-08-30 09:54:51');
+(7, 'Dr. Abdalla Mohamed Hashi', 'superuser', 'Tareey', '$2y$10$XRlDCCSx9liqleo3vz0DuOu728wRKWmucbzQk.jVhnZuOyRIt0XnG', '2026-08-29 08:35:23', '2026-08-30 09:54:51');
 
 --
 -- Indexes for dumped tables
@@ -343,6 +343,110 @@ ALTER TABLE `patients`
 --
 ALTER TABLE `users`
   MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=8;
+
+-- Connected clinic workflow (Doctor portal, consultation queue, payments,
+-- prescription dispensing, laboratory handoff, and notifications).
+ALTER TABLE `users`
+  MODIFY `role` enum('superuser','receptionuser','doctoruser','pharmacyuser','labuser') NOT NULL;
+
+ALTER TABLE `doctors`
+  ADD COLUMN `UserID` int(11) DEFAULT NULL AFTER `DoctorID`,
+  ADD UNIQUE KEY `uq_doctors_user` (`UserID`);
+
+ALTER TABLE `prescriptions`
+  ADD COLUMN `VisitID` int(11) DEFAULT NULL AFTER `PatientID`,
+  ADD COLUMN `Quantity` int(11) NOT NULL DEFAULT 1 AFTER `MedicationName`,
+  ADD COLUMN `Status` enum('Pending','Dispensed','Cancelled') NOT NULL DEFAULT 'Pending' AFTER `Instructions`,
+  ADD COLUMN `DispensedAt` datetime DEFAULT NULL AFTER `Status`,
+  ADD COLUMN `DispensedBy` int(11) DEFAULT NULL AFTER `DispensedAt`,
+  ADD COLUMN `PharmacySaleReference` varchar(50) DEFAULT NULL AFTER `DispensedBy`,
+  ADD KEY `idx_prescriptions_visit` (`VisitID`),
+  ADD KEY `idx_prescriptions_status` (`Status`,`PrescriptionDate`);
+
+ALTER TABLE `laboratory`
+  ADD COLUMN `VisitID` int(11) DEFAULT NULL AFTER `PatientID`,
+  ADD COLUMN `DoctorID` int(11) DEFAULT NULL AFTER `VisitID`,
+  ADD COLUMN `RequestedByUserID` int(11) DEFAULT NULL AFTER `DoctorID`,
+  ADD COLUMN `ServiceID` int(11) DEFAULT NULL AFTER `RequestedByUserID`,
+  ADD COLUMN `WorkflowStatus` enum('Requested','Awaiting Payment','Ready','In Progress','Completed','Cancelled') NOT NULL DEFAULT 'Awaiting Payment' AFTER `PaymentStatus`,
+  ADD COLUMN `ClinicalResult` text DEFAULT NULL AFTER `Result`,
+  ADD COLUMN `ReviewedAt` datetime DEFAULT NULL AFTER `ResultDate`,
+  ADD KEY `idx_laboratory_visit` (`VisitID`),
+  ADD KEY `idx_laboratory_workflow` (`WorkflowStatus`,`PaymentStatus`,`OrderDate`);
+
+CREATE TABLE `labservices` (
+  `ServiceID` int(11) NOT NULL AUTO_INCREMENT,
+  `ServiceName` varchar(150) NOT NULL,
+  `Category` varchar(100) DEFAULT NULL,
+  `Description` varchar(500) DEFAULT NULL,
+  `Price` decimal(10,2) NOT NULL DEFAULT 0.00,
+  `IsAvailable` tinyint(1) NOT NULL DEFAULT 1,
+  `IsActive` tinyint(1) NOT NULL DEFAULT 1,
+  `CreatedAt` datetime NOT NULL DEFAULT current_timestamp(),
+  `UpdatedAt` datetime NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
+  PRIMARY KEY (`ServiceID`),
+  UNIQUE KEY `uq_lab_services_name` (`ServiceName`),
+  KEY `idx_lab_services_active` (`IsActive`,`ServiceName`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+CREATE TABLE `laborderitems` (
+  `LabOrderItemID` bigint(20) NOT NULL AUTO_INCREMENT,
+  `LaboratoryID` varchar(50) NOT NULL,
+  `ServiceID` int(11) NOT NULL,
+  `TestName` varchar(150) NOT NULL,
+  `UnitPrice` decimal(10,2) NOT NULL DEFAULT 0.00,
+  `Result` enum('Positive','Negative','Pending') NOT NULL DEFAULT 'Pending',
+  `ClinicalResult` text DEFAULT NULL,
+  `ResultDate` datetime DEFAULT NULL,
+  PRIMARY KEY (`LabOrderItemID`),
+  UNIQUE KEY `uq_lab_order_service` (`LaboratoryID`,`ServiceID`),
+  KEY `idx_lab_order_items_order` (`LaboratoryID`),
+  KEY `idx_lab_order_items_service` (`ServiceID`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+CREATE TABLE `visits` (
+  `VisitID` int(11) NOT NULL AUTO_INCREMENT,
+  `VisitReference` varchar(50) NOT NULL,
+  `PatientID` int(11) NOT NULL,
+  `DoctorID` int(11) NOT NULL,
+  `ReceptionistUserID` int(11) DEFAULT NULL,
+  `VisitDate` datetime NOT NULL DEFAULT current_timestamp(),
+  `ConsultationFee` decimal(10,2) NOT NULL DEFAULT 0.00,
+  `AmountPaid` decimal(10,2) NOT NULL DEFAULT 0.00,
+  `DueBalance` decimal(10,2) NOT NULL DEFAULT 0.00,
+  `PaymentStatus` enum('Unpaid','Partial','Paid') NOT NULL DEFAULT 'Unpaid',
+  `QueueStatus` enum('Pending Payment','Waiting','In Consultation','Completed','Cancelled') NOT NULL DEFAULT 'Pending Payment',
+  `ChiefComplaint` text DEFAULT NULL,
+  `ClinicalNotes` text DEFAULT NULL,
+  `Diagnosis` text DEFAULT NULL,
+  `TreatmentPlan` text DEFAULT NULL,
+  `FollowUpPlan` text DEFAULT NULL,
+  `FollowUpDate` date DEFAULT NULL,
+  `CompletedAt` datetime DEFAULT NULL,
+  `CreatedAt` datetime NOT NULL DEFAULT current_timestamp(),
+  `UpdatedAt` datetime NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
+  PRIMARY KEY (`VisitID`), UNIQUE KEY `uq_visits_reference` (`VisitReference`),
+  KEY `idx_visits_patient` (`PatientID`), KEY `idx_visits_doctor_queue` (`DoctorID`,`QueueStatus`,`VisitDate`), KEY `idx_visits_payment` (`PaymentStatus`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+CREATE TABLE `payments` (
+  `PaymentID` bigint(20) NOT NULL AUTO_INCREMENT, `PaymentReference` varchar(50) NOT NULL,
+  `PatientID` int(11) NOT NULL, `VisitID` int(11) DEFAULT NULL, `LaboratoryID` varchar(50) DEFAULT NULL,
+  `PrescriptionReference` varchar(50) DEFAULT NULL, `PaymentType` enum('Consultation','Laboratory','Pharmacy') NOT NULL,
+  `Amount` decimal(10,2) NOT NULL, `PaymentMethod` enum('Cash','Card','Mobile Money','Bank','Other') NOT NULL DEFAULT 'Cash',
+  `PaymentStatus` enum('Confirmed','Voided') NOT NULL DEFAULT 'Confirmed', `ReceivedBy` int(11) DEFAULT NULL,
+  `PaidAt` datetime NOT NULL DEFAULT current_timestamp(), `Notes` varchar(500) DEFAULT NULL,
+  PRIMARY KEY (`PaymentID`), UNIQUE KEY `uq_payments_reference` (`PaymentReference`),
+  KEY `idx_payments_patient` (`PatientID`), KEY `idx_payments_visit` (`VisitID`), KEY `idx_payments_type_date` (`PaymentType`,`PaidAt`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+CREATE TABLE `notifications` (
+  `NotificationID` bigint(20) NOT NULL AUTO_INCREMENT, `UserID` int(11) DEFAULT NULL,
+  `RoleTarget` enum('superuser','receptionuser','doctoruser','pharmacyuser','labuser') DEFAULT NULL,
+  `EventType` varchar(50) NOT NULL, `Title` varchar(150) NOT NULL, `Message` varchar(500) NOT NULL,
+  `Link` varchar(255) DEFAULT NULL, `IsRead` tinyint(1) NOT NULL DEFAULT 0, `CreatedAt` datetime NOT NULL DEFAULT current_timestamp(),
+  PRIMARY KEY (`NotificationID`), KEY `idx_notifications_user` (`UserID`,`IsRead`,`CreatedAt`), KEY `idx_notifications_role` (`RoleTarget`,`IsRead`,`CreatedAt`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 COMMIT;
 
 /*!40101 SET CHARACTER_SET_CLIENT=@OLD_CHARACTER_SET_CLIENT */;

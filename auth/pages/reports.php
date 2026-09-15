@@ -64,6 +64,8 @@ session_set_cookie_params([
     'samesite' => 'Strict',
 ]);
 session_start();
+require_once __DIR__ . '/../includes/access.php';
+tdc_require_access();
 
 header('X-Frame-Options: DENY');
 header('X-Content-Type-Options: nosniff');
@@ -427,6 +429,7 @@ if ($section === 'income-statement') {
 // --- Hub teaser stats (only computed on the landing page) -----------------
 $hubNetIncomeMonth = 0.0;
 $hubBalanceSheetOk = true;
+$clinicSummary = [];
 
 if ($section === null) {
     $hubIncome = tdc_income_statement($pdo, $thisMonthStart . ' 00:00:00', $today . ' 23:59:59');
@@ -434,6 +437,17 @@ if ($section === null) {
 
     $hubBalance = tdc_balance_sheet($pdo, $today . ' 23:59:59');
     $hubBalanceSheetOk = $hubBalance['balances'];
+    $summaryQueries = [
+        'Consultations' => "SELECT COUNT(*) FROM Visits WHERE DATE(VisitDate)=CURDATE()",
+        'Consultation revenue' => "SELECT COALESCE(SUM(Credit-Debit),0) FROM Accounting WHERE AccountID='REV-CONSULT' AND DATE(TransactionDate)=CURDATE()",
+        'Pharmacy revenue' => "SELECT COALESCE(SUM(Credit-Debit),0) FROM Accounting WHERE AccountID='REV-PHARM' AND DATE(TransactionDate)=CURDATE()",
+        'Laboratory revenue' => "SELECT COALESCE(SUM(Credit-Debit),0) FROM Accounting WHERE AccountID='REV-LAB' AND DATE(TransactionDate)=CURDATE()",
+        'Pending balances' => "SELECT COALESCE((SELECT SUM(DueBalance) FROM Visits WHERE QueueStatus<>'Cancelled'),0)+COALESCE((SELECT SUM(DueBalance) FROM Laboratory WHERE WorkflowStatus<>'Cancelled'),0)+COALESCE((SELECT SUM(s.DueBalance) FROM (SELECT MIN(DueBalance) DueBalance FROM PharmacySales GROUP BY SUBSTRING_INDEX(SaleID,'-',1)) s),0)",
+        'Prescriptions' => "SELECT COUNT(DISTINCT SUBSTRING_INDEX(PrescriptionID,'-',1)) FROM Prescriptions",
+        'Lab tests' => "SELECT COUNT(*) FROM Laboratory",
+        'Low stock' => "SELECT COUNT(*) FROM Inventory WHERE QuantityInStock<=ReorderLevel",
+    ];
+    foreach($summaryQueries as $label=>$query) $clinicSummary[$label]=$pdo->query($query)->fetchColumn();
 }
 
 // --- Letterhead, read from the clinic's existing single source of truth --
@@ -574,6 +588,8 @@ $currentPage   = basename((string) ($_SERVER['SCRIPT_NAME'] ?? 'reports.php'));
         .statement-wrap{ max-width:100%; border:none; }
     }
 </style>
+<link rel="stylesheet" href="../assets/clinic.css">
+<script src="../assets/clinic.js" defer></script>
 </head>
 <body>
 
@@ -589,20 +605,16 @@ $currentPage   = basename((string) ($_SERVER['SCRIPT_NAME'] ?? 'reports.php'));
                     <span class="badge"></span>
                 </button>
                 <div class="dropdown-menu notif-menu">
-                    <div class="notif-title">Notifications</div>
-                    <div class="notif-empty">You're all caught up.</div>
+                    <?php require __DIR__ . '/../includes/notifications.php'; ?>
                 </div>
             </div>
-            <div class="profile-static">
-                <div class="avatar"><?= tdc_e($avatarLetters) ?></div>
-                <span class="profile-name"><?= tdc_e($displayName) ?></span>
-            </div>
+            <?php require __DIR__ . '/../includes/profile.php'; ?>
         </div>
     </div>
 
     <nav class="menu-bar">
         <ul class="nav-items">
-            <?php foreach (NAV_ITEMS as $item): ?>
+            <?php foreach (tdc_navigation(NAV_ITEMS) as $item): ?>
                 <li class="nav-item<?= $item['href'] === $currentPage ? ' active' : '' ?>">
                     <a href="<?= tdc_e($item['href']) ?>" class="nav-link">
                         <svg viewBox="0 0 20 20"><?= $item['icon'] ?></svg>
@@ -625,6 +637,10 @@ $currentPage   = basename((string) ($_SERVER['SCRIPT_NAME'] ?? 'reports.php'));
     <div class="welcome-eyebrow">Reports</div>
     <div class="welcome-title">Financial Reports</div>
     <div class="welcome-sub">Income Statement and Balance Sheet, computed live from the general ledger.</div>
+
+    <div class="kpi-grid" style="margin:24px 0">
+        <?php foreach($clinicSummary as $label=>$value): ?><div class="kpi-card"><div class="kpi-label"><?= tdc_e($label) ?></div><div class="kpi-value"><?= str_contains(strtolower($label),'revenue')||$label==='Pending balances'?number_format((float)$value,2):number_format((float)$value,0) ?></div></div><?php endforeach; ?>
+    </div>
 
     <div class="setup-grid">
         <a href="reports.php?section=income-statement" class="setup-card">

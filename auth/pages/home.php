@@ -29,6 +29,8 @@ session_set_cookie_params([
     'samesite' => 'Strict',
 ]);
 session_start();
+require_once __DIR__ . '/../includes/access.php';
+tdc_require_access();
 
 header('X-Frame-Options: DENY');
 header('X-Content-Type-Options: nosniff');
@@ -355,6 +357,8 @@ $currentPage = basename((string) ($_SERVER['SCRIPT_NAME'] ?? 'home.php'));
         transform:translateY(0);
     }
 </style>
+<link rel="stylesheet" href="../assets/clinic.css">
+<script src="../assets/clinic.js" defer></script>
 </head>
 <body>
 
@@ -371,21 +375,17 @@ $currentPage = basename((string) ($_SERVER['SCRIPT_NAME'] ?? 'home.php'));
                     <span class="badge"></span>
                 </button>
                 <div class="dropdown-menu notif-menu">
-                    <div class="notif-title">Notifications</div>
-                    <div class="notif-empty">You're all caught up.</div>
+                    <?php require __DIR__ . '/../includes/notifications.php'; ?>
                 </div>
             </div>
 
-            <div class="profile-static">
-                <div class="avatar"><?= htmlspecialchars($avatarLetters, ENT_QUOTES, 'UTF-8') ?></div>
-                <span class="profile-name"><?= htmlspecialchars($displayName, ENT_QUOTES, 'UTF-8') ?></span>
-            </div>
+            <?php require __DIR__ . '/../includes/profile.php'; ?>
         </div>
     </div>
 
     <nav class="menu-bar">
         <ul class="nav-items">
-            <?php foreach ($navItems as $item): ?>
+            <?php foreach (tdc_navigation($navItems) as $item): ?>
                 <li class="nav-item<?= $item['href'] === $currentPage ? ' active' : '' ?>">
                     <a href="<?= htmlspecialchars($item['href'], ENT_QUOTES, 'UTF-8') ?>" class="nav-link">
                         <svg viewBox="0 0 20 20"><?= $item['icon'] ?></svg>
@@ -402,9 +402,14 @@ $currentPage = basename((string) ($_SERVER['SCRIPT_NAME'] ?? 'home.php'));
 </header>
 
 <main class="page-body">
-    <div class="welcome-eyebrow">Dashboard</div>
-    <div class="welcome-title">Welcome back, <?= htmlspecialchars($displayName, ENT_QUOTES, 'UTF-8') ?></div>
-    <div class="welcome-sub">Here's what's happening at Tarey Derma Clinic today.</div>
+    <div class="dashboard-heading">
+        <div>
+            <div class="welcome-eyebrow"><?= htmlspecialchars(TDC_ROLES[$_SESSION['role']], ENT_QUOTES, 'UTF-8') ?> / Dashboard</div>
+            <h1 class="welcome-title">Welcome back, <?= htmlspecialchars($displayName, ENT_QUOTES, 'UTF-8') ?></h1>
+        </div>
+        <time datetime="<?= date('Y-m-d') ?>"><?= date('l, d F Y') ?></time>
+    </div>
+    <?php require __DIR__ . '/../includes/dashboard.php'; ?>
 </main>
 
 <script>

@@ -46,6 +46,8 @@ session_set_cookie_params([
     'samesite' => 'Strict',
 ]);
 session_start();
+require_once __DIR__ . '/../includes/access.php';
+tdc_require_access();
 
 header('X-Frame-Options: DENY');
 header('X-Content-Type-Options: nosniff');
@@ -55,7 +57,7 @@ header('Cache-Control: no-store, no-cache, must-revalidate');
 // =======================================================================
 // SECTION 2 — Reference data & shared constants
 // =======================================================================
-const ALLOWED_MANAGE_ROLES = ['superuser', 'receptionuser'];
+const ALLOWED_MANAGE_ROLES = ['superuser'];
 
 /**
  * Primary navigation — single source of truth, shared shape with
@@ -260,9 +262,11 @@ function tdc_delete_doctor(PDO $pdo, int $id): array
 {
     $patientCount = (int) tdc_scalar($pdo, 'SELECT COUNT(*) FROM Patients WHERE AllocatedDoctor = :id', ['id' => $id]);
     $rxCount      = (int) tdc_scalar($pdo, 'SELECT COUNT(*) FROM Prescriptions WHERE DoctorID = :id', ['id' => $id]);
+    $visitCount   = (int) tdc_scalar($pdo, 'SELECT COUNT(*) FROM Visits WHERE DoctorID = :id', ['id' => $id]);
+    $labCount     = (int) tdc_scalar($pdo, 'SELECT COUNT(*) FROM Laboratory WHERE DoctorID = :id', ['id' => $id]);
 
-    if ($patientCount > 0 || $rxCount > 0) {
-        return ['This doctor has allocated patients or prescriptions on file and cannot be deleted.'];
+    if ($patientCount > 0 || $rxCount > 0 || $visitCount > 0 || $labCount > 0) {
+        return ['This doctor has linked patient, consultation, prescription, or laboratory history and cannot be deleted.'];
     }
 
     $stmt = $pdo->prepare('DELETE FROM Doctors WHERE DoctorID = :id');
@@ -284,9 +288,15 @@ if (empty($_SESSION['user_id'])) {
 }
 
 require_once __DIR__ . '/../../db.php';
+require_once __DIR__ . '/../includes/workflow.php';
 
 if (empty($_SESSION['csrf_token'])) {
     $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+}
+
+if (($_SESSION['role'] ?? '') === 'doctoruser') {
+    require __DIR__ . '/../includes/doctor-portal.php';
+    exit;
 }
 
 $canManage = in_array($_SESSION['role'] ?? '', ALLOWED_MANAGE_ROLES, true);
@@ -359,9 +369,9 @@ $search = trim((string) ($_GET['q'] ?? ''));
 
 if ($search !== '') {
     $stmt = $pdo->prepare(
-        'SELECT * FROM Doctors WHERE DoctorName LIKE :q OR Specialty LIKE :q ORDER BY DoctorName ASC'
+        'SELECT * FROM Doctors WHERE DoctorName LIKE :q1 OR Specialty LIKE :q2 ORDER BY DoctorName ASC'
     );
-    $stmt->execute(['q' => '%' . $search . '%']);
+    $stmt->execute(['q1' => '%' . $search . '%', 'q2' => '%' . $search . '%']);
 } else {
     $stmt = $pdo->query('SELECT * FROM Doctors ORDER BY DoctorName ASC');
 }
@@ -502,6 +512,8 @@ $justDeleted = isset($_GET['deleted']);
     .logout-fab::after{ content:'Log Out'; position:absolute; bottom:calc(100% + 8px); right:0; background:var(--navy); color:var(--white); font-family:'Google Sans', sans-serif; font-size:12px; font-weight:600; padding:6px 10px; white-space:nowrap; opacity:0; visibility:hidden; transform:translateY(4px); transition:opacity 0.15s ease, transform 0.15s ease, visibility 0.15s ease; pointer-events:none; }
     .logout-fab:hover::after, .logout-fab:focus-visible::after{ opacity:1; visibility:visible; transform:translateY(0); }
 </style>
+<link rel="stylesheet" href="../assets/clinic.css">
+<script src="../assets/clinic.js" defer></script>
 </head>
 <body>
 
@@ -517,20 +529,16 @@ $justDeleted = isset($_GET['deleted']);
                     <span class="badge"></span>
                 </button>
                 <div class="dropdown-menu notif-menu">
-                    <div class="notif-title">Notifications</div>
-                    <div class="notif-empty">You're all caught up.</div>
+                    <?php require __DIR__ . '/../includes/notifications.php'; ?>
                 </div>
             </div>
-            <div class="profile-static">
-                <div class="avatar"><?= tdc_e($avatarLetters) ?></div>
-                <span class="profile-name"><?= tdc_e($displayName) ?></span>
-            </div>
+            <?php require __DIR__ . '/../includes/profile.php'; ?>
         </div>
     </div>
 
     <nav class="menu-bar">
         <ul class="nav-items">
-            <?php foreach (NAV_ITEMS as $item): ?>
+            <?php foreach (tdc_navigation(NAV_ITEMS) as $item): ?>
                 <li class="nav-item<?= $item['href'] === $currentPage ? ' active' : '' ?>">
                     <a href="<?= tdc_e($item['href']) ?>" class="nav-link">
                         <svg viewBox="0 0 20 20"><?= $item['icon'] ?></svg>

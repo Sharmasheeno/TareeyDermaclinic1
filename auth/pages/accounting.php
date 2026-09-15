@@ -74,6 +74,8 @@ session_set_cookie_params([
     'samesite' => 'Strict',
 ]);
 session_start();
+require_once __DIR__ . '/../includes/access.php';
+tdc_require_access();
 
 header('X-Frame-Options: DENY');
 header('X-Content-Type-Options: nosniff');
@@ -780,8 +782,8 @@ if ($section === 'ledger') {
     $conditions = [];
     $params     = [];
     if ($ledgerSearch !== '') {
-        $conditions[] = '(Description LIKE :q OR ReferenceID LIKE :q OR EntryID LIKE :q)';
-        $params['q']  = '%' . $ledgerSearch . '%';
+        $conditions[] = '(Description LIKE :q1 OR ReferenceID LIKE :q2 OR EntryID LIKE :q3)';
+        $params['q1'] = $params['q2'] = $params['q3']  = '%' . $ledgerSearch . '%';
     }
     if ($ledgerBook !== '') {
         $conditions[]    = 'BookType = :book';
@@ -858,8 +860,8 @@ if ($section === 'accounts') {
     $conditions = [];
     $params     = [];
     if ($accountSearch !== '') {
-        $conditions[] = '(AccountName LIKE :q OR AccountID LIKE :q)';
-        $params['q']  = '%' . $accountSearch . '%';
+        $conditions[] = '(AccountName LIKE :q1 OR AccountID LIKE :q2)';
+        $params['q1'] = $params['q2']  = '%' . $accountSearch . '%';
     }
     $where = $conditions !== [] ? 'WHERE ' . implode(' AND ', $conditions) : '';
 
@@ -1136,6 +1138,8 @@ $justRenamed  = isset($_GET['renamed']);
         .info-grid, .data-table-wrap{ max-width:100%; }
     }
 </style>
+<link rel="stylesheet" href="../assets/clinic.css">
+<script src="../assets/clinic.js" defer></script>
 </head>
 <body>
 
@@ -1151,20 +1155,16 @@ $justRenamed  = isset($_GET['renamed']);
                     <span class="badge"></span>
                 </button>
                 <div class="dropdown-menu notif-menu">
-                    <div class="notif-title">Notifications</div>
-                    <div class="notif-empty">You're all caught up.</div>
+                    <?php require __DIR__ . '/../includes/notifications.php'; ?>
                 </div>
             </div>
-            <div class="profile-static">
-                <div class="avatar"><?= tdc_e($avatarLetters) ?></div>
-                <span class="profile-name"><?= tdc_e($displayName) ?></span>
-            </div>
+            <?php require __DIR__ . '/../includes/profile.php'; ?>
         </div>
     </div>
 
     <nav class="menu-bar">
         <ul class="nav-items">
-            <?php foreach (NAV_ITEMS as $item): ?>
+            <?php foreach (tdc_navigation(NAV_ITEMS) as $item): ?>
                 <li class="nav-item<?= $item['href'] === $currentPage ? ' active' : '' ?>">
                     <a href="<?= tdc_e($item['href']) ?>" class="nav-link">
                         <svg viewBox="0 0 20 20"><?= $item['icon'] ?></svg>

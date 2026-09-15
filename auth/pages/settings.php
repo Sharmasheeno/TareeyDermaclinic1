@@ -20,7 +20,7 @@
  * Schema alignment (tareydermaclinic.users):
  *   id INT AUTO_INCREMENT PK
  *   userlegalname VARCHAR(255) NOT NULL
- *   role ENUM('superuser','receptionuser','pharmacyuser','doctor','labuser')
+ *   role ENUM('superuser','receptionuser','pharmacyuser','labuser')
  *   username VARCHAR(100) NOT NULL UNIQUE
  *   password VARCHAR(255) NOT NULL
  *   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -41,6 +41,8 @@ session_set_cookie_params([
     'samesite' => 'Strict',
 ]);
 session_start();
+require_once __DIR__ . '/../includes/access.php';
+tdc_require_access();
 
 header('X-Frame-Options: DENY');
 header('X-Content-Type-Options: nosniff');
@@ -50,13 +52,7 @@ header('Cache-Control: no-store, no-cache, must-revalidate');
 // =======================================================================
 // SECTION 2 — Reference data & shared helpers
 // =======================================================================
-const ROLE_OPTIONS = [
-    'superuser'     => 'Super User',
-    'receptionuser' => 'Reception User',
-    'pharmacyuser'  => 'Pharmacy User',
-    'doctor'        => 'Doctor',
-    'labuser'       => 'Lab User',
-];
+const ROLE_OPTIONS = TDC_ROLES;
 
 const ALLOWED_SECTIONS = ['users'];
 
@@ -231,7 +227,7 @@ function tdc_validate_user_form(
  * @param array{userlegalname:string,role:string,username:string} $input
  * @throws PDOException on failure (caller decides how to present it)
  */
-function tdc_save_user(PDO $pdo, array $input, string $password, bool $isEdit, int $editId): void
+function tdc_save_user(PDO $pdo, array $input, string $password, bool $isEdit, int $editId): int
 {
     if ($isEdit) {
         if ($password !== '') {
@@ -256,7 +252,7 @@ function tdc_save_user(PDO $pdo, array $input, string $password, bool $isEdit, i
                 'id'            => $editId,
             ]);
         }
-        return;
+        return $editId;
     }
 
     $stmt = $pdo->prepare(
@@ -268,6 +264,7 @@ function tdc_save_user(PDO $pdo, array $input, string $password, bool $isEdit, i
         'username'      => $input['username'],
         'password'      => password_hash($password, PASSWORD_DEFAULT),
     ]);
+    return (int) $pdo->lastInsertId();
 }
 
 /**
@@ -277,6 +274,8 @@ function tdc_save_user(PDO $pdo, array $input, string $password, bool $isEdit, i
  */
 function tdc_delete_user(PDO $pdo, int $id): void
 {
+    $stmt = $pdo->prepare('UPDATE Doctors SET UserID=NULL WHERE UserID=:id');
+    $stmt->execute(['id' => $id]);
     $stmt = $pdo->prepare('DELETE FROM users WHERE id = :id');
     $stmt->execute(['id' => $id]);
 }
@@ -319,6 +318,7 @@ $old = [
     'userlegalname' => '',
     'role'          => '',
     'username'      => '',
+    'DoctorID'      => '',
 ];
 
 // =======================================================================
@@ -354,6 +354,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $section === 'users') {
             $old['userlegalname'] = trim((string) ($_POST['userlegalname'] ?? ''));
             $old['role']          = (string) ($_POST['role'] ?? '');
             $old['username']      = trim((string) ($_POST['username'] ?? ''));
+            $old['DoctorID']      = trim((string) ($_POST['DoctorID'] ?? ''));
             $password             = (string) ($_POST['password'] ?? '');
             $confirmPassword      = (string) ($_POST['confirm_password'] ?? '');
 
@@ -361,14 +362,35 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $section === 'users') {
             $editId = $isEdit ? (int) $old['user_id'] : 0;
 
             $errors = tdc_validate_user_form($pdo, $old, $password, $confirmPassword, $isEdit, $editId);
+            if ($isEdit && $editId === (int) $_SESSION['user_id'] && $old['role'] !== 'superuser') {
+                $errors[] = 'Your signed-in account must keep the SuperAdmin role.';
+            }
+            if ($old['role'] === 'doctoruser') {
+                if ($old['DoctorID'] === '' || !ctype_digit($old['DoctorID'])) {
+                    $errors[] = 'Select the doctor profile linked to this account.';
+                } else {
+                    $stmt = $pdo->prepare('SELECT COUNT(*) FROM Doctors WHERE DoctorID=? AND (UserID IS NULL OR UserID=?)');
+                    $stmt->execute([(int)$old['DoctorID'],$editId]);
+                    if (!(int)$stmt->fetchColumn()) $errors[] = 'That doctor profile is already linked to another user.';
+                }
+            }
 
             if (empty($errors)) {
                 try {
-                    tdc_save_user($pdo, $old, $password, $isEdit, $editId);
+                    $pdo->beginTransaction();
+                    $savedUserId = tdc_save_user($pdo, $old, $password, $isEdit, $editId);
+                    $stmt = $pdo->prepare('UPDATE Doctors SET UserID=NULL WHERE UserID=?');
+                    $stmt->execute([$savedUserId]);
+                    if ($old['role'] === 'doctoruser') {
+                        $stmt = $pdo->prepare('UPDATE Doctors SET UserID=? WHERE DoctorID=?');
+                        $stmt->execute([$savedUserId,(int)$old['DoctorID']]);
+                    }
+                    $pdo->commit();
                     $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
                     header('Location: settings.php?section=users&success=1');
                     exit;
                 } catch (PDOException $e) {
+                    if ($pdo->inTransaction()) $pdo->rollBack();
                     if ((string) $e->getCode() === '23000') {
                         $errors[] = 'This username is already taken.';
                     } else {
@@ -390,13 +412,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $section === 'users') {
 $users = [];
 if ($section === 'users') {
     try {
-        $stmt  = $pdo->query('SELECT id, userlegalname, role, username, created_at FROM users ORDER BY userlegalname ASC');
+        $stmt  = $pdo->query('SELECT u.id,u.userlegalname,u.role,u.username,u.created_at,d.DoctorID FROM users u LEFT JOIN Doctors d ON d.UserID=u.id ORDER BY u.userlegalname ASC');
         $users = $stmt->fetchAll();
     } catch (PDOException $e) {
         error_log('[SETUP][USERS] list fetch failed: ' . $e->getMessage());
         $users = [];
     }
 }
+$doctorProfiles = $section === 'users' ? $pdo->query('SELECT DoctorID,DoctorName,UserID FROM Doctors ORDER BY DoctorName')->fetchAll() : [];
 
 // =======================================================================
 // SECTION 8 — View data
@@ -719,6 +742,8 @@ $currentPage = basename((string) ($_SERVER['SCRIPT_NAME'] ?? 'settings.php'));
         transform:translateY(0);
     }
 </style>
+<link rel="stylesheet" href="../assets/clinic.css">
+<script src="../assets/clinic.js" defer></script>
 </head>
 <body>
 
@@ -735,21 +760,17 @@ $currentPage = basename((string) ($_SERVER['SCRIPT_NAME'] ?? 'settings.php'));
                     <span class="badge"></span>
                 </button>
                 <div class="dropdown-menu notif-menu">
-                    <div class="notif-title">Notifications</div>
-                    <div class="notif-empty">You're all caught up.</div>
+                    <?php require __DIR__ . '/../includes/notifications.php'; ?>
                 </div>
             </div>
 
-            <div class="profile-static">
-                <div class="avatar"><?= tdc_e($avatarLetters) ?></div>
-                <span class="profile-name"><?= tdc_e($displayName) ?></span>
-            </div>
+            <?php require __DIR__ . '/../includes/profile.php'; ?>
         </div>
     </div>
 
     <nav class="menu-bar">
         <ul class="nav-items">
-            <?php foreach (NAV_ITEMS as $item): ?>
+            <?php foreach (tdc_navigation(NAV_ITEMS) as $item): ?>
                 <li class="nav-item<?= $item['href'] === $currentPage ? ' active' : '' ?>">
                     <a href="<?= tdc_e($item['href']) ?>" class="nav-link">
                         <svg viewBox="0 0 20 20"><?= $item['icon'] ?></svg>
@@ -843,6 +864,7 @@ $currentPage = basename((string) ($_SERVER['SCRIPT_NAME'] ?? 'settings.php'));
                                     data-id="<?= (int) $u['id'] ?>"
                                     data-name="<?= tdc_e($u['userlegalname']) ?>"
                                     data-role="<?= tdc_e($u['role']) ?>"
+                                    data-doctor="<?= tdc_e((string)$u['DoctorID']) ?>"
                                     data-username="<?= tdc_e($u['username']) ?>">
                                     Edit
                                 </button>
@@ -889,6 +911,16 @@ $currentPage = basename((string) ($_SERVER['SCRIPT_NAME'] ?? 'settings.php'));
                                 <option value="<?= tdc_e($value) ?>">
                                     <?= tdc_e($label) ?>
                                 </option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+
+                    <div class="form-group" id="doctorProfileGroup" hidden>
+                        <label for="f_doctor">Doctor Profile</label>
+                        <select id="f_doctor" name="DoctorID">
+                            <option value="">Select doctor profile</option>
+                            <?php foreach ($doctorProfiles as $doctor): ?>
+                                <option value="<?= (int)$doctor['DoctorID'] ?>"><?= tdc_e($doctor['DoctorName']) ?><?= $doctor['UserID'] ? ' (linked)' : '' ?></option>
                             <?php endforeach; ?>
                         </select>
                     </div>
@@ -978,12 +1010,16 @@ function showToast(message){
     const fName      = document.getElementById('f_userlegalname');
     const fRole      = document.getElementById('f_role');
     const fUsername  = document.getElementById('f_username');
+    const fDoctor    = document.getElementById('f_doctor');
+    const doctorGroup = document.getElementById('doctorProfileGroup');
     const fPassword  = document.getElementById('f_password');
     const fConfirm   = document.getElementById('f_confirm_password');
     const passHint   = document.getElementById('passwordHint');
 
     function openModal(){ overlay.classList.add('show'); }
     function closeModal(){ overlay.classList.remove('show'); }
+    function syncDoctorField(){ const show=fRole.value==='doctoruser'; doctorGroup.hidden=!show; fDoctor.required=show; if(!show) fDoctor.value=''; }
+    fRole.addEventListener('change', syncDoctorField);
 
     document.getElementById('addUserBtn').addEventListener('click', function(){
         form.reset();
@@ -992,6 +1028,7 @@ function showToast(message){
         passHint.textContent = 'Minimum 8 characters.';
         fPassword.required = true;
         fConfirm.required = true;
+        syncDoctorField();
         openModal();
     });
 
@@ -1002,6 +1039,8 @@ function showToast(message){
             fName.value     = btn.dataset.name;
             fRole.value     = btn.dataset.role;
             fUsername.value = btn.dataset.username;
+            fDoctor.value   = btn.dataset.doctor || '';
+            syncDoctorField();
             modalTitle.textContent = 'Edit User';
             passHint.textContent = 'Leave blank to keep the current password.';
             fPassword.required = false;
@@ -1032,6 +1071,8 @@ function showToast(message){
     fName.value     = <?= json_encode($old['userlegalname']) ?>;
     fRole.value     = <?= json_encode($old['role']) ?>;
     fUsername.value = <?= json_encode($old['username']) ?>;
+    fDoctor.value   = <?= json_encode($old['DoctorID']) ?>;
+    syncDoctorField();
     modalTitle.textContent = fUserId.value ? 'Edit User' : 'Add User';
     passHint.textContent = fUserId.value ? 'Leave blank to keep the current password.' : 'Minimum 8 characters.';
     fPassword.required = fUserId.value === '';
