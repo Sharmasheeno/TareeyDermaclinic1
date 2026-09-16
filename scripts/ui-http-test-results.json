@@ -1,0 +1,602 @@
+[
+  {
+    "name": "doctors.php?download=doctor-template superuser",
+    "ok": true,
+    "detail": "status=200; attachment; filename=\"doctor-import-example.csv\"; rows=2"
+  },
+  {
+    "name": "patients.php?download=patient-template superuser",
+    "ok": true,
+    "detail": "status=200; attachment; filename=\"patient-import-example.csv\"; rows=2"
+  },
+  {
+    "name": "setup.php?section=users&download=user-template superuser",
+    "ok": true,
+    "detail": "status=200; attachment; filename=\"user-import-example.csv\"; rows=2"
+  },
+  {
+    "name": "doctors.php?download=doctors superuser",
+    "ok": true,
+    "detail": "status=200; attachment; filename=\"doctors-2026-09-16.csv\"; rows=4"
+  },
+  {
+    "name": "patients.php?download=patients superuser",
+    "ok": true,
+    "detail": "status=200; attachment; filename=\"patients-2026-09-16.csv\"; rows=6"
+  },
+  {
+    "name": "setup.php?section=users&download=users superuser",
+    "ok": true,
+    "detail": "status=200; attachment; filename=\"users-2026-09-16.csv\"; rows=10"
+  },
+  {
+    "name": "reception.php?section=consultations&export=csv superuser",
+    "ok": true,
+    "detail": "status=200; attachment; filename=\"doctor-waiting-2026-09-16.csv\"; rows=6"
+  },
+  {
+    "name": "pharmacy.php?section=purchases&export=csv superuser",
+    "ok": true,
+    "detail": "status=200; attachment; filename=\"purchase-orders-2026-09-16.csv\"; rows=2"
+  },
+  {
+    "name": "doctors.php?workspace=1&export=csv doctoruser",
+    "ok": true,
+    "detail": "status=200; attachment; filename=\"doctor-waiting.csv\"; rows=5"
+  },
+  {
+    "name": "pharmacy.php?section=purchases&export=csv receptionuser",
+    "ok": true,
+    "detail": "status=200; attachment; filename=\"purchase-orders.csv\"; rows=2"
+  },
+  {
+    "name": "receptionuser purchase privacy",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "receptionuser purchase report denied",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "pharmacy.php?section=purchases&export=csv pharmacyuser",
+    "ok": true,
+    "detail": "status=200; attachment; filename=\"purchase-orders.csv\"; rows=2"
+  },
+  {
+    "name": "pharmacyuser purchase privacy",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "pharmacyuser purchase report denied",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "unauthorized doctors.php?download=doctors",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "unauthorized patients.php?download=patients",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "unauthorized setup.php?section=users&download=users",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-patients page",
+    "ok": true,
+    "detail": "status=200"
+  },
+  {
+    "name": "reports.php?section=patients&export=csv superuser",
+    "ok": true,
+    "detail": "status=200; attachment; filename=\"tarey-patients-2026-09-16.csv\"; rows=7"
+  },
+  {
+    "name": "patients CSV rows match header",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-visits page",
+    "ok": true,
+    "detail": "status=200"
+  },
+  {
+    "name": "reports.php?section=visits&export=csv superuser",
+    "ok": true,
+    "detail": "status=200; attachment; filename=\"tarey-visits-2026-09-16.csv\"; rows=7"
+  },
+  {
+    "name": "visits CSV rows match header",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-doctor-consultations page",
+    "ok": true,
+    "detail": "status=200"
+  },
+  {
+    "name": "reports.php?section=doctor-consultations&export=csv superuser",
+    "ok": true,
+    "detail": "status=200; attachment; filename=\"tarey-doctor-consultations-2026-09-16.csv\"; rows=5"
+  },
+  {
+    "name": "doctor-consultations CSV rows match header",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-billing page",
+    "ok": true,
+    "detail": "status=200"
+  },
+  {
+    "name": "reports.php?section=billing&export=csv superuser",
+    "ok": true,
+    "detail": "status=200; attachment; filename=\"tarey-billing-2026-09-16.csv\"; rows=18"
+  },
+  {
+    "name": "billing CSV rows match header",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-payments page",
+    "ok": true,
+    "detail": "status=200"
+  },
+  {
+    "name": "reports.php?section=payments&export=csv superuser",
+    "ok": true,
+    "detail": "status=200; attachment; filename=\"tarey-payments-2026-09-16.csv\"; rows=18"
+  },
+  {
+    "name": "payments CSV rows match header",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-outstanding page",
+    "ok": true,
+    "detail": "status=200"
+  },
+  {
+    "name": "reports.php?section=outstanding&export=csv superuser",
+    "ok": true,
+    "detail": "status=200; attachment; filename=\"tarey-outstanding-2026-09-16.csv\"; rows=5"
+  },
+  {
+    "name": "outstanding CSV rows match header",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-pharmacy-sales page",
+    "ok": true,
+    "detail": "status=200"
+  },
+  {
+    "name": "reports.php?section=pharmacy-sales&export=csv superuser",
+    "ok": true,
+    "detail": "status=200; attachment; filename=\"tarey-pharmacy-sales-2026-09-16.csv\"; rows=7"
+  },
+  {
+    "name": "pharmacy-sales CSV rows match header",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-pharmacy-purchases page",
+    "ok": true,
+    "detail": "status=200"
+  },
+  {
+    "name": "reports.php?section=pharmacy-purchases&export=csv superuser",
+    "ok": true,
+    "detail": "status=200; attachment; filename=\"tarey-pharmacy-purchases-2026-09-16.csv\"; rows=3"
+  },
+  {
+    "name": "pharmacy-purchases CSV rows match header",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-pharmacy-stock page",
+    "ok": true,
+    "detail": "status=200"
+  },
+  {
+    "name": "reports.php?section=pharmacy-stock&export=csv superuser",
+    "ok": true,
+    "detail": "status=200; attachment; filename=\"tarey-pharmacy-stock-2026-09-16.csv\"; rows=9"
+  },
+  {
+    "name": "pharmacy-stock CSV rows match header",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-pharmacy-low-stock page",
+    "ok": true,
+    "detail": "status=200"
+  },
+  {
+    "name": "reports.php?section=pharmacy-low-stock&export=csv superuser",
+    "ok": true,
+    "detail": "status=200; attachment; filename=\"tarey-pharmacy-low-stock-2026-09-16.csv\"; rows=2"
+  },
+  {
+    "name": "pharmacy-low-stock CSV rows match header",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-pharmacy-expiry page",
+    "ok": true,
+    "detail": "status=200"
+  },
+  {
+    "name": "reports.php?section=pharmacy-expiry&export=csv superuser",
+    "ok": true,
+    "detail": "status=200; attachment; filename=\"tarey-pharmacy-expiry-2026-09-16.csv\"; rows=2"
+  },
+  {
+    "name": "pharmacy-expiry CSV rows match header",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-lab-orders page",
+    "ok": true,
+    "detail": "status=200"
+  },
+  {
+    "name": "reports.php?section=lab-orders&export=csv superuser",
+    "ok": true,
+    "detail": "status=200; attachment; filename=\"tarey-lab-orders-2026-09-16.csv\"; rows=8"
+  },
+  {
+    "name": "lab-orders CSV rows match header",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-lab-completed page",
+    "ok": true,
+    "detail": "status=200"
+  },
+  {
+    "name": "reports.php?section=lab-completed&export=csv superuser",
+    "ok": true,
+    "detail": "status=200; attachment; filename=\"tarey-lab-completed-2026-09-16.csv\"; rows=6"
+  },
+  {
+    "name": "lab-completed CSV rows match header",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-lab-pending page",
+    "ok": true,
+    "detail": "status=200"
+  },
+  {
+    "name": "reports.php?section=lab-pending&export=csv superuser",
+    "ok": true,
+    "detail": "status=200; attachment; filename=\"tarey-lab-pending-2026-09-16.csv\"; rows=4"
+  },
+  {
+    "name": "lab-pending CSV rows match header",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-lab-revenue page",
+    "ok": true,
+    "detail": "status=200"
+  },
+  {
+    "name": "reports.php?section=lab-revenue&export=csv superuser",
+    "ok": true,
+    "detail": "status=200; attachment; filename=\"tarey-lab-revenue-2026-09-16.csv\"; rows=7"
+  },
+  {
+    "name": "lab-revenue CSV rows match header",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-revenue-by-account page",
+    "ok": true,
+    "detail": "status=200"
+  },
+  {
+    "name": "reports.php?section=revenue-by-account&export=csv superuser",
+    "ok": true,
+    "detail": "status=200; attachment; filename=\"tarey-revenue-by-account-2026-09-16.csv\"; rows=5"
+  },
+  {
+    "name": "revenue-by-account CSV rows match header",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-expenses page",
+    "ok": true,
+    "detail": "status=200"
+  },
+  {
+    "name": "reports.php?section=expenses&export=csv superuser",
+    "ok": true,
+    "detail": "status=200; attachment; filename=\"tarey-expenses-2026-09-16.csv\"; rows=3"
+  },
+  {
+    "name": "expenses CSV rows match header",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-transactions page",
+    "ok": true,
+    "detail": "status=200"
+  },
+  {
+    "name": "reports.php?section=transactions&export=csv superuser",
+    "ok": true,
+    "detail": "status=200; attachment; filename=\"tarey-transactions-2026-09-16.csv\"; rows=18"
+  },
+  {
+    "name": "transactions CSV rows match header",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-income-statement page",
+    "ok": true,
+    "detail": "status=200"
+  },
+  {
+    "name": "reports.php?section=income-statement&export=csv superuser",
+    "ok": true,
+    "detail": "status=200; attachment; filename=\"tarey-income-statement-2026-09-16.csv\"; rows=8"
+  },
+  {
+    "name": "income-statement CSV rows match header",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-balance-sheet page",
+    "ok": true,
+    "detail": "status=200"
+  },
+  {
+    "name": "reports.php?section=balance-sheet&export=csv superuser",
+    "ok": true,
+    "detail": "status=200; attachment; filename=\"tarey-balance-sheet-2026-09-16.csv\"; rows=6"
+  },
+  {
+    "name": "balance-sheet CSV rows match header",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "setup-overview page",
+    "ok": true,
+    "detail": "status=200"
+  },
+  {
+    "name": "setup-organization page",
+    "ok": true,
+    "detail": "status=200"
+  },
+  {
+    "name": "setup-users page",
+    "ok": true,
+    "detail": "status=200"
+  },
+  {
+    "name": "setup-roles page",
+    "ok": true,
+    "detail": "status=200"
+  },
+  {
+    "name": "setup-permissions page",
+    "ok": true,
+    "detail": "status=200"
+  },
+  {
+    "name": "setup-clinical page",
+    "ok": true,
+    "detail": "status=200"
+  },
+  {
+    "name": "setup-laboratory page",
+    "ok": true,
+    "detail": "status=200"
+  },
+  {
+    "name": "setup-pharmacy page",
+    "ok": true,
+    "detail": "status=200"
+  },
+  {
+    "name": "setup-payment-methods page",
+    "ok": true,
+    "detail": "status=200"
+  },
+  {
+    "name": "setup-audit page",
+    "ok": true,
+    "detail": "status=200"
+  },
+  {
+    "name": "login page",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "patients page",
+    "ok": true,
+    "detail": "status=200"
+  },
+  {
+    "name": "clinical page",
+    "ok": true,
+    "detail": "status=200"
+  },
+  {
+    "name": "consultations page",
+    "ok": true,
+    "detail": "status=200"
+  },
+  {
+    "name": "lab-billing page",
+    "ok": true,
+    "detail": "status=200"
+  },
+  {
+    "name": "pharmacy-billing page",
+    "ok": true,
+    "detail": "status=200"
+  },
+  {
+    "name": "prescriptions page",
+    "ok": true,
+    "detail": "status=200"
+  },
+  {
+    "name": "accounts page",
+    "ok": true,
+    "detail": "status=200"
+  },
+  {
+    "name": "multipart import doctors.php",
+    "ok": true,
+    "detail": "status=302"
+  },
+  {
+    "name": "doctors.php?download=doctors superuser",
+    "ok": true,
+    "detail": "status=200; attachment; filename=\"doctors-2026-09-16.csv\"; rows=5"
+  },
+  {
+    "name": "import persisted doctors.php",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "invalid CSV rejected doctors.php",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "multipart import patients.php",
+    "ok": true,
+    "detail": "status=302"
+  },
+  {
+    "name": "patients.php?download=patients superuser",
+    "ok": true,
+    "detail": "status=200; attachment; filename=\"patients-2026-09-16.csv\"; rows=7"
+  },
+  {
+    "name": "import persisted patients.php",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "invalid CSV rejected patients.php",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "multipart import setup.php?section=users",
+    "ok": true,
+    "detail": "status=302"
+  },
+  {
+    "name": "setup.php?section=users&download=users superuser",
+    "ok": true,
+    "detail": "status=200; attachment; filename=\"users-2026-09-16.csv\"; rows=11"
+  },
+  {
+    "name": "import persisted setup.php?section=users",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "password excluded",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "invalid CSV rejected setup.php?section=users",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "superuser medicine edit record available",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "superuser medicine update HTTP",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "superuser medicine edit persisted",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "receptionuser medicine edit record available",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "receptionuser medicine update HTTP",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "receptionuser medicine edit persisted",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "pharmacyuser medicine edit record available",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "pharmacyuser medicine update HTTP",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "pharmacyuser medicine edit persisted",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "logout redirect",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "unauthenticated redirect",
+    "ok": true,
+    "detail": ""
+  }
+]

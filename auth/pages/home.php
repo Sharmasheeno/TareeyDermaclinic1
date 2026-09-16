@@ -388,7 +388,7 @@ $currentPage = basename((string) ($_SERVER['SCRIPT_NAME'] ?? 'home.php'));
             <?php foreach (tdc_navigation($navItems) as $item): ?>
                 <li class="nav-item<?= $item['href'] === $currentPage ? ' active' : '' ?>">
                     <a href="<?= htmlspecialchars($item['href'], ENT_QUOTES, 'UTF-8') ?>" class="nav-link">
-                        <svg viewBox="0 0 20 20"><?= $item['icon'] ?></svg>
+                        <?= tdc_navigation_icon($item['href']) ?>
                         <span><?= htmlspecialchars($item['label'], ENT_QUOTES, 'UTF-8') ?></span>
                     </a>
                 </li>

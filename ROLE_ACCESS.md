@@ -5,9 +5,9 @@ The clinic keeps its horizontal navigation, color system, and in-body section me
 | Account role | Access |
 | --- | --- |
 | SuperAdmin (`superuser`) | Full access to every module and operation, including protected Setup administration. The root SuperAdmin cannot be deactivated, deleted, downgraded, or restricted. |
-| Receptionist (`receptionuser`) | Reception dashboard, patient registration and updates, consultation booking, consultation payment, laboratory billing/payment, and reception pharmacy billing. |
+| Receptionist (`receptionuser`) | Combined Reception, Pharmacy, Laboratory and Accounting operations: patients, visits, payments, medicine inventory, POS, dispensing, lab processing/results and journal entries. Permitted reports and exports are available. No Setup, user/role administration, clinical authoring or purchase costs. |
 | Doctor (`doctoruser`) | Assigned paid consultation queue, clinical notes, diagnosis, treatment and follow-up plans, prescriptions, laboratory requests, returned results, and result review. A Doctor account must be linked to one doctor directory profile. |
-| Pharmacist (`pharmacyuser`) | Pharmacy dashboard, prescription queue, dispensing, and point of sale by default. Purchase and inventory permissions can be granted separately. |
+| Pharmacist (`pharmacyuser`) | Pharmacy dashboard, prescription queue, dispensing, point of sale, medicine inventory and sanitized purchase history. No acquisition costs or unrelated administration. |
 | Laboratory Staff (`labuser`) | Paid laboratory work queue, result entry, completion, and test availability. Patient identity, test pricing, payment status, and order deletion are read-only. |
 
 SuperAdmin can create custom roles, copy an existing permission preset, and grant only the required modules and actions. For example, an Accountant can receive `accounting.view`, `reports.view`, and `reports.export` without changing PHP source.
@@ -37,6 +37,10 @@ C:\xampp\php\php.exe scripts\migrate_setup_rbac.php
 ```
 
 Both migrations are idempotent. Existing role strings and historical transactions are preserved while users are linked to database role records.
+
+For an existing installation, apply only the operational permission update with `C:\xampp\php\php.exe scripts\migrate_operational_roles.php`. It updates role grants transactionally and checks that clinic-data table checksums remain unchanged. The full Setup migration also includes these defaults for new installations. Later custom permission changes continue to use the existing database authorization system.
+
+Purchase `UnitPrice`, supplier totals, discounts, VAT, payments and dues are SuperAdmin-only. Other roles receive operational projections in purchase history and CSV; direct creation/void requests and purchase financial reports are denied. Cost-bearing purchase creation remains a SuperAdmin operation because inventory does not store an authoritative acquisition cost. Selling prices and patient charges are operational data.
 
 ## Local verification
 

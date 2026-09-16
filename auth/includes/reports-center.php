@@ -18,7 +18,7 @@ if (!function_exists('tdc_rc_catalog')) {
      */
     function tdc_rc_catalog(): array
     {
-        return [
+        $catalog = [
             'clinical' => [
                 'label'   => 'Clinical & Patient',
                 'icon'    => 'stethoscope',
@@ -164,6 +164,8 @@ if (!function_exists('tdc_rc_catalog')) {
                 ],
             ],
         ];
+        if (!tdc_can_view_purchase_cost()) unset($catalog['pharmacy']['reports']['pharmacy-purchases']);
+        return $catalog;
     }
 }
 
@@ -674,19 +676,20 @@ if (!function_exists('tdc_rc_render_landing')) {
             . '<div class="welcome-sub">Every operational and financial report, computed live from clinic records.</div>';
 
         if ($hubSummary) {
-            $html .= '<div class="kpi-grid" style="margin:20px 0 28px">';
+            $html .= '<div class="kpi-grid report-kpis">';
             foreach ($hubSummary as $label => $value) {
                 $isMoney = str_contains(strtolower((string) $label), 'revenue')
                     || str_contains(strtolower((string) $label), 'balance')
                     || str_contains(strtolower((string) $label), 'income');
-                $html .= '<div class="kpi-card"><div class="kpi-label">' . tdc_ui_h($label) . '</div>'
+                $icon = str_contains(strtolower($label),'pharmacy') ? 'pill' : (str_contains(strtolower($label),'lab') ? 'flask' : ($isMoney ? 'wallet' : 'users'));
+                $html .= '<div class="kpi-card"><span class="kpi-icon">'.tdc_icon($icon,20).'</span><div class="kpi-label">' . tdc_ui_h($label) . '</div>'
                     . '<div class="kpi-value">' . ($isMoney ? number_format((float) $value, 2) : number_format((float) $value, 0)) . '</div></div>';
             }
             $html .= '</div>';
         }
 
-        foreach (tdc_rc_catalog() as $group) {
-            $html .= '<div class="report-group">'
+        foreach (tdc_rc_catalog() as $groupKey => $group) {
+            $html .= '<div class="report-group category-'.tdc_ui_h($groupKey).'">'
                 . '<div class="report-group-head">' . tdc_icon($group['icon'], 16)
                 . '<span>' . tdc_ui_h($group['label']) . '</span></div>'
                 . '<div class="report-grid">';

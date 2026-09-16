@@ -1,0 +1,307 @@
+[
+  {
+    "name": "inventory script 0",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "inventory script 1",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "reports script 0",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "reports script 1",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "reception-role script 0",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "reception-role script 1",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "reception-role script 2",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "pharmacy-role script 0",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "pharmacy-role script 1",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "pharmacy-role script 2",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "permissions-edit script 0",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "permissions-edit script 1",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "permissions-edit script 2",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "permissions-edit script 3",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "inventory 1920px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1905,\"width\":1920,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "inventory 1366px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1351,\"width\":1366,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "inventory 1080px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1065,\"width\":1080,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "inventory 820px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":805,\"width\":820,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "inventory 480px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":465,\"width\":480,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "inventory runtime",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "inventory simple medicine form",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "inventory edit medicine fields populated",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "inventory modal opens",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "inventory modal mobile",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "inventory modal focus return",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "inventory modal accessible on reopen",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "reports 1920px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1905,\"width\":1920,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "reports 1366px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1351,\"width\":1366,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "reports 1080px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1065,\"width\":1080,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "reports 820px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":805,\"width\":820,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "reports 480px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":465,\"width\":480,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "reports runtime",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "KPI icons do not overlap labels",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "reception-role 1920px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1905,\"width\":1920,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "reception-role 1366px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1351,\"width\":1366,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "reception-role 1080px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1065,\"width\":1080,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "reception-role 820px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":805,\"width\":820,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "reception-role 480px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":465,\"width\":480,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "reception-role runtime",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "reception-role simple medicine form",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "reception-role edit medicine fields populated",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "pharmacy-role 1920px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1905,\"width\":1920,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "pharmacy-role 1366px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1351,\"width\":1366,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "pharmacy-role 1080px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1065,\"width\":1080,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "pharmacy-role 820px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":805,\"width\":820,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "pharmacy-role 480px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":465,\"width\":480,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "pharmacy-role runtime",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "pharmacy-role simple medicine form",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "pharmacy-role edit medicine fields populated",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "permissions-edit 1920px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1905,\"width\":1920,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "permissions-edit 1366px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1351,\"width\":1366,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "permissions-edit 1080px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1065,\"width\":1080,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "permissions-edit 820px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":805,\"width\":820,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "permissions-edit 480px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":465,\"width\":480,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "permissions-edit runtime",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "Permissions no-change Save disabled",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "Permissions dirty Save white text and icon",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "Permissions hover retains white foreground",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "Permissions compact mobile search",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "Permissions focus ring",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "Permissions restored Save disabled",
+    "ok": true,
+    "detail": ""
+  }
+]

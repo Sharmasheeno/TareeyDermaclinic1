@@ -579,11 +579,9 @@ $currentPage   = basename((string) ($_SERVER['SCRIPT_NAME'] ?? 'reports.php'));
     .welcome-title{ font-size:26px; font-weight:700; color:var(--navy); }
     .welcome-sub{ font-size:14px; color:var(--navy-55); margin-top:6px; margin-bottom:28px; }
 
-    .btn{ padding:11px 22px; font-size:14px; font-weight:600; border:2px solid var(--navy); cursor:pointer; letter-spacing:0.02em; transition:background 0.12s, color 0.12s, border-color 0.12s; text-decoration:none; display:inline-flex; align-items:center; gap:6px; }
-    .btn-primary{ background:var(--navy); color:var(--white); }
-    .btn-primary:hover{ background:var(--orange); border-color:var(--orange); }
-    .btn-secondary{ background:var(--white); color:var(--navy); }
-    .btn-secondary:hover{ color:var(--orange); border-color:var(--orange); }
+
+
+
 
     .setup-grid{ display:grid; grid-template-columns:repeat(2, minmax(240px,1fr)); gap:20px; max-width:640px; }
     .setup-card{ display:flex; align-items:flex-start; gap:14px; padding:20px; border:2px solid var(--navy); text-decoration:none; color:var(--navy); transition:background 0.12s, border-color 0.12s; }
@@ -635,17 +633,6 @@ $currentPage   = basename((string) ($_SERVER['SCRIPT_NAME'] ?? 'reports.php'));
     .logout-fab:focus-visible{ outline:2px solid var(--orange); outline-offset:3px; }
     .logout-fab::after{ content:'Log Out'; position:absolute; bottom:calc(100% + 8px); right:0; background:var(--navy); color:var(--white); font-family:'Google Sans', sans-serif; font-size:12px; font-weight:600; padding:6px 10px; white-space:nowrap; opacity:0; visibility:hidden; transform:translateY(4px); transition:opacity 0.15s ease, transform 0.15s ease, visibility 0.15s ease; pointer-events:none; }
     .logout-fab:hover::after, .logout-fab:focus-visible::after{ opacity:1; visibility:visible; transform:translateY(0); }
-
-    .report-group{ margin-bottom:26px; }
-    .report-group-head{ display:flex; align-items:center; gap:8px; margin-bottom:10px; color:var(--navy); font-size:11.5px; font-weight:700; letter-spacing:0.08em; text-transform:uppercase; }
-    .report-group-head svg{ color:var(--orange); flex-shrink:0; }
-    .report-grid{ display:grid; grid-template-columns:repeat(auto-fill, minmax(280px, 1fr)); gap:12px; }
-    .report-card{ display:flex; align-items:flex-start; gap:12px; padding:15px 16px; border:var(--border); background:var(--white); text-decoration:none; color:var(--navy); transition:border-color 0.12s, background 0.12s; }
-    .report-card:hover{ border-color:var(--orange); background:var(--navy-10); }
-    .report-card-icon{ display:grid; place-items:center; width:36px; height:36px; flex-shrink:0; background:var(--navy-10); color:var(--navy); }
-    .report-card-body{ display:flex; flex-direction:column; gap:3px; min-width:0; }
-    .report-card-title{ font-size:14px; font-weight:700; display:flex; align-items:center; gap:7px; }
-    .report-card-desc{ font-size:12.5px; color:var(--navy-55); line-height:1.45; }
     .report-tag{ font-size:9.5px; font-weight:700; letter-spacing:0.06em; text-transform:uppercase; padding:2px 6px; background:var(--navy-10); color:var(--navy-55); }
     .report-head{ display:flex; align-items:flex-start; gap:12px; margin:14px 0 18px; }
     .report-head-icon{ display:grid; place-items:center; width:40px; height:40px; flex-shrink:0; background:var(--navy-10); color:var(--navy); }
@@ -698,7 +685,7 @@ $currentPage   = basename((string) ($_SERVER['SCRIPT_NAME'] ?? 'reports.php'));
             <?php foreach (tdc_navigation(NAV_ITEMS) as $item): ?>
                 <li class="nav-item<?= $item['href'] === $currentPage ? ' active' : '' ?>">
                     <a href="<?= tdc_e($item['href']) ?>" class="nav-link">
-                        <svg viewBox="0 0 20 20"><?= $item['icon'] ?></svg>
+                        <?= tdc_navigation_icon($item['href']) ?>
                         <span><?= tdc_e($item['label']) ?></span>
                     </a>
                 </li>
@@ -762,7 +749,7 @@ $currentPage   = basename((string) ($_SERVER['SCRIPT_NAME'] ?? 'reports.php'));
                 <input type="date" id="rf_From" name="from" value="<?= tdc_e($isFrom) ?>">
                 <label for="rf_To">To</label>
                 <input type="date" id="rf_To" name="to" value="<?= tdc_e($isTo) ?>">
-                <button type="submit" class="btn btn-secondary">Apply</button>
+                <button type="submit" class="btn-primary btn "><?= tdc_icon('search',16) ?><span>Apply</span></button>
             </form>
         </div>
 
@@ -813,8 +800,8 @@ $currentPage   = basename((string) ($_SERVER['SCRIPT_NAME'] ?? 'reports.php'));
         </div>
 
         <div class="statement-actions no-print">
-            <button type="button" class="btn btn-secondary" onclick="window.print()">Print</button>
-            <?php if(tdc_can('reports.export')):?><a class="btn btn-primary" href="reports.php?section=income-statement&amp;from=<?=urlencode($isFrom)?>&amp;to=<?=urlencode($isTo)?>&amp;export=csv">Export CSV</a><?php endif;?>
+            <button type="button" class="btn-info  btn " onclick="window.print()"><?= tdc_icon('printer',16) ?><span>Print</span></button>
+            <?php if(tdc_can('reports.export')):?><a class="btn-info btn " href="reports.php?section=income-statement&amp;from=<?=urlencode($isFrom)?>&amp;to=<?=urlencode($isTo)?>&amp;export=csv"><?= tdc_icon('download',16) ?><span>Export CSV</span></a><?php endif;?>
         </div>
 
     <?php // ============================================================
@@ -830,7 +817,7 @@ $currentPage   = basename((string) ($_SERVER['SCRIPT_NAME'] ?? 'reports.php'));
                 <input type="hidden" name="section" value="balance-sheet">
                 <label for="rf_AsOf">As of</label>
                 <input type="date" id="rf_AsOf" name="as_of" value="<?= tdc_e($bsAsOf) ?>">
-                <button type="submit" class="btn btn-secondary">Apply</button>
+                <button type="submit" class="btn-primary btn "><?= tdc_icon('search',16) ?><span>Apply</span></button>
                 <a href="reports.php?section=balance-sheet" class="preset-link">Today</a>
             </form>
         </div>
@@ -913,8 +900,8 @@ $currentPage   = basename((string) ($_SERVER['SCRIPT_NAME'] ?? 'reports.php'));
         <?php endif; ?>
 
         <div class="statement-actions no-print">
-            <button type="button" class="btn btn-secondary" onclick="window.print()">Print</button>
-            <?php if(tdc_can('reports.export')):?><a class="btn btn-primary" href="reports.php?section=balance-sheet&amp;as_of=<?=urlencode($bsAsOf)?>&amp;export=csv">Export CSV</a><?php endif;?>
+            <button type="button" class="btn-info  btn " onclick="window.print()"><?= tdc_icon('printer',16) ?><span>Print</span></button>
+            <?php if(tdc_can('reports.export')):?><a class="btn-info btn " href="reports.php?section=balance-sheet&amp;as_of=<?=urlencode($bsAsOf)?>&amp;export=csv"><?= tdc_icon('download',16) ?><span>Export CSV</span></a><?php endif;?>
         </div>
 
     <?php endif; ?>

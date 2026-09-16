@@ -148,6 +148,11 @@ if ($doctorProfile && ctype_digit((string)($_GET['visit'] ?? ''))) {
     }
 }
 [$waitingFrom, $waitingTo, $waitingDateError] = tdc_date_range_resolve();
+$waitingSchedule = ($_GET['tab'] ?? '') === 'schedule';
+if ($waitingSchedule && !isset($_GET['from_date']) && !isset($_GET['to_date'])) {
+    $waitingFrom = date('Y-m-d');
+    $waitingTo = date('Y-m-d', strtotime('+7 days'));
+}
 $waitingSearch = trim((string) ($_GET['q'] ?? ''));
 $waitingPerPage = (int) ($_GET['per_page'] ?? 10);
 if (!in_array($waitingPerPage, [10,25,50,100], true)) $waitingPerPage = 10;

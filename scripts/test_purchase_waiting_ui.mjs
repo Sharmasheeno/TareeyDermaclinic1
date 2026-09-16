@@ -32,11 +32,14 @@ try {
     await call('Emulation.setDeviceMetricsOverride',{width:1440,height:1000,deviceScaleFactor:1,mobile:false});
     await call('Page.navigate',{url:pathToFileURL(join(tmpdir(),'tdc-purchase.html')).href});await delay(1000);
     await check('Shared purchase modal opens with scroll lock',`document.querySelector('#purchaseModal').classList.contains('show') && document.body.classList.contains('modal-open')`);
+    await check('Purchase units are labelled dropdowns', `document.querySelector('select[name="PurchaseUnit[]"]')?.closest('label').textContent.includes('Purchase unit') && document.querySelector('select[name="SalesUnit[]"]')?.closest('label').textContent.includes('Unit sold / dispensed') && !document.querySelector('input[name="SalesUnit[]"]')`);
+    await evaluate(`document.querySelector('select[name="PurchaseUnit[]"]').value='Box';document.querySelector('select[name="SalesUnit[]"]').value='Tablet'`);
     await check('Desktop modal width',`document.querySelector('.purchase-modal').getBoundingClientRect().width > 1000`);
     await writeFile(join(tmpdir(),'tdc-purchase-desktop.png'),Buffer.from((await call('Page.captureScreenshot',{format:'png'})).data,'base64'));
     await evaluate(`(()=>{const row=document.querySelector('.line-item-row');const set=(n,v)=>row.querySelector('[name="'+n+'[]"]').value=v;set('Quantity',2);set('UnitPrice',10);document.querySelector('#pof_Discount').value=2;document.querySelector('#pof_VATAmount').value=1;document.querySelector('#pof_AmountPaid').value=5;document.querySelector('#pof_AmountPaid').dispatchEvent(new Event('input'));})()`);
     await check('Live net and due calculation',`document.querySelector('#pof_NetDisplay').textContent==='19.00' && document.querySelector('#pof_DueDisplay').textContent==='14.00'`);
     await evaluate(`document.querySelector('#addLineBtn').click()`);
+    await check('New line resets unit selections', `[...document.querySelectorAll('.line-item-row')][1].querySelector('select[name="PurchaseUnit[]"]').value==='' && [...document.querySelectorAll('.line-item-row')][1].querySelector('select[name="SalesUnit[]"]').value===''`);
     await check('Add item',`document.querySelectorAll('.line-item-row').length===2`);
     await call('Input.dispatchKeyEvent',{type:'keyDown',key:'Escape',code:'Escape'});
     await check('Escape closes and returns focus',`!document.body.classList.contains('modal-open') && document.activeElement.id==='openPurchaseModal'`);

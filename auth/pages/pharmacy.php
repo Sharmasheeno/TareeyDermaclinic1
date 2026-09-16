@@ -136,6 +136,44 @@ function tdc_e(?string $value): string
 }
 
 /**
+ * Normalizes a stored unit label for display.
+ *
+ * Legacy rows stored numeric conversion factors ("1"), placeholder text
+ * ("(1s)", "per 1") or nothing at all in SalesUnit / DefaultPurchaseUnit.
+ * Those are never valid unit names, so they collapse to the fallback.
+ */
+function tdc_norm_unit(?string $value, string $fallback = ''): string
+{
+    $unit = trim((string) $value);
+    $unit = trim($unit, " \t\n\r\0\x0B()");
+    if ($unit === '' || is_numeric($unit)) {
+        return $fallback;
+    }
+    if (preg_match('/^(per|unit|units)\b/i', $unit) === 1) {
+        return $fallback;
+    }
+    if (preg_match('/^[0-9]+s$/i', $unit) === 1) {
+        return $fallback;
+    }
+    return $unit;
+}
+
+/** Naive English plural for a unit label (Tablet -> Tablets, Box -> Boxes). */
+function tdc_plural_unit(string $unit): string
+{
+    if ($unit === '') {
+        return '';
+    }
+    if (preg_match('/[^aeiou]y$/i', $unit) === 1) {
+        return substr($unit, 0, -1) . 'ies';
+    }
+    if (preg_match('/(s|x|z|ch|sh)$/i', $unit) === 1) {
+        return $unit . 'es';
+    }
+    return $unit . 's';
+}
+
+/**
  * Strips a leading honorific (Dr., Mr., Mrs., Ms., Prof.) and returns
  * the first remaining token, for a friendlier greeting/avatar.
  */
@@ -306,7 +344,7 @@ function tdc_fetch_stock_map(PDO $pdo, array $itemIds): array
 
 // --- 4A. Inventory -------------------------------------------------------
 
-/** @param array{ItemName:string,Category:string,QuantityInStock:string,SalesUnit:string,SellingPrice:string,ReorderLevel:string,ExpiryDate:string} $input */
+/** @param array{ItemName:string,Category:string,QuantityInStock:string,SalesUnit:string,SellingPrice:string,ReorderLevel:string,ExpiryDate:string,DefaultPurchaseUnit?:string,UnitsPerPackage?:string} $input */
 function tdc_validate_inventory_form(array $input): array
 {
     $errors = [];
@@ -317,10 +355,16 @@ function tdc_validate_inventory_form(array $input): array
     if ($input['Category'] !== '' && mb_strlen($input['Category']) > 100) {
         $errors[] = 'Category must be 100 characters or fewer.';
     }
+    $baseUnit = tdc_norm_unit((string) ($input['SalesUnit'] ?? ''));
+    if ($baseUnit === '') {
+        $errors[] = 'Base unit is required (for example Tablet, Capsule, Bottle).';
+    } elseif (mb_strlen($baseUnit) > 50) {
+        $errors[] = 'Base unit must be 50 characters or fewer.';
+    }
     if ($input['QuantityInStock'] === '' || !ctype_digit($input['QuantityInStock'])) {
         $errors[] = 'Quantity in stock must be a whole number of 0 or more.';
     }
-    if ($input['SellingPrice'] !== '' && (!is_numeric($input['SellingPrice']) || (float) $input['SellingPrice'] < 0)) {
+    if ($input['SellingPrice'] === '' || !is_numeric($input['SellingPrice']) || !is_finite((float)$input['SellingPrice']) || (float)$input['SellingPrice'] < 0) {
         $errors[] = 'Selling price must be a valid non-negative number.';
     }
     if ($input['ReorderLevel'] !== '' && !ctype_digit($input['ReorderLevel'])) {
@@ -328,6 +372,24 @@ function tdc_validate_inventory_form(array $input): array
     }
     if ($input['ExpiryDate'] !== '' && !tdc_is_valid_date($input['ExpiryDate'])) {
         $errors[] = 'Expiry date is not a valid date.';
+    }
+
+    $packUnit = trim((string) ($input['DefaultPurchaseUnit'] ?? ''));
+    $packSize = trim((string) ($input['UnitsPerPackage'] ?? ''));
+    if ($packUnit !== '' && mb_strlen($packUnit) > 50) {
+        $errors[] = 'Default purchase package must be 50 characters or fewer.';
+    }
+    if ($packSize !== '' && (!ctype_digit($packSize) || (int) $packSize < 1)) {
+        $errors[] = 'Units per package must be a whole number of 1 or more.';
+    }
+    if ($packUnit !== '' && $packSize === '') {
+        $errors[] = 'Enter how many ' . ($baseUnit !== '' ? $baseUnit . 's' : 'base units') . ' are in one ' . $packUnit . '.';
+    }
+    if ($packUnit === '' && $packSize !== '') {
+        $errors[] = 'Choose a default purchase package for the units-per-package value.';
+    }
+    if ($baseUnit === '' && ($packUnit !== '' || $packSize !== '')) {
+        $errors[] = 'Set a base unit before configuring a purchase package.';
     }
 
     return $errors;
@@ -512,6 +574,8 @@ function tdc_save_inventory_item(PDO $pdo, array $input, bool $isEdit, string $e
         'SellingPrice'    => $input['SellingPrice'] !== '' ? round((float) $input['SellingPrice'], 2) : 0.00,
         'ReorderLevel'    => $input['ReorderLevel'] !== '' ? (int) $input['ReorderLevel'] : 10,
         'ExpiryDate'      => $input['ExpiryDate'] !== '' ? $input['ExpiryDate'] : null,
+        'DefaultPurchaseUnit' => ($input['DefaultPurchaseUnit'] ?? '') !== '' ? $input['DefaultPurchaseUnit'] : null,
+        'UnitsPerPackage' => ($input['UnitsPerPackage'] ?? '') !== '' ? (int) $input['UnitsPerPackage'] : null,
     ];
 
     if ($isEdit) {
@@ -519,7 +583,7 @@ function tdc_save_inventory_item(PDO $pdo, array $input, bool $isEdit, string $e
         $stmt = $pdo->prepare(
             'UPDATE Inventory SET Category = :Category, ItemName = :ItemName,
                 QuantityInStock = :QuantityInStock, SalesUnit = :SalesUnit,
-                SellingPrice = :SellingPrice, ReorderLevel = :ReorderLevel, ExpiryDate = :ExpiryDate
+                SellingPrice = :SellingPrice, ReorderLevel = :ReorderLevel, ExpiryDate = :ExpiryDate, DefaultPurchaseUnit = :DefaultPurchaseUnit, UnitsPerPackage = :UnitsPerPackage
              WHERE ItemID = :id'
         );
         $stmt->execute($params);
@@ -528,8 +592,8 @@ function tdc_save_inventory_item(PDO $pdo, array $input, bool $isEdit, string $e
 
     $params['ItemID'] = tdc_next_ref($pdo, 'Inventory', 'ItemID', 'ITM');
     $stmt = $pdo->prepare(
-        'INSERT INTO Inventory (ItemID, Category, ItemName, QuantityInStock, SalesUnit, SellingPrice, ReorderLevel, ExpiryDate)
-         VALUES (:ItemID, :Category, :ItemName, :QuantityInStock, :SalesUnit, :SellingPrice, :ReorderLevel, :ExpiryDate)'
+        'INSERT INTO Inventory (ItemID, Category, ItemName, QuantityInStock, SalesUnit, SellingPrice, ReorderLevel, ExpiryDate, DefaultPurchaseUnit, UnitsPerPackage)
+         VALUES (:ItemID, :Category, :ItemName, :QuantityInStock, :SalesUnit, :SellingPrice, :ReorderLevel, :ExpiryDate, :DefaultPurchaseUnit, :UnitsPerPackage)'
     );
     $stmt->execute($params);
 }
@@ -563,9 +627,18 @@ function tdc_delete_inventory_item(PDO $pdo, string $id): array
  */
 function tdc_upsert_inventory_from_purchase(PDO $pdo, array $line, int $supplierId): void
 {
-    $stmt = $pdo->prepare('SELECT ItemID FROM Inventory WHERE LOWER(TRIM(ItemName)) = LOWER(TRIM(:name)) LIMIT 1');
-    $stmt->execute(['name' => $line['ItemName']]);
-    $existingId = $stmt->fetchColumn();
+    $existingId = false;
+    $lineItemId = trim((string) ($line['ItemID'] ?? ''));
+    if ($lineItemId !== '') {
+        $byId = $pdo->prepare('SELECT ItemID FROM Inventory WHERE ItemID = :id LIMIT 1');
+        $byId->execute(['id' => $lineItemId]);
+        $existingId = $byId->fetchColumn();
+    }
+    if ($existingId === false) {
+        $stmt = $pdo->prepare('SELECT ItemID FROM Inventory WHERE LOWER(TRIM(ItemName)) = LOWER(TRIM(:name)) LIMIT 1');
+        $stmt->execute(['name' => $line['ItemName']]);
+        $existingId = $stmt->fetchColumn();
+    }
 
     $addQty = (int) round($line['Quantity'] * $line['ConversionFactor']);
 
@@ -626,6 +699,7 @@ function tdc_save_purchase(PDO $pdo, array $input): string
         $totalAmount += $lineTotal;
 
         $lines[] = [
+            'ItemID'           => trim((string) ($input['ItemID'][$i] ?? '')),
             'ItemName'         => $name,
             'Category'         => trim((string) ($input['Category'][$i] ?? '')),
             'PurchaseUnit'     => trim((string) ($input['PurchaseUnit'][$i] ?? '')),
@@ -926,13 +1000,14 @@ $oldSale = [
 $oldPurchase = [
     'SupplierName' => '', 'SupplierPhone' => '', 'AmountPaid' => '', 'PurchaseDate' => date('Y-m-d'),
     'ReferenceNumber' => '', 'Discount' => '', 'VATAmount' => '',
-    'ItemName' => [], 'Category' => [], 'PurchaseUnit' => [], 'ConversionFactor' => [],
+    'ItemID' => [], 'ItemName' => [], 'Category' => [], 'PurchaseUnit' => [], 'ConversionFactor' => [],
     'SalesUnit' => [], 'Quantity' => [], 'UnitPrice' => [], 'SellingPrice' => [], 'ExpiryDate' => [],
 ];
 
 $oldInventory = [
     'ItemID' => '', 'ItemName' => '', 'Category' => '', 'QuantityInStock' => '',
     'SalesUnit' => '', 'SellingPrice' => '', 'ReorderLevel' => '10', 'ExpiryDate' => '',
+    'DefaultPurchaseUnit' => '', 'UnitsPerPackage' => '',
 ];
 
 $posShowForm      = false;
@@ -1051,6 +1126,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($section, ALLOWED_SECTIONS
                 $oldPurchase['ReferenceNumber']  = trim((string) ($_POST['ReferenceNumber'] ?? ''));
                 $oldPurchase['Discount']         = trim((string) ($_POST['Discount'] ?? ''));
                 $oldPurchase['VATAmount']        = trim((string) ($_POST['VATAmount'] ?? ''));
+                $oldPurchase['ItemID']           = $_POST['ItemID'] ?? [];
                 $oldPurchase['ItemName']         = $_POST['ItemName'] ?? [];
                 $oldPurchase['Category']         = $_POST['Category'] ?? [];
                 $oldPurchase['PurchaseUnit']     = $_POST['PurchaseUnit'] ?? [];
@@ -1061,6 +1137,35 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($section, ALLOWED_SECTIONS
                 $oldPurchase['SellingPrice']     = $_POST['SellingPrice'] ?? [];
                 $oldPurchase['ExpiryDate']       = $_POST['ExpiryDate'] ?? [];
 
+                // A purchase replenishes existing stock: every line must reference a real inventory medicine.
+                $purchaseIdMap = [];
+                $purchaseIds   = array_values(array_filter(array_map('strval', $oldPurchase['ItemID']), static fn ($v) => trim($v) !== ''));
+                if ($purchaseIds) {
+                    $place  = implode(',', array_fill(0, count($purchaseIds), '?'));
+                    $lookup = $pdo->prepare("SELECT ItemID, ItemName, Category, SalesUnit FROM Inventory WHERE ItemID IN ($place)");
+                    $lookup->execute($purchaseIds);
+                    foreach ($lookup->fetchAll() as $inventoryRow) {
+                        $purchaseIdMap[(string) $inventoryRow['ItemID']] = $inventoryRow;
+                    }
+                }
+                foreach ($oldPurchase['ItemName'] as $i => $itemName) {
+                    if (trim((string) $itemName) === '') {
+                        continue;
+                    }
+                    $lineItemId = trim((string) ($oldPurchase['ItemID'][$i] ?? ''));
+                    if ($lineItemId === '' || !isset($purchaseIdMap[$lineItemId])) {
+                        $errors[] = 'Line ' . ($i + 1) . ': select an existing medicine from the inventory list.';
+                        continue;
+                    }
+                    $oldPurchase['ItemName'][$i] = (string) $purchaseIdMap[$lineItemId]['ItemName'];
+                    if (trim((string) ($oldPurchase['Category'][$i] ?? '')) === '') {
+                        $oldPurchase['Category'][$i] = (string) ($purchaseIdMap[$lineItemId]['Category'] ?? '');
+                    }
+                    if (trim((string) ($oldPurchase['SalesUnit'][$i] ?? '')) === '') {
+                        $oldPurchase['SalesUnit'][$i] = (string) ($purchaseIdMap[$lineItemId]['SalesUnit'] ?? '');
+                    }
+                }
+
                 // Reuse catalog units and the latest received pack configuration.
                 foreach ($oldPurchase['ItemName'] as $i => $itemName) {
                     $unitStmt = $pdo->prepare('SELECT i.SalesUnit,i.Category,p.PurchaseUnit,p.ConversionFactor FROM Inventory i LEFT JOIN Purchases p ON p.PurchaseID=(SELECT p2.PurchaseID FROM Purchases p2 WHERE LOWER(TRIM(p2.ItemName))=LOWER(TRIM(i.ItemName)) ORDER BY p2.PurchaseDate DESC,p2.PurchaseID DESC LIMIT 1) WHERE LOWER(TRIM(i.ItemName))=LOWER(TRIM(?)) LIMIT 1');
@@ -1070,7 +1175,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($section, ALLOWED_SECTIONS
                         if (trim((string)($oldPurchase[$field][$i] ?? '')) === '') $oldPurchase[$field][$i] = (string)($unitDefaults[$field] ?? ($field === 'ConversionFactor' ? '1' : ''));
                     }
                 }
-                $errors            = tdc_validate_purchase_form($oldPurchase);
+                $errors            = array_merge($errors, tdc_validate_purchase_form($oldPurchase));
                 $purchaseShowForm  = true;
 
                 if (empty($errors)) {
@@ -1103,6 +1208,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($section, ALLOWED_SECTIONS
                 $oldInventory['SellingPrice']    = trim((string) ($_POST['SellingPrice'] ?? ''));
                 $oldInventory['ReorderLevel']    = trim((string) ($_POST['ReorderLevel'] ?? ''));
                 $oldInventory['ExpiryDate']      = trim((string) ($_POST['ExpiryDate'] ?? ''));
+                $oldInventory['DefaultPurchaseUnit'] = trim((string) ($_POST['DefaultPurchaseUnit'] ?? ''));
+                $oldInventory['UnitsPerPackage']     = trim((string) ($_POST['UnitsPerPackage'] ?? ''));
 
                 $isEdit = $oldInventory['ItemID'] !== '';
                 $errors = tdc_validate_inventory_form($oldInventory);
@@ -1187,7 +1294,11 @@ $viewPORef            = '';
 $viewPOLines          = [];
 
 if ($section === 'purchases') {
-    $purchaseUnitOptions = $pdo->query('SELECT i.ItemName,i.Category,i.SalesUnit,i.SellingPrice,p.PurchaseUnit,COALESCE(p.ConversionFactor,1) AS ConversionFactor FROM Inventory i LEFT JOIN Purchases p ON p.PurchaseID=(SELECT p2.PurchaseID FROM Purchases p2 WHERE LOWER(TRIM(p2.ItemName))=LOWER(TRIM(i.ItemName)) ORDER BY p2.PurchaseDate DESC,p2.PurchaseID DESC LIMIT 1) ORDER BY i.ItemName')->fetchAll();
+    $purchaseUnitOptions = $pdo->query('SELECT ItemID, ItemName, Category, SalesUnit, SellingPrice, QuantityInStock, DefaultPurchaseUnit, UnitsPerPackage FROM Inventory ORDER BY ItemName')->fetchAll();
+    foreach ($purchaseUnitOptions as $key => $row) {
+        $purchaseUnitOptions[$key]['SalesUnit']          = tdc_norm_unit($row['SalesUnit'] ?? null);
+        $purchaseUnitOptions[$key]['DefaultPurchaseUnit'] = tdc_norm_unit($row['DefaultPurchaseUnit'] ?? null);
+    }
     $itemNamesForDatalist = $pdo->query('SELECT DISTINCT ItemName FROM Inventory ORDER BY ItemName ASC LIMIT 500')
         ->fetchAll(PDO::FETCH_COLUMN);
 
@@ -1322,6 +1433,9 @@ if ($section === 'inventory') {
     $stmt = $pdo->prepare("SELECT * FROM Inventory {$where} ORDER BY ItemName ASC LIMIT 500");
     $stmt->execute($params);
     $inventoryItems = $stmt->fetchAll();
+    foreach ($inventoryItems as $key => $item) {
+        $inventoryItems[$key]['SalesUnit'] = tdc_norm_unit($item['SalesUnit'] ?? null);
+    }
 }
 
 // --- 10D. Hub summary (only computed on the landing page) -----------------
@@ -1331,9 +1445,9 @@ $hubOpenPOCount   = 0;
 
 if ($section === null) {
     $hubTodaySales    = (int) tdc_scalar($pdo, "SELECT COUNT(DISTINCT SUBSTRING_INDEX(SaleID, '-', 1)) FROM PharmacySales WHERE DATE(SaleDate) = CURDATE()");
-    if (in_array($_SESSION['role'], ALLOWED_PHARMACY_ROLES, true)) {
+    if (tdc_can('pharmacy.inventory.view')) {
         $hubLowStockCount = (int) tdc_scalar($pdo, 'SELECT COUNT(*) FROM Inventory WHERE QuantityInStock <= ReorderLevel');
-        $hubOpenPOCount = (int) tdc_scalar($pdo, "SELECT COUNT(DISTINCT SUBSTRING_INDEX(PurchaseID, '-', 1)) FROM Purchases WHERE DueBalance > 0");
+        $hubOpenPOCount = $canViewPurchaseCost ? (int) tdc_scalar($pdo, "SELECT COUNT(DISTINCT SUBSTRING_INDEX(PurchaseID, '-', 1)) FROM Purchases WHERE DueBalance > 0") : 0;
     }
 }
 
@@ -1416,21 +1530,19 @@ $justVoided  = isset($_GET['voided']);
     .error-msg ul{ list-style:none; padding-left:24px; }
     .error-msg li::before{ content:"— "; }
 
-    .form-group{ display:flex; flex-direction:column; }
-    .form-group label{ font-size:11px; font-weight:600; letter-spacing:0.06em; text-transform:uppercase; color:var(--navy); margin-bottom:6px; }
-    .form-group input, .form-group select, .form-group textarea{ width:100%; padding:11px 12px; border:2px solid rgba(46,49,146,0.3); font-size:14px; font-family:'Google Sans', sans-serif; color:var(--navy); background:var(--white); outline:none; transition:border-color 0.15s; }
-    .form-group input::placeholder{ color:rgba(46,49,146,0.45); }
-    .form-group input:focus, .form-group select:focus, .form-group textarea:focus{ border-color:var(--orange); }
-    .form-group select{ cursor:pointer; }
+
+
+
+
+
     .form-row{ display:flex; gap:16px; flex-wrap:wrap; }
     .form-row .form-group{ flex:1; min-width:180px; }
     .checkbox-row{ display:flex; align-items:center; gap:8px; }
     .checkbox-row input{ width:auto; }
-    .btn{ padding:11px 22px; font-size:14px; font-weight:600; border:2px solid var(--navy); cursor:pointer; letter-spacing:0.02em; transition:background 0.12s, color 0.12s, border-color 0.12s; text-decoration:none; display:inline-flex; align-items:center; gap:6px; }
-    .btn-primary{ background:var(--navy); color:var(--white); }
-    .btn-primary:hover{ background:var(--orange); border-color:var(--orange); }
-    .btn-secondary{ background:var(--white); color:var(--navy); }
-    .btn-secondary:hover{ color:var(--orange); border-color:var(--orange); }
+
+
+
+
 
     .setup-grid{ display:grid; grid-template-columns:repeat(3, minmax(220px,1fr)); gap:20px; max-width:920px; }
     .setup-card{ display:flex; align-items:flex-start; gap:14px; padding:20px; border:2px solid var(--navy); text-decoration:none; color:var(--navy); transition:background 0.12s, border-color 0.12s; }
@@ -1449,12 +1561,11 @@ $justVoided  = isset($_GET['voided']);
     .filter-box input:focus{ outline:none; border-color:var(--orange); }
     .filter-box label{ font-size:12.5px; font-weight:600; color:var(--navy-55); display:flex; align-items:center; gap:6px; white-space:nowrap; }
 
-    .data-table-wrap{ max-width:1200px; border:2px solid var(--navy); overflow-x:auto; }
-    .data-table{ width:100%; border-collapse:collapse; }
-    .data-table th, .data-table td{ padding:12px 14px; font-size:13px; text-align:left; border-bottom:1px solid var(--navy-30); white-space:nowrap; }
-    .data-table th{ background:var(--navy-10); font-weight:700; text-transform:uppercase; font-size:11px; letter-spacing:.05em; color:var(--navy); }
-    .data-table tbody tr:last-child td{ border-bottom:none; }
-    .data-table tbody tr:hover{ background:var(--navy-10); }
+
+
+
+
+
     .empty-row td{ text-align:center; padding:28px; color:var(--navy-55); }
 
     .status-badge{ display:inline-block; padding:3px 9px; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.03em; border:1.5px solid var(--navy); color:var(--navy); white-space:nowrap; }
@@ -1463,10 +1574,9 @@ $justVoided  = isset($_GET['voided']);
 
     .row-actions{ display:flex; gap:8px; flex-wrap:wrap; }
     .row-actions form{ display:inline; }
-    .btn-sm{ padding:6px 12px; font-size:12px; font-weight:600; border:2px solid var(--navy); cursor:pointer; background:var(--white); color:var(--navy); text-decoration:none; display:inline-flex; align-items:center; }
-    .btn-sm:hover{ background:var(--orange); border-color:var(--orange); color:var(--white); }
-    .btn-sm.danger{ border-color:#c0392b; color:#c0392b; }
-    .btn-sm.danger:hover{ background:#c0392b; border-color:#c0392b; color:var(--white); }
+
+
+
 
     .combo{ position:relative; }
     .combo-list{ position:absolute; top:calc(100% + 4px); left:0; right:0; max-height:220px; overflow-y:auto; background:var(--white); border:2px solid var(--navy); list-style:none; z-index:50; }
@@ -1474,15 +1584,20 @@ $justVoided  = isset($_GET['voided']);
     .combo-list li:hover, .combo-list li.active{ background:var(--navy-10); color:var(--orange); }
     .combo-empty{ padding:9px 12px; font-size:12.5px; color:var(--navy-55); }
 
-    .line-items-wrap{ max-width:1200px; border:2px solid var(--navy); overflow-x:auto; margin-bottom:16px; }
+    .line-items-wrap{ max-width:1200px; border:2px solid var(--navy); overflow-x:auto; margin-bottom:12px; }
     .line-items{ width:100%; border-collapse:collapse; min-width:960px; }
     .line-items th, .line-items td{ padding:8px 10px; border-bottom:1px solid var(--navy-30); vertical-align:top; }
     .line-items th{ background:var(--navy-10); font-size:11px; text-transform:uppercase; letter-spacing:.04em; text-align:left; }
     .line-items input{ width:100%; padding:7px 8px; border:1.5px solid rgba(46,49,146,0.3); font-size:13px; font-family:'Google Sans',sans-serif; color:var(--navy); }
     .line-items input:focus{ outline:none; border-color:var(--orange); }
     .remove-line-btn{ background:none; border:none; color:#c0392b; cursor:pointer; font-size:20px; line-height:1; padding:4px; }
-    .add-line-btn{ margin-bottom:20px; }
-    .totals-row{ display:flex; gap:20px; flex-wrap:wrap; max-width:1200px; margin-bottom:20px; }
+    .purchase-qty-hint, .purchase-cost-hint, .purchase-selling-hint{ display:block; margin-top:4px; font-size:11.5px; color:var(--navy-55); }
+    .col-medicine{ min-width:220px; width:26%; }
+    .col-actions{ width:56px; min-width:56px; text-align:center; }
+    .purchase-pkg-unavailable{ display:block; margin-top:6px; font-size:11.5px; color:var(--navy-55); }
+    .purchase-pack-hint{ margin-top:6px; font-size:12px; color:var(--navy-55); }
+    .add-line-btn{ margin-bottom:8px; }
+    .totals-row{ display:flex; gap:20px; flex-wrap:wrap; max-width:1200px; margin-bottom:12px; }
     .totals-row .form-group{ min-width:180px; flex:0 1 200px; }
     .due-display{ font-weight:700; font-size:15px; color:var(--navy); padding:11px 0; }
     .form-actions{ display:flex; gap:10px; max-width:1200px; }
@@ -1540,7 +1655,7 @@ $justVoided  = isset($_GET['voided']);
             <?php foreach (tdc_navigation(NAV_ITEMS) as $item): ?>
                 <li class="nav-item<?= $item['href'] === $currentPage ? ' active' : '' ?>">
                     <a href="<?= tdc_e($item['href']) ?>" class="nav-link">
-                        <svg viewBox="0 0 20 20"><?= $item['icon'] ?></svg>
+                        <?= tdc_navigation_icon($item['href']) ?>
                         <span><?= tdc_e($item['label']) ?></span>
                     </a>
                 </li>
@@ -1582,7 +1697,7 @@ $justVoided  = isset($_GET['voided']);
             <div class="setup-icon"><svg viewBox="0 0 24 24"><path d="M20 7h-3V6a4 4 0 00-8 0v1H6a1 1 0 00-1 1v11a2 2 0 002 2h10a2 2 0 002-2V8a1 1 0 00-1-1zM9 6a3 3 0 016 0v1H9V6z"/></svg></div>
             <div>
                 <div class="setup-card-title">Purchases</div>
-                <div class="setup-card-desc"><?= $hubOpenPOCount ?> order<?= $hubOpenPOCount === 1 ? '' : 's' ?> with a balance due</div>
+                <div class="setup-card-desc"><?php if ($canViewPurchaseCost): ?><?= $hubOpenPOCount ?> order<?= $hubOpenPOCount === 1 ? '' : 's' ?> with a balance due<?php else: ?>Received medicines and supplier references<?php endif; ?></div>
             </div>
         </a>
         <?php endif; ?><?php if (tdc_can('pharmacy.inventory.view')): ?><a href="pharmacy.php?section=inventory" class="setup-card">
@@ -1616,7 +1731,7 @@ $justVoided  = isset($_GET['voided']);
           // ============================================================ ?>
     <?php if ($section === 'prescriptions'): ?>
         <div class="welcome-title">Pending Prescriptions</div><div class="welcome-sub">Dispense doctor orders directly from available inventory.</div>
-        <div class="data-table-wrap" style="margin-top:24px"><table class="data-table"><thead><tr><th>Prescription</th><th>Patient</th><th>Doctor</th><th>Items</th><th>Created</th><th>Dispense</th></tr></thead><tbody><?php if(!$pendingPrescriptions): ?><tr class="empty-row"><td colspan="6">No pending prescriptions.</td></tr><?php else:foreach($pendingPrescriptions as $rx): ?><tr><td><?= tdc_e($rx['PrescriptionReference']) ?></td><td><?= tdc_e($rx['PatientName']) ?><br><span class="cell-sub"><?= tdc_e($rx['PatientPhone']) ?></span></td><td><?= tdc_e($rx['DoctorName']) ?></td><td><?= (int)$rx['ItemCount'] ?></td><td><?= tdc_e(date('d M Y H:i',strtotime($rx['PrescriptionDate']))) ?></td><td><form method="post" class="row-actions"><input type="hidden" name="csrf_token" value="<?= tdc_e($csrfToken) ?>"><input type="hidden" name="form_action" value="dispense"><input type="hidden" name="PrescriptionReference" value="<?= tdc_e($rx['PrescriptionReference']) ?>"><input class="compact-input" type="number" min="0" step=".01" name="AmountPaid" placeholder="Amount paid" required><select class="compact-input" name="PaymentMethod"><?php foreach($paymentMethods as $method):?><option><?=tdc_e($method['MethodName'])?></option><?php endforeach;?></select><button class="btn-sm">Dispense</button></form></td></tr><?php endforeach;endif; ?></tbody></table></div>
+        <div class="data-table-wrap" style="margin-top:24px"><table class="data-table"><thead><tr><th>Prescription</th><th>Patient</th><th>Doctor</th><th>Items</th><th>Created</th><th>Dispense</th></tr></thead><tbody><?php if(!$pendingPrescriptions): ?><tr class="empty-row"><td colspan="6">No pending prescriptions.</td></tr><?php else:foreach($pendingPrescriptions as $rx): ?><tr><td><?= tdc_e($rx['PrescriptionReference']) ?></td><td><?= tdc_e($rx['PatientName']) ?><br><span class="cell-sub"><?= tdc_e($rx['PatientPhone']) ?></span></td><td><?= tdc_e($rx['DoctorName']) ?></td><td><?= (int)$rx['ItemCount'] ?></td><td><?= tdc_e(date('d M Y H:i',strtotime($rx['PrescriptionDate']))) ?></td><td><form method="post" class="row-actions"><input type="hidden" name="csrf_token" value="<?= tdc_e($csrfToken) ?>"><input type="hidden" name="form_action" value="dispense"><input type="hidden" name="PrescriptionReference" value="<?= tdc_e($rx['PrescriptionReference']) ?>"><input class="compact-input" type="number" min="0" step=".01" name="AmountPaid" placeholder="Amount paid" required><select class="compact-input" name="PaymentMethod"><?php foreach($paymentMethods as $method):?><option><?=tdc_e($method['MethodName'])?></option><?php endforeach;?></select><button class="btn-success btn-sm">Dispense</button></form></td></tr><?php endforeach;endif; ?></tbody></table></div>
 
     <?php elseif ($section === 'pos'): ?>
 
@@ -1652,12 +1767,12 @@ $justVoided  = isset($_GET['voided']);
         </div>
 
         <div class="row-actions no-print">
-            <button type="button" class="btn btn-secondary" onclick="window.print()">Print Receipt</button>
-            <form method="POST" action="pharmacy.php?section=pos" onsubmit="return confirm('Void this sale? Stock will be restored. This cannot be undone.');">
+            <button type="button" class="btn-info  btn " onclick="window.print()"><?= tdc_icon('printer',16) ?><span>Print Receipt</span></button>
+            <form method="POST" action="pharmacy.php?section=pos" data-confirm="Void this sale? Stock will be restored. This cannot be undone.">
                 <input type="hidden" name="csrf_token" value="<?= tdc_e($csrfToken) ?>">
                 <input type="hidden" name="form_action" value="void">
                 <input type="hidden" name="SaleRef" value="<?= tdc_e($viewSaleRef) ?>">
-                <button type="submit" class="btn-sm danger">Void Sale</button>
+                <button type="submit" class="btn-danger btn-sm danger">Void Sale</button>
             </form>
         </div>
 
@@ -1711,7 +1826,7 @@ $justVoided  = isset($_GET['voided']);
                     </tbody>
                 </table>
             </div>
-            <button type="button" class="btn btn-secondary add-line-btn" id="addLineBtn">+ Add Item</button>
+            <button type="button" class="btn-success btn add-line-btn" id="addLineBtn"><?= tdc_icon('plus',16) ?><span>Add Item</span></button>
 
             <div class="totals-row">
                 <div class="form-group"><label>Total</label><div class="due-display" id="sf_TotalDisplay">0.00</div></div>
@@ -1722,7 +1837,7 @@ $justVoided  = isset($_GET['voided']);
 
             <div class="form-actions">
                 <a href="pharmacy.php?section=pos" class="btn btn-secondary">Cancel</a>
-                <button type="submit" class="btn btn-primary">Complete Sale</button>
+                <button type="submit" class="btn-success btn ">Complete Sale</button>
             </div>
         </form>
 
@@ -1735,9 +1850,9 @@ $justVoided  = isset($_GET['voided']);
             <form method="GET" action="pharmacy.php" class="filter-box">
                 <input type="hidden" name="section" value="pos">
                 <input type="text" name="q" placeholder="Search by customer or ref..." value="<?= tdc_e($saleSearch) ?>">
-                <button type="submit" class="btn btn-secondary">Search</button>
+                <button type="submit" class="btn-primary btn "><?= tdc_icon('search',16) ?><span>Search</span></button>
             </form>
-            <a href="pharmacy.php?section=pos&new=1" class="btn btn-primary">+ New Sale</a>
+            <a href="pharmacy.php?section=pos&new=1" class="btn-success btn ">+ New Sale</a>
         </div>
 
         <div class="data-table-wrap">
@@ -1759,11 +1874,11 @@ $justVoided  = isset($_GET['voided']);
                         <td>
                             <div class="row-actions">
                                 <a href="pharmacy.php?section=pos&view=<?= urlencode($s['SaleRef']) ?>" class="btn-sm">View</a>
-                                <form method="POST" action="pharmacy.php?section=pos" onsubmit="return confirm('Void this sale? Stock will be restored. This cannot be undone.');">
+                                <form method="POST" action="pharmacy.php?section=pos" data-confirm="Void this sale? Stock will be restored. This cannot be undone.">
                                     <input type="hidden" name="csrf_token" value="<?= tdc_e($csrfToken) ?>">
                                     <input type="hidden" name="form_action" value="void">
                                     <input type="hidden" name="SaleRef" value="<?= tdc_e($s['SaleRef']) ?>">
-                                    <button type="submit" class="btn-sm danger">Void</button>
+                                    <button type="submit" class="btn-danger btn-sm danger">Void</button>
                                 </form>
                             </div>
                         </td>
@@ -1817,26 +1932,26 @@ $justVoided  = isset($_GET['voided']);
         </div>
 
         <div class="row-actions no-print">
-            <button type="button" class="btn btn-secondary" onclick="window.print()">Print</button>
-            <?php if ($canViewPurchaseCost): ?><form method="POST" action="pharmacy.php?section=purchases" onsubmit="return confirm('Void this purchase order? Stock added by it will be reversed. This cannot be undone.');">
+            <button type="button" class="btn-info  btn " onclick="window.print()"><?= tdc_icon('printer',16) ?><span>Print</span></button>
+            <?php if ($canViewPurchaseCost): ?><form method="POST" action="pharmacy.php?section=purchases" data-confirm="Void this purchase order? Stock added by it will be reversed. This cannot be undone.">
                 <input type="hidden" name="csrf_token" value="<?= tdc_e($csrfToken) ?>">
                 <input type="hidden" name="form_action" value="void">
                 <input type="hidden" name="PORef" value="<?= tdc_e($viewPORef) ?>">
-                <button type="submit" class="btn-sm danger">Void Purchase Order</button>
+                <button type="submit" class="btn-danger btn-sm danger">Void Purchase Order</button>
             </form><?php endif; ?>
         </div>
 
         <?php elseif ($purchaseShowForm): ?>
 
         <a href="pharmacy.php?section=purchases" class="btn btn-secondary">Back to purchases</a>
-        <button type="button" class="btn btn-primary" id="openPurchaseModal">+ New Purchase</button>
-        <div class="modal-overlay" id="purchaseModal"><div class="modal-box purchase-modal" aria-labelledby="purchaseTitle">
+        <button type="button" class="btn-success btn " id="openPurchaseModal">+ New Purchase</button>
+        <div class="modal-overlay" id="purchaseModal"><div class="modal-box modal-wide purchase-modal" aria-labelledby="purchaseTitle">
         <div class="modal-head"><h3 id="purchaseTitle">New Purchase</h3><button type="button" class="modal-close" data-close-purchase aria-label="Close">&times;</button></div><div class="modal-body">
         <?php if ($errors): ?><div class="error-msg" role="alert"><?= tdc_e(implode(' ', $errors)) ?></div><?php endif; ?>
         <div class="welcome-sub">Receiving stock from a supplier updates Inventory automatically.</div>
 
-        <datalist id="existingItemNames">
-            <?php foreach ($itemNamesForDatalist as $name): ?><option value="<?= tdc_e($name) ?>"><?php endforeach; ?>
+        <datalist id="purchasePackUnits">
+            <?php foreach (['Box', 'Pack', 'Carton', 'Strip', 'Bottle', 'Vial', 'Tube', 'Sachet', 'Roll', 'Bundle'] as $packUnitOption): ?><option value="<?= tdc_e($packUnitOption) ?>"><?php endforeach; ?>
         </datalist>
 
         <form id="purchaseForm" method="POST" action="pharmacy.php?section=purchases">
@@ -1856,43 +1971,106 @@ $justVoided  = isset($_GET['voided']);
 
             <div class="line-items-wrap">
                 <table class="line-items" id="lineItemsTable">
-                    <thead><tr><th style="width:40px;">#</th><th>Medicine *</th><th style="width:80px;">Quantity *</th><th>Unit settings</th><th style="width:100px;">Purchase Price *</th><th style="width:100px;">Selling Price *</th><th style="width:130px;">Expiry</th><th>Amount</th><th style="width:36px;">Actions</th></tr></thead>
+<thead><tr><th class="col-medicine">Medicine *</th><th class="col-expiry">Expiry</th><th class="col-qty">Quantity *</th><th class="col-cost">Purchase Price *</th><th class="col-price">Selling Price *</th><th class="col-amount">Amount</th><th class="col-actions">Actions</th></tr></thead>
                     <tbody id="lineItemsBody">
                     <?php
                     $poLineCount = max(1, count($oldPurchase['ItemName']));
                     for ($i = 0; $i < $poLineCount; $i++):
                     ?>
                         <tr class="line-item-row">
-                            <td class="line-no"><?= $i + 1 ?></td>
-                            <td><input type="text" list="existingItemNames" required name="ItemName[]" value="<?= tdc_e($oldPurchase['ItemName'][$i] ?? '') ?>" placeholder="e.g. Paracetamol 500mg"></td>
-                            <td><input type="number" min="1" required name="Quantity[]" value="<?= tdc_e($oldPurchase['Quantity'][$i] ?? '') ?>"></td>
-                            <td><details><summary>Advanced</summary><label>Category</label><input type="text" name="Category[]" value="<?= tdc_e($oldPurchase['Category'][$i] ?? '') ?>" placeholder="e.g. Analgesic"><label>Purchase unit</label><input type="text" name="PurchaseUnit[]" value="<?= tdc_e($oldPurchase['PurchaseUnit'][$i] ?? '') ?>" placeholder="e.g. Box"><label>Conversion</label><input type="number" step="0.01" min="0.01" name="ConversionFactor[]" value="<?= tdc_e($oldPurchase['ConversionFactor'][$i] ?? '') ?>"><label>Sales unit</label><input type="text" name="SalesUnit[]" value="<?= tdc_e($oldPurchase['SalesUnit'][$i] ?? '') ?>" placeholder="e.g. Tablet"></details></td>
-                            <td><input type="number" step="0.01" min="0" required name="UnitPrice[]" value="<?= tdc_e($oldPurchase['UnitPrice'][$i] ?? '') ?>"></td>
-                            <td><input type="number" step="0.01" min="0" required name="SellingPrice[]" value="<?= tdc_e($oldPurchase['SellingPrice'][$i] ?? '') ?>"></td>
-                            <td><input type="date" name="ExpiryDate[]" value="<?= tdc_e($oldPurchase['ExpiryDate'][$i] ?? '') ?>"></td>
-                            <td class="purchase-line-amount">0.00</td><td><button type="button" class="remove-line-btn" title="Remove item" aria-label="Remove item">&times;</button></td>
+                            <td class="medicine-cell">
+                                <div class="combo">
+                                    <input type="hidden" name="ItemID[]" class="purchase-item-id" value="<?= tdc_e((string) ($oldPurchase['ItemID'][$i] ?? '')) ?>">
+                                    <input type="hidden" name="ItemName[]" class="purchase-item-name" value="<?= tdc_e($oldPurchase['ItemName'][$i] ?? '') ?>">
+                                    <input type="hidden" name="Category[]" class="purchase-item-category" value="<?= tdc_e($oldPurchase['Category'][$i] ?? '') ?>">
+                                    <input type="hidden" name="SalesUnit[]" class="purchase-item-salesunit" value="<?= tdc_e($oldPurchase['SalesUnit'][$i] ?? '') ?>">
+                                    <input type="text" class="combo-input purchase-item-search" placeholder="Search medicine..." autocomplete="off" required value="<?= tdc_e($oldPurchase['ItemName'][$i] ?? '') ?>" aria-label="Medicine">
+                                    <ul class="combo-list purchase-combo-list" hidden></ul>
+                                </div>
+                                <div class="purchase-item-meta"><?php $metaCat = (string) ($oldPurchase['Category'][$i] ?? ''); $metaUnit = (string) ($oldPurchase['SalesUnit'][$i] ?? ''); ?><?php if ($metaCat !== ''): ?><span><?= tdc_e($metaCat) ?></span><?php endif; ?><?php if ($metaCat !== '' && $metaUnit !== ''): ?><span class="purchase-meta-sep">&bull;</span><?php endif; ?><?php if ($metaUnit !== ''): ?><span><?= tdc_e($metaUnit) ?></span><?php endif; ?></div>
+                            </td>
+                            <td><input type="date" name="ExpiryDate[]" value="<?= tdc_e($oldPurchase['ExpiryDate'][$i] ?? '') ?>" aria-label="Expiry"></td>
+                            <td><input type="number" min="1" required name="Quantity[]" class="purchase-qty" value="<?= tdc_e($oldPurchase['Quantity'][$i] ?? '') ?>" aria-label="Quantity"><small class="purchase-qty-hint"></small></td>
+                            <td><input type="number" step="0.01" min="0" required name="UnitPrice[]" class="purchase-unit-price" value="<?= tdc_e($oldPurchase['UnitPrice'][$i] ?? '') ?>" aria-label="Purchase Price"><small class="purchase-cost-hint"></small></td>
+                            <td><input type="number" step="0.01" min="0" required name="SellingPrice[]" class="purchase-selling-price" value="<?= tdc_e($oldPurchase['SellingPrice'][$i] ?? '') ?>" aria-label="Selling Price"><small class="purchase-selling-hint"></small></td>
+                            <td class="purchase-line-amount">0.00</td>
+                            <td><button type="button" class="remove-line-btn" title="Remove item" aria-label="Remove item">&times;</button></td>
+                        </tr>
+                        <tr class="purchase-pkg-row">
+                            <td colspan="7">
+                                <?php
+                                $commonPacks  = ['Box', 'Pack', 'Bottle', 'Carton', 'Strip', 'Bag'];
+                                $selectedPack = tdc_norm_unit((string) ($oldPurchase['PurchaseUnit'][$i] ?? ''));
+                                $selectedSize = (string) ($oldPurchase['ConversionFactor'][$i] ?? '1');
+                                $isCustomPack = $selectedPack !== '' && !in_array($selectedPack, $commonPacks, true);
+                                $hasPack      = $selectedPack !== '' && (float) $selectedSize > 1;
+                                $sellUnitName = tdc_norm_unit((string) ($oldPurchase['SalesUnit'][$i] ?? ''), 'Unit');
+                                $sellUnitPlural = tdc_plural_unit($sellUnitName);
+                                $packValue    = $hasPack ? $selectedPack . ' (' . (int) $selectedSize . ' ' . $sellUnitPlural . ')' : '';
+                                ?>
+                                <div class="purchase-mode-row"<?= $hasPack ? '' : ' hidden' ?>>
+                                    <span class="purchase-mode-label">Purchase as</span>
+                                    <span class="purchase-mode-seg">
+                                        <label class="purchase-mode-opt purchase-mode-opt-unit<?= $hasPack ? '' : ' is-active' ?>">
+                                            <input type="radio" class="purchase-mode-radio purchase-mode-unit" value="unit"<?= $hasPack ? '' : ' checked' ?>>
+                                            <span class="purchase-mode-unit-label">Individual <?= tdc_e(strtolower($sellUnitPlural)) ?></span>
+                                        </label>
+                                        <label class="purchase-mode-opt purchase-mode-opt-package<?= $hasPack ? ' is-active' : ' is-disabled' ?>"<?= $hasPack ? '' : ' hidden' ?>>
+                                            <input type="radio" class="purchase-mode-radio purchase-mode-package" value="package"<?= $hasPack ? ' checked' : ' disabled' ?>>
+                                            <span class="purchase-mode-pack-label"><?= $hasPack ? tdc_e($packValue) : '' ?></span>
+                                        </label>
+                                    </span>
+                                    <span class="purchase-pkg-value"></span>
+                                </div>
+                                <div class="purchase-pkg-unavailable"<?= $hasPack ? ' hidden' : '' ?>>No package configured</div>
+                                <div class="purchase-pkg-editor" hidden>
+                                    <label class="purchase-pkg-field">Package
+                                        <select class="purchase-pack-unit-select" aria-label="Purchase package">
+                                            <option value="">Select package</option>
+                                            <?php foreach ($commonPacks as $packOption): ?>
+                                            <option value="<?= tdc_e($packOption) ?>" <?= $selectedPack === $packOption ? 'selected' : '' ?>><?= tdc_e($packOption) ?></option>
+                                            <?php endforeach; ?>
+                                            <option value="Other" <?= $isCustomPack ? 'selected' : '' ?>>Other</option>
+                                        </select>
+                                    </label>
+                                    <label class="purchase-pack-other" <?= $isCustomPack ? '' : 'hidden' ?>>Package name
+                                        <input type="text" class="purchase-pack-unit-other" placeholder="e.g. Sachet" value="<?= $isCustomPack ? tdc_e($selectedPack) : '' ?>">
+                                    </label>
+                                    <label class="purchase-pkg-field">Units per package
+                                        <input type="number" step="1" min="1" name="ConversionFactor[]" class="purchase-pack-size" value="<?= tdc_e($selectedSize) ?>">
+                                    </label>
+                                    <input type="hidden" name="PurchaseUnit[]" class="purchase-pack-unit" value="<?= tdc_e($selectedPack) ?>">
+                                    <div class="purchase-pkg-editor-mode">
+                                        <span class="purchase-pkg-editor-mode-label">Inventory unit</span>
+                                        <span class="purchase-pkg-unit-name"></span>
+                                    </div>
+                                </div>
+                                <div class="purchase-pack-hint"></div>
+                            </td>
                         </tr>
                     <?php endfor; ?>
                     </tbody>
                 </table>
             </div>
-            <button type="button" class="btn btn-secondary add-line-btn" id="addLineBtn">+ Add Item</button>
+            <button type="button" class="btn-success btn add-line-btn" id="addLineBtn"><?= tdc_icon('plus',16) ?><span>Add Item</span></button>
 
             <div class="totals-row">
-                <div class="form-group"><label>Subtotal</label><div class="due-display" id="pof_SubtotalDisplay">0.00</div></div>
-                <div class="form-group"><label for="pof_Discount">Discount</label>
-                    <input type="number" step="0.01" min="0" id="pof_Discount" name="Discount" value="<?= tdc_e($oldPurchase['Discount']) ?>" placeholder="0.00"></div>
-                <div class="form-group"><label for="pof_VATAmount">VAT</label>
-                    <input type="number" step="0.01" min="0" id="pof_VATAmount" name="VATAmount" value="<?= tdc_e($oldPurchase['VATAmount']) ?>" placeholder="0.00"></div>
-                <div class="form-group"><label>Net Amount</label><div class="due-display" id="pof_NetDisplay">0.00</div></div>
-                <div class="form-group"><label for="pof_AmountPaid">Amount Paid to Supplier</label>
-                    <input type="number" step="0.01" min="0" id="pof_AmountPaid" name="AmountPaid" value="<?= tdc_e($oldPurchase['AmountPaid']) ?>"></div>
-                <div class="form-group"><label>Due to Supplier</label><div class="due-display" id="pof_DueDisplay">0.00</div></div>
+                <div class="purchase-summary">
+                    <div class="purchase-summary-row"><span>Subtotal</span><span id="pof_SubtotalDisplay">0.00</span></div>
+                    <div class="purchase-summary-row"><label for="pof_Discount">Discount</label>
+                        <input type="number" step="0.01" min="0" id="pof_Discount" name="Discount" value="<?= tdc_e($oldPurchase['Discount']) ?>" placeholder="0.00"></div>
+                    <div class="purchase-summary-row"><label for="pof_VATAmount">VAT</label>
+                        <input type="number" step="0.01" min="0" id="pof_VATAmount" name="VATAmount" value="<?= tdc_e($oldPurchase['VATAmount']) ?>" placeholder="0.00"></div>
+                    <div class="purchase-summary-row is-divider"><span>Net Amount</span><span id="pof_NetDisplay">0.00</span></div>
+                    <div class="purchase-summary-row"><label for="pof_AmountPaid">Amount Paid</label>
+                        <input type="number" step="0.01" min="0" id="pof_AmountPaid" name="AmountPaid" value="<?= tdc_e($oldPurchase['AmountPaid']) ?>"></div>
+                    <div class="purchase-summary-row is-total"><span>Due to Supplier</span><span id="pof_DueDisplay">0.00</span></div>
+                </div>
             </div>
 
-            <div class="form-actions">
+            <div class="modal-actions">
                 <button type="button" class="btn btn-secondary" data-close-purchase>Cancel</button>
-                <button type="submit" class="btn btn-primary">Save Purchase</button>
+                <button type="submit" class="btn-success  btn "><?= tdc_icon('check',16) ?><span>Save Purchase</span></button>
             </div>
         </form></div></div></div>
 
@@ -1922,11 +2100,11 @@ $justVoided  = isset($_GET['voided']);
                         <option value="due" <?= $purchaseStatus === 'due' ? 'selected' : '' ?>>Due</option>
                     </select>
                 </label><?php endif; ?>
-                <button type="submit" class="btn btn-secondary btn-sm"><?= tdc_icon('filter', 14) ?><span>Apply</span></button>
+                <button type="submit" class="btn-primary btn  btn-sm"><?= tdc_icon('filter', 14) ?><span>Apply</span></button>
             </form>
             <?= tdc_toolbar_spacer() ?>
             <?= tdc_export_buttons(['csv' => $purchaseExportUrl]) ?>
-            <?php if ($canViewPurchaseCost): ?><a href="pharmacy.php?section=purchases&new=1" class="btn btn-primary"><?= tdc_icon('plus', 15) ?><span>New Purchase</span></a><?php endif; ?>
+            <?php if ($canViewPurchaseCost): ?><a href="pharmacy.php?section=purchases&new=1" class="btn btn-success"><?= tdc_icon('plus', 15) ?><span>New Purchase</span></a><?php endif; ?>
         <?= tdc_toolbar_end() ?>
 
         <div class="data-table-wrap">
@@ -1934,7 +2112,7 @@ $justVoided  = isset($_GET['voided']);
                 <thead><tr><th>PO Ref</th><th>Supplier</th><th>Items</th><?php if ($canViewPurchaseCost): ?><th>Total</th><th>Paid</th><th>Due</th><?php endif; ?><th>Date</th><th>Actions</th></tr></thead>
                 <tbody>
                     <?php if (empty($purchaseOrders)): ?>
-                    <?= tdc_empty_state('inbox', 'No purchase orders yet', $purchaseSearch !== '' || $purchaseDateActive || $purchaseStatus !== '' ? 'No purchase orders match the current filters.' : 'Record stock received from suppliers to build your purchase history.', $canViewPurchaseCost ? '<a class="btn btn-primary" href="pharmacy.php?section=purchases&new=1">New Purchase</a>' : '', $canViewPurchaseCost ? 8 : 5) ?>
+                    <?= tdc_empty_state('inbox', 'No purchase orders yet', $purchaseSearch !== '' || $purchaseDateActive || $purchaseStatus !== '' ? 'No purchase orders match the current filters.' : 'Record stock received from suppliers to build your purchase history.', $canViewPurchaseCost ? '<a class="btn-success btn " href="pharmacy.php?section=purchases&new=1">New Purchase</a>' : '', $canViewPurchaseCost ? 8 : 5) ?>
                     <?php else: foreach ($purchaseOrders as $po): ?>
                     <tr>
                         <td><?= tdc_e($po['PORef']) ?></td>
@@ -1947,7 +2125,7 @@ $justVoided  = isset($_GET['voided']);
                         <td>
                             <div class="row-actions">
                                 <a class="icon-action waiting-open" href="pharmacy.php?section=purchases&view=<?= urlencode($po['PORef']) ?>" title="View purchase order" aria-label="View purchase order"><?= tdc_icon('eye', 15) ?></a>
-                                <?php if ($canViewPurchaseCost): ?><form method="POST" action="pharmacy.php?section=purchases" onsubmit="return confirm('Void this purchase order? Stock added by it will be reversed. This cannot be undone.');">
+                                <?php if ($canViewPurchaseCost): ?><form method="POST" action="pharmacy.php?section=purchases" data-confirm="Void this purchase order? Stock added by it will be reversed. This cannot be undone.">
                                     <input type="hidden" name="csrf_token" value="<?= tdc_e($csrfToken) ?>">
                                     <input type="hidden" name="form_action" value="void">
                                     <input type="hidden" name="PORef" value="<?= tdc_e($po['PORef']) ?>">
@@ -1978,9 +2156,9 @@ $justVoided  = isset($_GET['voided']);
                 <input type="hidden" name="section" value="inventory">
                 <input type="text" name="q" placeholder="Search by name or category..." value="<?= tdc_e($inventorySearch) ?>">
                 <label><input type="checkbox" name="low" value="1" <?= $lowStockOnly ? 'checked' : '' ?> onchange="this.form.submit()"> Low stock only</label>
-                <button type="submit" class="btn btn-secondary">Search</button>
+                <button type="submit" class="btn-primary btn "><?= tdc_icon('search',16) ?><span>Search</span></button>
             </form>
-            <button type="button" id="addItemBtn" class="btn btn-primary">+ Add Item</button>
+            <button type="button" id="addItemBtn" class="btn-success  btn "><?= tdc_icon('plus',16) ?><span>+ Add Medicine</span></button>
         </div>
 
         <div class="data-table-wrap">
@@ -2000,7 +2178,7 @@ $justVoided  = isset($_GET['voided']);
                         <td><?= tdc_e($item['Category'] ?: '—') ?></td>
                         <td><?= tdc_e($item['ItemName']) ?></td>
                         <td><?= (int) $item['QuantityInStock'] ?> <?php if ($isLow): ?><span class="status-badge danger">Low</span><?php endif; ?></td>
-                        <td><?= tdc_e($item['SalesUnit'] ?: '—') ?></td>
+                        <td><?= tdc_e(tdc_norm_unit($item['SalesUnit'] ?? null, '—')) ?></td>
                         <td><?= number_format((float) $item['SellingPrice'], 2) ?></td>
                         <td><?= (int) $item['ReorderLevel'] ?></td>
                         <td>
@@ -2010,7 +2188,7 @@ $justVoided  = isset($_GET['voided']);
                         </td>
                         <td>
                             <div class="row-actions">
-                                <button type="button" class="btn-sm edit-item-btn"
+                                <button type="button" class="btn-warning btn-sm edit-item-btn"
                                     data-id="<?= tdc_e($item['ItemID']) ?>"
                                     data-name="<?= tdc_e($item['ItemName']) ?>"
                                     data-category="<?= tdc_e((string) $item['Category']) ?>"
@@ -2018,12 +2196,14 @@ $justVoided  = isset($_GET['voided']);
                                     data-unit="<?= tdc_e((string) $item['SalesUnit']) ?>"
                                     data-price="<?= tdc_e((string) $item['SellingPrice']) ?>"
                                     data-reorder="<?= tdc_e((string) $item['ReorderLevel']) ?>"
-                                    data-expiry="<?= tdc_e((string) $item['ExpiryDate']) ?>">Edit</button>
-                                <form method="POST" action="pharmacy.php?section=inventory" onsubmit="return confirm('Delete this item? This cannot be undone.');">
+                                    data-packunit="<?= tdc_e((string) $item['DefaultPurchaseUnit']) ?>"
+                                    data-packsize="<?= tdc_e((string) $item['UnitsPerPackage']) ?>"
+                                    data-expiry="<?= tdc_e((string) $item['ExpiryDate']) ?>"><?= tdc_icon('pencil',16) ?><span>Edit</span></button>
+                                <form method="POST" action="pharmacy.php?section=inventory" data-confirm="Delete this item? This cannot be undone.">
                                     <input type="hidden" name="csrf_token" value="<?= tdc_e($csrfToken) ?>">
                                     <input type="hidden" name="form_action" value="delete">
                                     <input type="hidden" name="ItemID" value="<?= tdc_e($item['ItemID']) ?>">
-                                    <button type="submit" class="btn-sm danger">Delete</button>
+                                    <button type="submit" class="btn-danger btn-sm danger">Delete</button>
                                 </form>
                             </div>
                         </td>
@@ -2033,10 +2213,13 @@ $justVoided  = isset($_GET['voided']);
             </table>
         </div>
 
-        <div class="modal-overlay" id="itemModalOverlay">
+        <datalist id="packUnitOptions">
+            <?php foreach (['Box','Pack','Bottle','Carton','Strip','Bag','Sachet','Vial','Tube','Roll','Bundle'] as $packOpt): ?><option value="<?= tdc_e($packOpt) ?>"><?php endforeach; ?>
+        </datalist>
+        <div class="modal-overlay medicine-modal" id="itemModalOverlay">
             <div class="modal-box">
                 <div class="modal-head">
-                    <h3 id="itemModalTitle">Add Item</h3>
+                    <h3 id="itemModalTitle">Add Medicine</h3>
                     <button type="button" class="modal-close" id="itemModalCloseBtn" aria-label="Close">
                         <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"/></svg>
                     </button>
@@ -2047,33 +2230,36 @@ $justVoided  = isset($_GET['voided']);
                         <input type="hidden" name="form_action" value="save">
                         <input type="hidden" name="ItemID" id="if_ItemID" value="">
 
-                        <div class="form-group"><label for="if_ItemName">Item Name</label>
+                        <div class="form-group"><label for="if_ItemName">Medicine Name</label>
                             <input type="text" id="if_ItemName" name="ItemName" required></div>
 
                         <div class="form-row">
-                            <div class="form-group"><label for="if_Category">Category</label>
-                                <input type="text" id="if_Category" name="Category"></div>
-                            <div class="form-group"><label for="if_SalesUnit">Sales Unit</label>
-                                <input type="text" id="if_SalesUnit" name="SalesUnit" placeholder="e.g. Tablet"></div>
+                            <div class="form-group"><label for="if_Category">Category</label><input type="text" id="if_Category" name="Category"></div>
+                            <div class="form-group"><label for="if_SalesUnit">Base Unit *</label>
+                                <select id="if_SalesUnit" name="SalesUnit" required><option value="">Select unit</option>
+                                <?php foreach (['Tablet','Capsule','Bottle','Tube','Box','Sachet','Vial','Ampoule','Piece','Pack','Other'] as $unit): ?><option value="<?= tdc_e($unit) ?>"><?= tdc_e($unit) ?></option><?php endforeach; ?>
+                                </select></div>
                         </div>
-
                         <div class="form-row">
-                            <div class="form-group"><label for="if_QuantityInStock">Quantity In Stock</label>
-                                <input type="number" min="0" id="if_QuantityInStock" name="QuantityInStock" required></div>
-                            <div class="form-group"><label for="if_ReorderLevel">Reorder Level</label>
-                                <input type="number" min="0" id="if_ReorderLevel" name="ReorderLevel" value="10"></div>
+                            <div class="form-group"><label for="if_SellingPrice">Selling Price</label><input type="number" step="0.01" min="0" id="if_SellingPrice" name="SellingPrice" required aria-describedby="medicinePriceHelp"><small id="medicinePriceHelp">Price per selected unit</small></div>
+                            <div class="form-group"><label for="if_QuantityInStock" id="stockQuantityLabel">Opening Quantity</label><input type="number" min="0" step="1" id="if_QuantityInStock" name="QuantityInStock" value="0" required></div>
                         </div>
-
                         <div class="form-row">
-                            <div class="form-group"><label for="if_SellingPrice">Selling Price</label>
-                                <input type="number" step="0.01" min="0" id="if_SellingPrice" name="SellingPrice"></div>
-                            <div class="form-group"><label for="if_ExpiryDate">Expiry Date</label>
-                                <input type="date" id="if_ExpiryDate" name="ExpiryDate"></div>
+                            <div class="form-group"><label for="if_ExpiryDate">Expiry Date</label><input type="date" id="if_ExpiryDate" name="ExpiryDate"></div>
+                            <div class="form-group"><label for="if_ReorderLevel">Reorder Level</label><input type="number" min="0" step="1" id="if_ReorderLevel" name="ReorderLevel" value="10"></div>
                         </div>
-
+                        <div class="form-section-label">Purchase Packaging</div>
+                        <p class="form-hint">Optional, but requires a Base Unit first. Set this once if the medicine is normally bought in a larger pack.</p>
+                        <div class="form-row">
+                            <div class="form-group"><label for="if_DefaultPurchaseUnit">Default Purchase Package</label>
+                                <input type="text" id="if_DefaultPurchaseUnit" name="DefaultPurchaseUnit" list="packUnitOptions" placeholder="e.g. Box" disabled></div>
+                            <div class="form-group"><label for="if_UnitsPerPackage">Units per Package</label>
+                                <input type="number" min="1" step="1" id="if_UnitsPerPackage" name="UnitsPerPackage" placeholder="e.g. 100" disabled></div>
+                        </div>
+                        <p class="form-hint" id="packagingHint"></p>
                         <div class="modal-actions">
                             <button type="button" class="btn btn-secondary" id="itemModalCancelBtn">Cancel</button>
-                            <button type="submit" class="btn btn-primary">Save Item</button>
+                            <button type="submit" class="btn-success  btn "><?= tdc_icon('check',16) ?><span id="medicineSaveLabel">Save Medicine</span></button>
                         </div>
                     </div>
                 </form>
@@ -2226,7 +2412,7 @@ function initComboBox(hiddenIdInput, searchInput, listEl, options, onSelect){
     }
 
     function renumber(){
-        tbody.querySelectorAll('.line-item-row').forEach(function(row, i){ row.querySelector('.line-no').textContent = i + 1; });
+        tbody.querySelectorAll('.line-item-row').forEach(function(row, i){ const numberCell = row.querySelector('.line-no'); if (numberCell) numberCell.textContent = i + 1; });
     }
 
     function recalcAll(){
@@ -2276,7 +2462,7 @@ function initComboBox(hiddenIdInput, searchInput, listEl, options, onSelect){
     window.addEventListener('DOMContentLoaded', () => { opener.focus(); open(); });
 
     function renumber(){
-        tbody.querySelectorAll('.line-item-row').forEach(function(row, i){ row.querySelector('.line-no').textContent = i + 1; });
+        tbody.querySelectorAll('.line-item-row').forEach(function(row, i){ const numberCell = row.querySelector('.line-no'); if (numberCell) numberCell.textContent = i + 1; });
     }
 
     function recalcAll(){
@@ -2300,26 +2486,194 @@ function initComboBox(hiddenIdInput, searchInput, listEl, options, onSelect){
         document.getElementById('pof_DueDisplay').textContent = Math.max(0, net - paid).toFixed(2);
     }
 
+    function pkgRowFor(row){
+        const next = row.nextElementSibling;
+        return (next && next.classList.contains('purchase-pkg-row')) ? next : null;
+    }
+    function pkgQuery(row, selector){
+        const pkgRow = pkgRowFor(row);
+        return pkgRow ? pkgRow.querySelector(selector) : null;
+    }
     function bindRemove(row){
         row.querySelector('.remove-line-btn').addEventListener('click', function(){
-            if (tbody.querySelectorAll('.line-item-row').length > 1){ row.remove(); renumber(); recalcAll(); }
+            if (tbody.querySelectorAll('.line-item-row').length > 1){
+                const pkgRow = pkgRowFor(row);
+                if (pkgRow) pkgRow.remove();
+                row.remove();
+                renumber();
+                recalcAll();
+            }
         });
     }
+    const purchaseOptions = unitOptions.map(function(it){
+        return {
+            id: it.ItemID,
+            label: it.ItemName,
+            ItemName: it.ItemName,
+            Category: it.Category,
+            SalesUnit: it.SalesUnit,
+            SellingPrice: it.SellingPrice,
+            DefaultPurchaseUnit: it.DefaultPurchaseUnit,
+            UnitsPerPackage: it.UnitsPerPackage
+        };
+    });
+
+    function rowMeta(row){
+        const category = row.querySelector('.purchase-item-category').value || '';
+        const salesUnit = row.querySelector('.purchase-item-salesunit').value || '';
+        const metaUnit = salesUnit.trim() === '' ? '' : normUnit(salesUnit, '');
+        row.querySelector('.purchase-item-meta').textContent = [category, metaUnit].filter(Boolean).join(' \u2022 ');
+    }
+
+    function packUnitValue(row){
+        const select = pkgQuery(row, '.purchase-pack-unit-select');
+        if (!select) return '';
+        if (select.value === 'Other'){
+            const other = pkgQuery(row, '.purchase-pack-unit-other');
+            return other ? other.value.trim() : '';
+        }
+        return select.value;
+    }
+
+    function setMode(row, mode){
+        const unitRadio = pkgQuery(row, '.purchase-mode-unit');
+        const packRadio = pkgQuery(row, '.purchase-mode-package');
+        const unitOpt = pkgQuery(row, '.purchase-mode-opt-unit');
+        const packOpt = pkgQuery(row, '.purchase-mode-opt-package');
+        const editor = pkgQuery(row, '.purchase-pkg-editor');
+        const hasPack = packRadio && !packRadio.disabled;
+        if (mode === 'package' && !hasPack) mode = 'unit';
+        if (unitRadio) unitRadio.checked = (mode === 'unit');
+        if (packRadio) packRadio.checked = (mode === 'package');
+        if (unitOpt) unitOpt.classList.toggle('is-active', mode === 'unit');
+        if (packOpt) packOpt.classList.toggle('is-active', mode === 'package');
+        if (editor) editor.hidden = (mode !== 'package');
+    }
+    function currentMode(row){
+        const packRadio = pkgQuery(row, '.purchase-mode-package');
+        return (packRadio && packRadio.checked) ? 'package' : 'unit';
+    }
+    function loadPackage(row, unit, size){
+        const select = pkgQuery(row, '.purchase-pack-unit-select');
+        const other = pkgQuery(row, '.purchase-pack-unit-other');
+        const otherWrap = pkgQuery(row, '.purchase-pack-other');
+        const sizeInput = pkgQuery(row, '.purchase-pack-size');
+        const hidden = pkgQuery(row, '.purchase-pack-unit');
+        const common = ['Box','Pack','Bottle','Carton','Strip','Bag'];
+        if (select){
+            if (unit === '') select.value = '';
+            else if (common.indexOf(unit) !== -1) select.value = unit;
+            else select.value = 'Other';
+        }
+        if (other) other.value = (unit !== '' && common.indexOf(unit) === -1) ? unit : '';
+        if (otherWrap) otherWrap.hidden = !select || select.value !== 'Other';
+        if (sizeInput) sizeInput.value = (unit !== '' && size > 1) ? size : 1;
+        if (hidden) hidden.value = unit !== '' ? unit : '';
+    }
+
+    function normUnit(value, fallback){
+        let unit = String(value === null || value === undefined ? '' : value).trim();
+        unit = unit.replace(/^[()\s]+|[()\s]+$/g, '');
+        if (unit === '' || !isNaN(Number(unit))) return fallback;
+        if (/^(per|unit|units)\b/i.test(unit)) return fallback;
+        if (/^[0-9]+s$/i.test(unit)) return fallback;
+        return unit;
+    }
+    function pluralUnit(unit){
+        if (unit === '') return '';
+        if (/[^aeiou]y$/i.test(unit)) return unit.slice(0, -1) + 'ies';
+        if (/(s|x|z|ch|sh)$/i.test(unit)) return unit + 'es';
+        return unit + 's';
+    }
+    function rowPackInfo(row){
+        const qty = parseFloat(row.querySelector('.purchase-qty').value) || 0;
+        const packUnit = packUnitValue(row);
+        const sizeInput = pkgQuery(row, '.purchase-pack-size');
+        const packSize = sizeInput ? (parseFloat(sizeInput.value) || 1) : 1;
+        const salesUnit = row.querySelector('.purchase-item-salesunit').value || '';
+        const unitName = normUnit(salesUnit, 'Unit');
+        const plural = pluralUnit(unitName);
+        const packPlural = pluralUnit(packUnit);
+        const valueEl = pkgQuery(row, '.purchase-pkg-value');
+        const packRadio = pkgQuery(row, '.purchase-mode-package');
+        const packLabel = pkgQuery(row, '.purchase-mode-pack-label');
+        const packOpt = pkgQuery(row, '.purchase-mode-opt-package');
+        const unitNameEl = pkgQuery(row, '.purchase-pkg-unit-name');
+        const qtyHint = row.querySelector('.purchase-qty-hint');
+        const costHint = row.querySelector('.purchase-cost-hint');
+        const hint = pkgQuery(row, '.purchase-pack-hint');
+        const hasPack = packUnit !== '' && packSize > 1;
+        const sellingHint = row.querySelector('.purchase-selling-hint');
+        const modeRow = pkgQuery(row, '.purchase-mode-row');
+        if (packRadio) packRadio.disabled = !hasPack;
+        if (packOpt) packOpt.classList.toggle('is-disabled', !hasPack);
+        if (packOpt) packOpt.hidden = !hasPack;
+        if (modeRow) modeRow.hidden = !hasPack;
+        if (packLabel) packLabel.textContent = hasPack ? (packUnit + ' (' + packSize + ' ' + plural + ')') : '';
+        if (unitNameEl) unitNameEl.textContent = unitName;
+        if (costHint) costHint.textContent = 'per ' + unitName;
+        if (sellingHint) sellingHint.textContent = 'current per ' + unitName;
+        const mode = hasPack ? currentMode(row) : 'unit';
+        if (mode === 'package' && hasPack){
+            if (valueEl) valueEl.textContent = packUnit + ' \u00d7 ' + packSize + ' ' + plural;
+            if (qtyHint) qtyHint.textContent = packPlural;
+            if (costHint) costHint.textContent = 'per ' + packUnit;
+            if (hint) hint.textContent = qty + ' ' + packPlural + ' \u00d7 ' + packSize + ' ' + plural + ' = ' + Math.round(qty * packSize) + ' ' + plural + ' added to inventory';
+        } else {
+            if (valueEl) valueEl.textContent = '';
+            if (qtyHint) qtyHint.textContent = plural;
+            if (hint) hint.textContent = hasPack ? ('Package available: 1 ' + packUnit + ' = ' + packSize + ' ' + plural) : '';
+            if (hasPack) setMode(row, 'unit');
+        }
+    }
+
     function bindRecalc(row){
-        const labels = ['Item','Medicine','Quantity','Unit settings','Purchase Price','Selling Price','Expiry Date','Amount','Actions'];
-        row.querySelectorAll('td').forEach((cell,index) => {
-            cell.dataset.label = labels[index];
-            cell.querySelectorAll('input').forEach(input => input.setAttribute('aria-label', input.name.replace('[]','')));
+        const labels = ['Medicine','Expiry Date','Quantity','Purchase Price','Selling Price','Amount','Actions'];
+        row.querySelectorAll('td').forEach((cell,index) => { cell.dataset.label = labels[index]; });
+        const search = row.querySelector('.purchase-item-search');
+        const list = row.querySelector('.purchase-combo-list');
+        const idInput = row.querySelector('.purchase-item-id');
+        const nameInput = row.querySelector('.purchase-item-name');
+        initComboBox(idInput, search, list, purchaseOptions, function(opt){
+            nameInput.value = opt.ItemName;
+            row.querySelector('.purchase-item-category').value = opt.Category || '';
+            row.querySelector('.purchase-item-salesunit').value = opt.SalesUnit || '';
+            row.querySelector('.purchase-selling-price').value = (opt.SellingPrice !== null && opt.SellingPrice !== undefined && opt.SellingPrice !== '') ? parseFloat(opt.SellingPrice).toFixed(2) : '';
+            const defUnit = opt.DefaultPurchaseUnit || '';
+            const defSize = parseFloat(opt.UnitsPerPackage) > 1 ? parseFloat(opt.UnitsPerPackage) : 1;
+            loadPackage(row, defUnit, defSize);
+            setMode(row, 'unit');
+            rowMeta(row);
+            rowPackInfo(row);
+            recalcAll();
         });
-        row.querySelector('input[name="ItemName[]"]').addEventListener('change', function(){
-            const item = unitOptions.find(item => item.ItemName.trim().toLowerCase() === this.value.trim().toLowerCase());
-            ['Category','PurchaseUnit','SalesUnit','ConversionFactor','SellingPrice'].forEach(field => {
-                row.querySelector('[name="'+field+'[]"]').value = item?.[field] ?? (field === 'ConversionFactor' ? '1' : '');
+        search.addEventListener('input', function(){ nameInput.value = search.value; });
+        row.querySelectorAll('.purchase-qty, .purchase-unit-price, .purchase-selling-price').forEach(function(el){
+            el.addEventListener('input', function(){ rowPackInfo(row); recalcAll(); });
+        });
+        const pkgRow = pkgRowFor(row);
+        if (pkgRow){
+            const select = pkgRow.querySelector('.purchase-pack-unit-select');
+            const other = pkgRow.querySelector('.purchase-pack-unit-other');
+            const size = pkgRow.querySelector('.purchase-pack-size');
+            const hidden = pkgRow.querySelector('.purchase-pack-unit');
+            const otherWrap = pkgRow.querySelector('.purchase-pack-other');
+            const editor = pkgRow.querySelector('.purchase-pkg-editor');
+            const toggle = pkgRow.querySelector('.purchase-pkg-toggle');
+            if (select) select.addEventListener('change', function(){
+                if (otherWrap) otherWrap.hidden = select.value !== 'Other';
+                if (hidden) hidden.value = packUnitValue(row);
+                rowPackInfo(row);
             });
-        });
-        row.querySelectorAll('input[name="Quantity[]"], input[name="UnitPrice[]"]').forEach(function(el){
-            el.addEventListener('input', recalcAll);
-        });
+            if (other) other.addEventListener('input', function(){ if (hidden) hidden.value = packUnitValue(row); rowPackInfo(row); });
+            if (size) size.addEventListener('input', function(){ rowPackInfo(row); });
+            const unitMode = pkgRow.querySelector('.purchase-mode-unit');
+            const packMode = pkgRow.querySelector('.purchase-mode-package');
+            if (unitMode) unitMode.addEventListener('change', function(){ setMode(row, 'unit'); rowPackInfo(row); recalcAll(); });
+            if (packMode) packMode.addEventListener('change', function(){ setMode(row, 'package'); rowPackInfo(row); recalcAll(); });
+        }
+        rowMeta(row);
+        rowPackInfo(row);
     }
 
     tbody.querySelectorAll('.line-item-row').forEach(function(row){ bindRemove(row); bindRecalc(row); });
@@ -2328,14 +2682,54 @@ function initComboBox(hiddenIdInput, searchInput, listEl, options, onSelect){
     document.getElementById('pof_VATAmount').addEventListener('input', recalcAll);
 
     document.getElementById('addLineBtn').addEventListener('click', function(){
-        const template = tbody.querySelector('.line-item-row').cloneNode(true);
-        template.querySelectorAll('input').forEach(function(i){
-            i.value = i.name === 'ConversionFactor[]' ? '1.00' : '';
-        });
+        const sourceRow = tbody.querySelector('.line-item-row');
+        const sourcePkg = pkgRowFor(sourceRow);
+        const template = sourceRow.cloneNode(true);
+        const pkgTemplate = sourcePkg ? sourcePkg.cloneNode(true) : null;
+        template.querySelectorAll('input').forEach(function(i){ i.value = ''; });
+        const meta = template.querySelector('.purchase-item-meta');
+        if (meta) meta.textContent = '';
         tbody.appendChild(template);
+        if (pkgTemplate){
+            pkgTemplate.querySelectorAll('input').forEach(function(i){
+                if (i.classList.contains('purchase-mode-radio')) return;
+                i.value = i.classList.contains('purchase-pack-size') ? '1' : '';
+            });
+            const sel = pkgTemplate.querySelector('.purchase-pack-unit-select');
+            if (sel) sel.value = '';
+            const ow = pkgTemplate.querySelector('.purchase-pack-other');
+            if (ow) ow.hidden = true;
+            const ed = pkgTemplate.querySelector('.purchase-pkg-editor');
+            if (ed) ed.hidden = true;
+            const pk = pkgTemplate.querySelector('.purchase-mode-package');
+            if (pk) pk.disabled = true;
+            const pkOpt = pkgTemplate.querySelector('.purchase-mode-opt-package');
+            if (pkOpt) pkOpt.classList.add('is-disabled');
+            if (pkOpt) pkOpt.hidden = true;
+            const mr = pkgTemplate.querySelector('.purchase-mode-row');
+            if (mr) mr.hidden = true;
+            const pkLabel = pkgTemplate.querySelector('.purchase-mode-pack-label');
+            if (pkLabel) pkLabel.textContent = '';
+            const un = pkgTemplate.querySelector('.purchase-pkg-unit-name');
+            if (un) un.textContent = '';
+            const qh = pkgTemplate.querySelector('.purchase-qty-hint');
+            if (qh) qh.textContent = '';
+            const ch = pkgTemplate.querySelector('.purchase-cost-hint');
+            if (ch) ch.textContent = '';
+            const sh = pkgTemplate.querySelector('.purchase-selling-hint');
+            if (sh) sh.textContent = '';
+            const ph = pkgTemplate.querySelector('.purchase-pack-hint');
+            if (ph) ph.textContent = '';
+            const pv = pkgTemplate.querySelector('.purchase-pkg-value');
+            if (pv) pv.textContent = '';
+            const pu = pkgTemplate.querySelector('.purchase-pkg-unavailable');
+            if (pu) pu.hidden = false;
+            tbody.appendChild(pkgTemplate);
+        }
         bindRemove(template);
         bindRecalc(template);
         renumber();
+        recalcAll();
     });
 
     recalcAll();
@@ -2352,9 +2746,26 @@ function initComboBox(hiddenIdInput, searchInput, listEl, options, onSelect){
     const fCategory = document.getElementById('if_Category');
     const fStock = document.getElementById('if_QuantityInStock');
     const fUnit = document.getElementById('if_SalesUnit');
+    function setUnit(value) {
+        if (value && !Array.from(fUnit.options).some(option => option.value === value)) fUnit.add(new Option(value, value));
+        fUnit.value = value;
+    }
+    const saveLabel = document.getElementById('medicineSaveLabel');
     const fPrice = document.getElementById('if_SellingPrice');
     const fReorder = document.getElementById('if_ReorderLevel');
     const fExpiry = document.getElementById('if_ExpiryDate');
+    const fPackUnit = document.getElementById('if_DefaultPurchaseUnit');
+    const fPackSize = document.getElementById('if_UnitsPerPackage');
+    const packHint = document.getElementById('packagingHint');
+
+    function updatePackHint(){
+        const unit = fUnit.value || 'unit';
+        const pack = (fPackUnit.value || '').trim();
+        const size = parseInt(fPackSize.value || '0', 10);
+        if (pack === '' || !size || size < 1){ packHint.textContent = ''; return; }
+        packHint.textContent = '1 ' + pack + ' = ' + size + ' ' + unit + (size === 1 ? '' : 's');
+    }
+    [fPackUnit, fPackSize, fUnit].forEach(function(el){ el.addEventListener('input', updatePackHint); el.addEventListener('change', updatePackHint); });
 
     function openModal(){ overlay.classList.add('show'); }
     function closeModal(){ overlay.classList.remove('show'); }
@@ -2363,7 +2774,10 @@ function initComboBox(hiddenIdInput, searchInput, listEl, options, onSelect){
         form.reset();
         fId.value = '';
         fReorder.value = '10';
-        modalTitle.textContent = 'Add Item';
+        fPackUnit.value = ''; fPackSize.value = ''; packHint.textContent = '';
+        modalTitle.textContent = 'Add Medicine';
+        saveLabel.textContent = 'Save Medicine';
+        document.getElementById('stockQuantityLabel').textContent = 'Opening Quantity';
         openModal();
     });
 
@@ -2374,11 +2788,16 @@ function initComboBox(hiddenIdInput, searchInput, listEl, options, onSelect){
             fName.value = btn.dataset.name;
             fCategory.value = btn.dataset.category;
             fStock.value = btn.dataset.stock;
-            fUnit.value = btn.dataset.unit;
+            setUnit(btn.dataset.unit);
             fPrice.value = btn.dataset.price;
             fReorder.value = btn.dataset.reorder;
             fExpiry.value = btn.dataset.expiry;
-            modalTitle.textContent = 'Edit Item';
+            fPackUnit.value = btn.dataset.packunit || '';
+            fPackSize.value = btn.dataset.packsize || '';
+            updatePackHint();
+            modalTitle.textContent = 'Edit Medicine';
+            saveLabel.textContent = 'Update Medicine';
+            document.getElementById('stockQuantityLabel').textContent = 'Quantity in Stock';
             openModal();
         });
     });
@@ -2393,11 +2812,16 @@ function initComboBox(hiddenIdInput, searchInput, listEl, options, onSelect){
     fName.value = <?= json_encode($oldInventory['ItemName']) ?>;
     fCategory.value = <?= json_encode($oldInventory['Category']) ?>;
     fStock.value = <?= json_encode($oldInventory['QuantityInStock']) ?>;
-    fUnit.value = <?= json_encode($oldInventory['SalesUnit']) ?>;
+    setUnit(<?= json_encode($oldInventory['SalesUnit']) ?>);
     fPrice.value = <?= json_encode($oldInventory['SellingPrice']) ?>;
     fReorder.value = <?= json_encode($oldInventory['ReorderLevel']) ?>;
     fExpiry.value = <?= json_encode($oldInventory['ExpiryDate']) ?>;
-    modalTitle.textContent = fId.value ? 'Edit Item' : 'Add Item';
+    fPackUnit.value = <?= json_encode($oldInventory['DefaultPurchaseUnit']) ?>;
+    fPackSize.value = <?= json_encode($oldInventory['UnitsPerPackage']) ?>;
+    updatePackHint();
+    modalTitle.textContent = fId.value ? 'Edit Medicine' : 'Add Medicine';
+    saveLabel.textContent = fId.value ? 'Update Medicine' : 'Save Medicine';
+    document.getElementById('stockQuantityLabel').textContent = fId.value ? 'Quantity in Stock' : 'Opening Quantity';
     openModal();
     <?php endif; ?>
 })();

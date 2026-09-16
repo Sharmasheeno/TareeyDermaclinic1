@@ -454,7 +454,7 @@ $workspaceUrl      = 'doctors.php?workspace=1' . ($workspaceDoctorId > 0 ? '&doc
             <?php foreach (tdc_navigation(NAV_ITEMS) as $item): ?>
                 <li class="nav-item<?= $item['href'] === $currentPage ? ' active' : '' ?>">
                     <a href="<?= tdc_e($item['href']) ?>" class="nav-link">
-                        <svg viewBox="0 0 20 20"><?= $item['icon'] ?></svg>
+                        <?= tdc_navigation_icon($item['href']) ?>
                         <span><?= tdc_e($item['label']) ?></span>
                     </a>
                 </li>
@@ -493,9 +493,9 @@ $workspaceUrl      = 'doctors.php?workspace=1' . ($workspaceDoctorId > 0 ? '&doc
     <div class="section-toolbar">
         <form method="GET" action="doctors.php" class="search-box">
             <input type="text" name="q" placeholder="Search by name or specialty..." value="<?= tdc_e($search) ?>">
-            <button type="submit" class="btn btn-secondary">Search</button>
+            <button type="submit" class="btn-primary btn "><?= tdc_icon('search',16) ?><span>Search</span></button>
         </form>
-        <div class="table-command-bar"><?php if($canImport):?><button type="button" id="importDoctorBtn" class="btn btn-secondary"><?= tdc_icon('upload', 14) ?><span>Import CSV</span></button><a class="btn btn-secondary" href="doctors.php?download=doctor-template"><?= tdc_icon('download', 14) ?><span>Download CSV Template</span></a><?php endif;?><?php if($canExport):?><a class="btn btn-secondary" href="doctors.php?download=doctors"><?= tdc_icon('download', 14) ?><span>Export CSV</span></a><button type="button" class="btn btn-secondary" onclick="window.print()"><?= tdc_icon('printer', 14) ?><span>Print</span></button><?php endif;?><?php if ($canManage): ?><button type="button" id="addDoctorBtn" class="btn btn-primary"><?= tdc_icon('plus', 14) ?><span>Add Doctor</span></button><?php endif; ?></div>
+        <div class="table-command-bar"><?php if($canImport):?><button type="button" id="importDoctorBtn" class="btn-success btn "><?= tdc_icon('upload', 14) ?><span>Import CSV</span></button><a class="btn-info btn " href="doctors.php?download=doctor-template"><?= tdc_icon('download', 14) ?><span>Download CSV Template</span></a><?php endif;?><?php if($canExport):?><a class="btn-info btn " href="doctors.php?download=doctors"><?= tdc_icon('download', 14) ?><span>Export CSV</span></a><button type="button" class="btn-info btn " onclick="window.print()"><?= tdc_icon('printer', 14) ?><span>Print</span></button><?php endif;?><?php if ($canManage): ?><button type="button" id="addDoctorBtn" class="btn-success btn "><?= tdc_icon('plus', 14) ?><span>Add Doctor</span></button><?php endif; ?></div>
     </div>
 
     <div class="data-table-wrap">
@@ -508,7 +508,7 @@ $workspaceUrl      = 'doctors.php?workspace=1' . ($workspaceDoctorId > 0 ? '&doc
             </thead>
             <tbody>
                                 <?php if (empty($doctors)): ?>
-                <?= tdc_empty_state('stethoscope', 'No doctors found', $search !== '' ? 'No directory records match "' . $search . '".' : 'Doctors added to the directory will appear here.', $canManage ? '<button type="button" class="btn btn-primary" data-open-add-doctor>' . tdc_icon('plus', 14) . '<span>Add Doctor</span></button>' : '', $canManage ? 6 : 5) ?>
+                <?= tdc_empty_state('stethoscope', 'No doctors found', $search !== '' ? 'No directory records match "' . $search . '".' : 'Doctors added to the directory will appear here.', $canManage ? '<button type="button" class="btn btn-success" data-open-add-doctor>' . tdc_icon('plus', 14) . '<span>Add Doctor</span></button>' : '', $canManage ? 6 : 5) ?>
                 <?php else: foreach ($doctors as $d): ?>
                 <tr>
                     <td>#<?= (int) $d['DoctorID'] ?></td>
@@ -525,7 +525,7 @@ $workspaceUrl      = 'doctors.php?workspace=1' . ($workspaceDoctorId > 0 ? '&doc
                                 data-specialty="<?= tdc_e((string) $d['Specialty']) ?>"
                                 data-fee="<?= tdc_e((string) $d['ConsultationFee']) ?>"
                                 data-joined="<?= tdc_e((string) $d['JoinedDate']) ?>"><?= tdc_icon('pencil', 15) ?></button>
-                            <form method="POST" action="doctors.php" onsubmit="return confirm('Delete this doctor? This cannot be undone.');">
+                            <form method="POST" action="doctors.php" data-confirm="Delete this doctor? This cannot be undone.">
                                 <input type="hidden" name="csrf_token" value="<?= tdc_e($csrfToken) ?>">
                                 <input type="hidden" name="form_action" value="delete">
                                 <input type="hidden" name="DoctorID" value="<?= (int) $d['DoctorID'] ?>">
@@ -541,7 +541,7 @@ $workspaceUrl      = 'doctors.php?workspace=1' . ($workspaceDoctorId > 0 ? '&doc
     </div>
 
     <?php if ($canManage): ?>
-    <?php if($canImport):?><div class="modal-overlay" id="importDoctorModal"><div class="modal-box"><div class="modal-head"><h3>Import Doctors</h3><button type="button" class="modal-close" data-close-doctor-import aria-label="Close">×</button></div><form method="post" enctype="multipart/form-data"><div class="modal-body"><input type="hidden" name="csrf_token" value="<?=tdc_e($csrfToken)?>"><input type="hidden" name="form_action" value="import_csv"><div class="form-section"><div class="form-section-heading"><span><strong>CSV File</strong><span>Doctor accounts are linked separately in Setup after import.</span></span></div><div class="form-group"><label>Select CSV</label><input type="file" name="csv_file" accept=".csv,text/csv" required></div></div><div class="modal-actions"><button type="button" class="btn btn-secondary" data-close-doctor-import>Cancel</button><button class="btn btn-primary">Import Doctors</button></div></div></form></div></div><?php endif;?>
+    <?php if($canImport):?><div class="modal-overlay" id="importDoctorModal"><div class="modal-box"><div class="modal-head"><h3><?= tdc_icon('upload',20) ?><span>Import Doctors</span></h3><button type="button" class="modal-close" data-close-doctor-import aria-label="Close">×</button></div><form method="post" enctype="multipart/form-data"><div class="modal-body"><input type="hidden" name="csrf_token" value="<?=tdc_e($csrfToken)?>"><input type="hidden" name="form_action" value="import_csv"><div class="form-section"><div class="form-section-heading"><span><strong>CSV File</strong><span>Doctor accounts are linked separately in Setup after import.</span></span></div><div class="form-group"><label>Select CSV</label><input type="file" name="csv_file" accept=".csv,text/csv" required></div></div><div class="modal-actions"><button type="button" class="btn btn-secondary" data-close-doctor-import>Cancel</button><button class="btn-success btn "><?= tdc_icon('upload',16) ?><span>Import Doctors</span></button></div></div></form></div></div><?php endif;?>
     <div class="modal-overlay" id="doctorModalOverlay">
         <div class="modal-box">
             <div class="modal-head">
@@ -571,7 +571,7 @@ $workspaceUrl      = 'doctors.php?workspace=1' . ($workspaceDoctorId > 0 ? '&doc
 
                     <div class="modal-actions">
                         <button type="button" class="btn btn-secondary" id="doctorModalCancelBtn">Cancel</button>
-                        <button type="submit" class="btn btn-primary">Save Doctor</button>
+                        <button type="submit" class="btn-success  btn "><?= tdc_icon('check',16) ?><span>Save Doctor</span></button>
                     </div>
                 </div>
             </form>

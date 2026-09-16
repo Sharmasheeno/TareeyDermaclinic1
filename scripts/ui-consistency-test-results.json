@@ -1,0 +1,2662 @@
+[
+  {
+    "name": "dashboard script 0",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "dashboard script 1",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "reception script 0",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "reception script 1",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "registration script 0",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "registration script 1",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "waiting script 0",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "waiting script 1",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "schedule script 0",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "schedule script 1",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "doctors script 0",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "doctors script 1",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "doctors script 2",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "laboratory script 0",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "laboratory script 1",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "inventory script 0",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "inventory script 1",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "purchase script 0",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "purchase script 1",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "purchases script 0",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "purchases script 1",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "pos script 0",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "pos script 1",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "accounting script 0",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "accounting script 1",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "expense script 0",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "expense script 1",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "reports script 0",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "reports script 1",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "setup script 0",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "setup script 1",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "setup script 2",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "setup script 3",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "setup script 4",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "reception-role script 0",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "reception-role script 1",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "reception-role script 2",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "pharmacy-role script 0",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "pharmacy-role script 1",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "pharmacy-role script 2",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "permissions-edit script 0",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "permissions-edit script 1",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "permissions-edit script 2",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "permissions-edit script 3",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-patients script 0",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-patients script 1",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-visits script 0",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-visits script 1",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-doctor-consultations script 0",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-doctor-consultations script 1",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-billing script 0",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-billing script 1",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-payments script 0",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-payments script 1",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-outstanding script 0",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-outstanding script 1",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-pharmacy-sales script 0",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-pharmacy-sales script 1",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-pharmacy-purchases script 0",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-pharmacy-purchases script 1",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-pharmacy-stock script 0",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-pharmacy-stock script 1",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-pharmacy-low-stock script 0",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-pharmacy-low-stock script 1",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-pharmacy-expiry script 0",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-pharmacy-expiry script 1",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-lab-orders script 0",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-lab-orders script 1",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-lab-completed script 0",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-lab-completed script 1",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-lab-pending script 0",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-lab-pending script 1",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-lab-revenue script 0",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-lab-revenue script 1",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-revenue-by-account script 0",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-revenue-by-account script 1",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-expenses script 0",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-expenses script 1",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-transactions script 0",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-transactions script 1",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-income-statement script 0",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-income-statement script 1",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-balance-sheet script 0",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-balance-sheet script 1",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "setup-overview script 0",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "setup-overview script 1",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "setup-overview script 2",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "setup-overview script 3",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "setup-organization script 0",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "setup-organization script 1",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "setup-organization script 2",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "setup-organization script 3",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "setup-users script 0",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "setup-users script 1",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "setup-users script 2",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "setup-users script 3",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "setup-users script 4",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "setup-roles script 0",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "setup-roles script 1",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "setup-roles script 2",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "setup-roles script 3",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "setup-permissions script 0",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "setup-permissions script 1",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "setup-permissions script 2",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "setup-permissions script 3",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "setup-clinical script 0",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "setup-clinical script 1",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "setup-clinical script 2",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "setup-clinical script 3",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "setup-laboratory script 0",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "setup-laboratory script 1",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "setup-laboratory script 2",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "setup-laboratory script 3",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "setup-pharmacy script 0",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "setup-pharmacy script 1",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "setup-pharmacy script 2",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "setup-pharmacy script 3",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "setup-payment-methods script 0",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "setup-payment-methods script 1",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "setup-payment-methods script 2",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "setup-payment-methods script 3",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "setup-audit script 0",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "setup-audit script 1",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "setup-audit script 2",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "setup-audit script 3",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "login script 0",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "patients script 0",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "patients script 1",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "patients script 2",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "clinical script 0",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "clinical script 1",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "clinical script 2",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "consultations script 0",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "consultations script 1",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "consultations script 2",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "lab-billing script 0",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "lab-billing script 1",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "pharmacy-billing script 0",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "pharmacy-billing script 1",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "prescriptions script 0",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "prescriptions script 1",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "accounts script 0",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "accounts script 1",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "dashboard 1920px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1905,\"width\":1920,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "dashboard 1366px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1351,\"width\":1366,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "dashboard 1080px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1065,\"width\":1080,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "dashboard 820px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":805,\"width\":820,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "dashboard 480px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":465,\"width\":480,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "dashboard runtime",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "reception 1920px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1905,\"width\":1920,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "reception 1366px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1351,\"width\":1366,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "reception 1080px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1065,\"width\":1080,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "reception 820px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":805,\"width\":820,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "reception 480px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":465,\"width\":480,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "reception runtime",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "registration 1920px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1905,\"width\":1920,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "registration 1366px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1351,\"width\":1366,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "registration 1080px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1065,\"width\":1080,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "registration 820px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":805,\"width\":820,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "registration 480px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":465,\"width\":480,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "registration runtime",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "registration modal opens",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "registration modal mobile",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "registration modal focus return",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "registration modal accessible on reopen",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "waiting 1920px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1905,\"width\":1920,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "waiting 1366px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1351,\"width\":1366,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "waiting 1080px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1065,\"width\":1080,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "waiting 820px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":805,\"width\":820,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "waiting 480px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":465,\"width\":480,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "waiting runtime",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "schedule 1920px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1905,\"width\":1920,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "schedule 1366px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1351,\"width\":1366,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "schedule 1080px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1065,\"width\":1080,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "schedule 820px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":805,\"width\":820,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "schedule 480px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":465,\"width\":480,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "schedule runtime",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "doctors 1920px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1905,\"width\":1920,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "doctors 1366px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1351,\"width\":1366,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "doctors 1080px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1065,\"width\":1080,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "doctors 820px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":805,\"width\":820,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "doctors 480px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":465,\"width\":480,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "doctors runtime",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "profile keyboard opens and focuses",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "profile Escape returns focus",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "profile outside click closes",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "confirmation starts on Cancel",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "confirmation Escape cancels",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "confirmation accepts",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "doctors modal opens",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "doctors modal mobile",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "doctors modal focus return",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "doctors modal accessible on reopen",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "laboratory 1920px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1905,\"width\":1920,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "laboratory 1366px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1351,\"width\":1366,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "laboratory 1080px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1065,\"width\":1080,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "laboratory 820px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":805,\"width\":820,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "laboratory 480px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":465,\"width\":480,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "laboratory runtime",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "inventory 1920px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1905,\"width\":1920,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "inventory 1366px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1351,\"width\":1366,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "inventory 1080px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1065,\"width\":1080,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "inventory 820px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":805,\"width\":820,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "inventory 480px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":465,\"width\":480,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "inventory runtime",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "inventory simple medicine form",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "inventory edit medicine fields populated",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "inventory modal opens",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "inventory modal mobile",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "inventory modal focus return",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "inventory modal accessible on reopen",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "purchase 1920px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1920,\"width\":1920,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "purchase 1366px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1366,\"width\":1366,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "purchase 1080px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1080,\"width\":1080,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "purchase 820px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":820,\"width\":820,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "purchase 480px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":480,\"width\":480,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "purchase runtime",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "purchases 1920px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1905,\"width\":1920,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "purchases 1366px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1351,\"width\":1366,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "purchases 1080px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1065,\"width\":1080,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "purchases 820px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":805,\"width\":820,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "purchases 480px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":465,\"width\":480,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "purchases runtime",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "pos 1920px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1905,\"width\":1920,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "pos 1366px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1351,\"width\":1366,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "pos 1080px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1065,\"width\":1080,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "pos 820px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":805,\"width\":820,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "pos 480px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":465,\"width\":480,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "pos runtime",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "accounting 1920px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1905,\"width\":1920,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "accounting 1366px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1351,\"width\":1366,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "accounting 1080px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1065,\"width\":1080,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "accounting 820px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":805,\"width\":820,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "accounting 480px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":465,\"width\":480,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "accounting runtime",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "expense 1920px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1905,\"width\":1920,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "expense 1366px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1351,\"width\":1366,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "expense 1080px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1065,\"width\":1080,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "expense 820px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":805,\"width\":820,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "expense 480px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":465,\"width\":480,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "expense runtime",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "reports 1920px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1905,\"width\":1920,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "reports 1366px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1351,\"width\":1366,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "reports 1080px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1065,\"width\":1080,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "reports 820px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":805,\"width\":820,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "reports 480px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":465,\"width\":480,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "reports runtime",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "KPI icons do not overlap labels",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "setup 1920px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1905,\"width\":1920,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "setup 1366px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1351,\"width\":1366,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "setup 1080px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1065,\"width\":1080,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "setup 820px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":805,\"width\":820,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "setup 480px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":465,\"width\":480,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "setup runtime",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "setup modal opens",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "setup modal mobile",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "setup modal focus return",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "setup modal accessible on reopen",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "reception-role 1920px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1905,\"width\":1920,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "reception-role 1366px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1351,\"width\":1366,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "reception-role 1080px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1065,\"width\":1080,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "reception-role 820px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":805,\"width\":820,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "reception-role 480px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":465,\"width\":480,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "reception-role runtime",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "reception-role simple medicine form",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "reception-role edit medicine fields populated",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "pharmacy-role 1920px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1905,\"width\":1920,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "pharmacy-role 1366px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1351,\"width\":1366,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "pharmacy-role 1080px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1065,\"width\":1080,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "pharmacy-role 820px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":805,\"width\":820,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "pharmacy-role 480px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":465,\"width\":480,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "pharmacy-role runtime",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "pharmacy-role simple medicine form",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "pharmacy-role edit medicine fields populated",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "permissions-edit 1920px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1905,\"width\":1920,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "permissions-edit 1366px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1351,\"width\":1366,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "permissions-edit 1080px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1065,\"width\":1080,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "permissions-edit 820px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":805,\"width\":820,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "permissions-edit 480px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":465,\"width\":480,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "permissions-edit runtime",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "Permissions no-change Save disabled",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "Permissions dirty Save white text and icon",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "Permissions focus ring",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "Permissions restored Save disabled",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-patients 1920px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1905,\"width\":1920,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-patients 1366px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1351,\"width\":1366,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-patients 1080px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1065,\"width\":1080,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-patients 820px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":805,\"width\":820,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-patients 480px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":465,\"width\":480,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-patients runtime",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-patients browser PDF",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-visits 1920px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1905,\"width\":1920,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-visits 1366px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1351,\"width\":1366,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-visits 1080px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1065,\"width\":1080,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-visits 820px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":805,\"width\":820,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-visits 480px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":465,\"width\":480,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-visits runtime",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-visits browser PDF",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-doctor-consultations 1920px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1905,\"width\":1920,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-doctor-consultations 1366px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1351,\"width\":1366,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-doctor-consultations 1080px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1065,\"width\":1080,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-doctor-consultations 820px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":805,\"width\":820,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-doctor-consultations 480px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":465,\"width\":480,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-doctor-consultations runtime",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-doctor-consultations browser PDF",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-billing 1920px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1905,\"width\":1920,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-billing 1366px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1351,\"width\":1366,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-billing 1080px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1065,\"width\":1080,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-billing 820px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":805,\"width\":820,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-billing 480px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":465,\"width\":480,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-billing runtime",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-billing browser PDF",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-payments 1920px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1905,\"width\":1920,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-payments 1366px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1351,\"width\":1366,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-payments 1080px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1065,\"width\":1080,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-payments 820px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":805,\"width\":820,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-payments 480px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":465,\"width\":480,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-payments runtime",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-payments browser PDF",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-outstanding 1920px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1905,\"width\":1920,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-outstanding 1366px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1351,\"width\":1366,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-outstanding 1080px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1065,\"width\":1080,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-outstanding 820px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":805,\"width\":820,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-outstanding 480px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":465,\"width\":480,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-outstanding runtime",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-outstanding browser PDF",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-pharmacy-sales 1920px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1905,\"width\":1920,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-pharmacy-sales 1366px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1351,\"width\":1366,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-pharmacy-sales 1080px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1065,\"width\":1080,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-pharmacy-sales 820px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":805,\"width\":820,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-pharmacy-sales 480px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":465,\"width\":480,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-pharmacy-sales runtime",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-pharmacy-sales browser PDF",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-pharmacy-purchases 1920px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1905,\"width\":1920,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-pharmacy-purchases 1366px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1351,\"width\":1366,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-pharmacy-purchases 1080px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1065,\"width\":1080,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-pharmacy-purchases 820px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":805,\"width\":820,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-pharmacy-purchases 480px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":465,\"width\":480,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-pharmacy-purchases runtime",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-pharmacy-purchases browser PDF",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-pharmacy-stock 1920px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1905,\"width\":1920,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-pharmacy-stock 1366px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1351,\"width\":1366,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-pharmacy-stock 1080px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1065,\"width\":1080,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-pharmacy-stock 820px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":805,\"width\":820,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-pharmacy-stock 480px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":465,\"width\":480,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-pharmacy-stock runtime",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-pharmacy-stock browser PDF",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-pharmacy-low-stock 1920px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1905,\"width\":1920,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-pharmacy-low-stock 1366px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1351,\"width\":1366,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-pharmacy-low-stock 1080px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1065,\"width\":1080,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-pharmacy-low-stock 820px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":805,\"width\":820,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-pharmacy-low-stock 480px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":465,\"width\":480,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-pharmacy-low-stock runtime",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-pharmacy-low-stock browser PDF",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-pharmacy-expiry 1920px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1905,\"width\":1920,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-pharmacy-expiry 1366px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1351,\"width\":1366,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-pharmacy-expiry 1080px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1065,\"width\":1080,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-pharmacy-expiry 820px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":805,\"width\":820,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-pharmacy-expiry 480px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":465,\"width\":480,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-pharmacy-expiry runtime",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-pharmacy-expiry browser PDF",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-lab-orders 1920px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1905,\"width\":1920,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-lab-orders 1366px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1351,\"width\":1366,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-lab-orders 1080px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1065,\"width\":1080,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-lab-orders 820px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":805,\"width\":820,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-lab-orders 480px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":465,\"width\":480,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-lab-orders runtime",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-lab-orders browser PDF",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-lab-completed 1920px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1905,\"width\":1920,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-lab-completed 1366px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1351,\"width\":1366,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-lab-completed 1080px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1065,\"width\":1080,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-lab-completed 820px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":805,\"width\":820,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-lab-completed 480px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":465,\"width\":480,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-lab-completed runtime",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-lab-completed browser PDF",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-lab-pending 1920px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1905,\"width\":1920,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-lab-pending 1366px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1351,\"width\":1366,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-lab-pending 1080px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1065,\"width\":1080,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-lab-pending 820px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":805,\"width\":820,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-lab-pending 480px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":465,\"width\":480,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-lab-pending runtime",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-lab-pending browser PDF",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-lab-revenue 1920px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1905,\"width\":1920,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-lab-revenue 1366px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1351,\"width\":1366,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-lab-revenue 1080px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1065,\"width\":1080,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-lab-revenue 820px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":805,\"width\":820,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-lab-revenue 480px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":465,\"width\":480,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-lab-revenue runtime",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-lab-revenue browser PDF",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-revenue-by-account 1920px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1905,\"width\":1920,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-revenue-by-account 1366px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1351,\"width\":1366,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-revenue-by-account 1080px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1065,\"width\":1080,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-revenue-by-account 820px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":805,\"width\":820,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-revenue-by-account 480px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":465,\"width\":480,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-revenue-by-account runtime",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-revenue-by-account browser PDF",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-expenses 1920px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1905,\"width\":1920,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-expenses 1366px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1351,\"width\":1366,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-expenses 1080px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1065,\"width\":1080,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-expenses 820px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":805,\"width\":820,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-expenses 480px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":465,\"width\":480,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-expenses runtime",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-expenses browser PDF",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-transactions 1920px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1905,\"width\":1920,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-transactions 1366px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1351,\"width\":1366,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-transactions 1080px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1065,\"width\":1080,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-transactions 820px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":805,\"width\":820,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-transactions 480px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":465,\"width\":480,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-transactions runtime",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-transactions browser PDF",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-income-statement 1920px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1905,\"width\":1920,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-income-statement 1366px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1351,\"width\":1366,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-income-statement 1080px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1065,\"width\":1080,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-income-statement 820px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":805,\"width\":820,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-income-statement 480px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":465,\"width\":480,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-income-statement runtime",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-income-statement browser PDF",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-balance-sheet 1920px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1905,\"width\":1920,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-balance-sheet 1366px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1351,\"width\":1366,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-balance-sheet 1080px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1065,\"width\":1080,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-balance-sheet 820px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":805,\"width\":820,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-balance-sheet 480px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":465,\"width\":480,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "report-balance-sheet runtime",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-balance-sheet browser PDF",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "setup-overview 1920px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1905,\"width\":1920,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "setup-overview 1366px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1351,\"width\":1366,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "setup-overview 1080px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1065,\"width\":1080,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "setup-overview 820px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":805,\"width\":820,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "setup-overview 480px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":465,\"width\":480,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "setup-overview runtime",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "setup-organization 1920px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1905,\"width\":1920,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "setup-organization 1366px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1351,\"width\":1366,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "setup-organization 1080px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1065,\"width\":1080,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "setup-organization 820px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":805,\"width\":820,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "setup-organization 480px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":465,\"width\":480,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "setup-organization runtime",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "setup-users 1920px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1905,\"width\":1920,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "setup-users 1366px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1351,\"width\":1366,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "setup-users 1080px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1065,\"width\":1080,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "setup-users 820px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":805,\"width\":820,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "setup-users 480px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":465,\"width\":480,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "setup-users runtime",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "setup-roles 1920px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1905,\"width\":1920,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "setup-roles 1366px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1351,\"width\":1366,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "setup-roles 1080px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1065,\"width\":1080,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "setup-roles 820px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":805,\"width\":820,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "setup-roles 480px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":465,\"width\":480,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "setup-roles runtime",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "setup-permissions 1920px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1905,\"width\":1920,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "setup-permissions 1366px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1351,\"width\":1366,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "setup-permissions 1080px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1065,\"width\":1080,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "setup-permissions 820px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":805,\"width\":820,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "setup-permissions 480px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":465,\"width\":480,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "setup-permissions runtime",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "setup-clinical 1920px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1905,\"width\":1920,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "setup-clinical 1366px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1351,\"width\":1366,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "setup-clinical 1080px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1065,\"width\":1080,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "setup-clinical 820px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":805,\"width\":820,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "setup-clinical 480px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":465,\"width\":480,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "setup-clinical runtime",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "setup-laboratory 1920px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1905,\"width\":1920,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "setup-laboratory 1366px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1351,\"width\":1366,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "setup-laboratory 1080px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1065,\"width\":1080,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "setup-laboratory 820px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":805,\"width\":820,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "setup-laboratory 480px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":465,\"width\":480,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "setup-laboratory runtime",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "setup-pharmacy 1920px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1905,\"width\":1920,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "setup-pharmacy 1366px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1351,\"width\":1366,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "setup-pharmacy 1080px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1065,\"width\":1080,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "setup-pharmacy 820px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":805,\"width\":820,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "setup-pharmacy 480px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":465,\"width\":480,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "setup-pharmacy runtime",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "setup-payment-methods 1920px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1905,\"width\":1920,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "setup-payment-methods 1366px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1351,\"width\":1366,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "setup-payment-methods 1080px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1065,\"width\":1080,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "setup-payment-methods 820px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":805,\"width\":820,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "setup-payment-methods 480px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":465,\"width\":480,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "setup-payment-methods runtime",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "setup-audit 1920px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1905,\"width\":1920,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "setup-audit 1366px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1351,\"width\":1366,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "setup-audit 1080px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1065,\"width\":1080,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "setup-audit 820px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":805,\"width\":820,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "setup-audit 480px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":465,\"width\":480,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "setup-audit runtime",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "login 1920px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1920,\"width\":1920,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "login 1366px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1366,\"width\":1366,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "login 1080px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1080,\"width\":1080,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "login 820px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":820,\"width\":820,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "login 480px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":480,\"width\":480,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "login runtime",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "patients 1920px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1905,\"width\":1920,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "patients 1366px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1351,\"width\":1366,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "patients 1080px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1065,\"width\":1080,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "patients 820px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":805,\"width\":820,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "patients 480px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":465,\"width\":480,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "patients runtime",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "clinical 1920px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1905,\"width\":1920,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "clinical 1366px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1351,\"width\":1366,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "clinical 1080px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1065,\"width\":1080,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "clinical 820px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":805,\"width\":820,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "clinical 480px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":465,\"width\":480,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "clinical runtime",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "consultations 1920px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1905,\"width\":1920,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "consultations 1366px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1351,\"width\":1366,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "consultations 1080px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1065,\"width\":1080,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "consultations 820px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":805,\"width\":820,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "consultations 480px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":465,\"width\":480,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "consultations runtime",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "lab-billing 1920px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1905,\"width\":1920,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "lab-billing 1366px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1351,\"width\":1366,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "lab-billing 1080px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1065,\"width\":1080,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "lab-billing 820px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":805,\"width\":820,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "lab-billing 480px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":465,\"width\":480,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "lab-billing runtime",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "pharmacy-billing 1920px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1905,\"width\":1920,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "pharmacy-billing 1366px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1351,\"width\":1366,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "pharmacy-billing 1080px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1065,\"width\":1080,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "pharmacy-billing 820px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":805,\"width\":820,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "pharmacy-billing 480px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":465,\"width\":480,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "pharmacy-billing runtime",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "prescriptions 1920px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1905,\"width\":1920,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "prescriptions 1366px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1351,\"width\":1366,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "prescriptions 1080px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1065,\"width\":1080,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "prescriptions 820px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":805,\"width\":820,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "prescriptions 480px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":465,\"width\":480,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "prescriptions runtime",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "accounts 1920px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1905,\"width\":1920,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "accounts 1366px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1351,\"width\":1366,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "accounts 1080px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1065,\"width\":1080,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "accounts 820px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":805,\"width\":820,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "accounts 480px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":465,\"width\":480,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "accounts runtime",
+    "ok": true,
+    "detail": ""
+  }
+]

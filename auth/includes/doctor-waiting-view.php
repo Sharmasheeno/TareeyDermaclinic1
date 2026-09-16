@@ -1,11 +1,14 @@
 <?php
-$waitingFilters = ['workspace'=>'1','q'=>$waitingSearch,'from_date'=>$waitingFrom,'to_date'=>$waitingTo,'per_page'=>$waitingPerPage];
+$waitingFilters = ['workspace'=>'1','tab'=>$waitingSchedule ? 'schedule' : 'waiting','q'=>$waitingSearch,'from_date'=>$waitingFrom,'to_date'=>$waitingTo,'per_page'=>$waitingPerPage];
 ?>
 <section class="waiting-screen">
-    <h2>Patient Waiting</h2>
+    <nav class="setup-section-nav no-print" aria-label="Clinical work"><a href="doctors.php?workspace=1" <?= !$waitingSchedule ? 'class="active" aria-current="page"' : '' ?>>Patient Waiting</a><a href="doctors.php?workspace=1&amp;tab=schedule" <?= $waitingSchedule ? 'class="active" aria-current="page"' : '' ?>>My Schedule</a></nav>
+    <h2><?= $waitingSchedule ? 'Scheduled visits' : 'Doctor patient waiting' ?></h2>
+    <?php if ($waitingSchedule): ?><p class="welcome-sub">Visits for the selected dates<?= $superadminDoctorMode ? ' across all doctors' : ' assigned to you' ?>.</p><?php endif; ?>
     <?php if ($waitingDateError): ?><div class="error-msg" role="alert"><?= tdc_e($waitingDateError) ?></div><?php endif; ?>
     <form method="get" class="waiting-toolbar no-print">
         <input type="hidden" name="workspace" value="1">
+        <input type="hidden" name="tab" value="<?= $waitingSchedule ? 'schedule' : 'waiting' ?>">
         <label>Show <select name="per_page"><?php foreach ([10,25,50,100] as $size): ?><option <?= $size === $waitingPerPage ? 'selected' : '' ?>><?= $size ?></option><?php endforeach; ?></select> entries</label>
         <label>From Date <input type="date" name="from_date" value="<?= tdc_e($waitingFrom) ?>"></label>
         <label>To Date <input type="date" name="to_date" value="<?= tdc_e($waitingTo) ?>"></label>

@@ -1230,22 +1230,20 @@ $justVisited = isset($_GET['visited']);
     .error-msg ul{ list-style:none; padding-left:24px; }
     .error-msg li::before{ content:"— "; }
 
-    .form-group{ display:flex; flex-direction:column; }
-    .form-group label{ font-size:11px; font-weight:600; letter-spacing:0.06em; text-transform:uppercase; color:var(--navy); margin-bottom:6px; }
-    .form-group input, .form-group select, .form-group textarea{ width:100%; padding:11px 12px; border:2px solid rgba(46,49,146,0.3); font-size:14px; font-family:'Google Sans', sans-serif; color:var(--navy); background:var(--white); outline:none; transition:border-color 0.15s; }
-    .form-group textarea{ resize:vertical; min-height:70px; }
-    .form-group input::placeholder, .form-group textarea::placeholder{ color:rgba(46,49,146,0.45); }
-    .form-group input:focus, .form-group select:focus, .form-group textarea:focus{ border-color:var(--orange); }
-    .form-group select{ cursor:pointer; }
+
+
+
+
+
+
     .form-row{ display:flex; gap:16px; flex-wrap:wrap; }
     .form-row .form-group{ flex:1; min-width:180px; }
     .checkbox-row{ display:flex; align-items:center; gap:8px; }
     .checkbox-row input{ width:auto; }
-    .btn{ padding:11px 22px; font-size:14px; font-weight:600; border:2px solid var(--navy); cursor:pointer; letter-spacing:0.02em; transition:background 0.12s, color 0.12s, border-color 0.12s; text-decoration:none; display:inline-flex; align-items:center; gap:6px; }
-    .btn-primary{ background:var(--navy); color:var(--white); }
-    .btn-primary:hover{ background:var(--orange); border-color:var(--orange); }
-    .btn-secondary{ background:var(--white); color:var(--navy); }
-    .btn-secondary:hover{ color:var(--orange); border-color:var(--orange); }
+
+
+
+
 
     .setup-grid{ display:grid; grid-template-columns:repeat(3, minmax(220px,1fr)); gap:20px; max-width:920px; }
     .setup-card{ display:flex; align-items:flex-start; gap:14px; padding:20px; border:2px solid var(--navy); text-decoration:none; color:var(--navy); transition:background 0.12s, border-color 0.12s; }
@@ -1263,12 +1261,11 @@ $justVisited = isset($_GET['visited']);
     .search-box input{ padding:10px 12px; border:2px solid rgba(46,49,146,0.3); font-size:13.5px; font-family:'Google Sans',sans-serif; color:var(--navy); min-width:240px; }
     .search-box input:focus{ outline:none; border-color:var(--orange); }
 
-    .data-table-wrap{ max-width:1200px; border:2px solid var(--navy); overflow-x:auto; }
-    .data-table{ width:100%; border-collapse:collapse; }
-    .data-table th, .data-table td{ padding:12px 14px; font-size:13px; text-align:left; border-bottom:1px solid var(--navy-30); white-space:nowrap; }
-    .data-table th{ background:var(--navy-10); font-weight:700; text-transform:uppercase; font-size:11px; letter-spacing:.05em; color:var(--navy); }
-    .data-table tbody tr:last-child td{ border-bottom:none; }
-    .data-table tbody tr:hover{ background:var(--navy-10); }
+
+
+
+
+
     .empty-row td{ text-align:center; padding:28px; color:var(--navy-55); }
 
     .status-badge{ display:inline-block; padding:3px 9px; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.03em; border:1.5px solid var(--navy); color:var(--navy); white-space:nowrap; }
@@ -1277,10 +1274,9 @@ $justVisited = isset($_GET['visited']);
 
     .row-actions{ display:flex; gap:8px; flex-wrap:wrap; }
     .row-actions form{ display:inline; }
-    .btn-sm{ padding:6px 12px; font-size:12px; font-weight:600; border:2px solid var(--navy); cursor:pointer; background:var(--white); color:var(--navy); text-decoration:none; display:inline-flex; align-items:center; }
-    .btn-sm:hover{ background:var(--orange); border-color:var(--orange); color:var(--white); }
-    .btn-sm.danger{ border-color:#c0392b; color:#c0392b; }
-    .btn-sm.danger:hover{ background:#c0392b; border-color:#c0392b; color:var(--white); }
+
+
+
 
     .combo{ position:relative; }
     .combo-list{ position:absolute; top:calc(100% + 4px); left:0; right:0; max-height:220px; overflow-y:auto; background:var(--white); border:2px solid var(--navy); list-style:none; z-index:50; }
@@ -1343,7 +1339,7 @@ $justVisited = isset($_GET['visited']);
             <?php foreach (tdc_navigation(NAV_ITEMS) as $item): ?>
                 <li class="nav-item<?= $item['href'] === $currentPage ? ' active' : '' ?>">
                     <a href="<?= tdc_e($item['href']) ?>" class="nav-link">
-                        <svg viewBox="0 0 20 20"><?= $item['icon'] ?></svg>
+                        <?= tdc_navigation_icon($item['href']) ?>
                         <span><?= tdc_e($item['label']) ?></span>
                     </a>
                 </li>
@@ -1483,10 +1479,10 @@ $justVisited = isset($_GET['visited']);
                 <option value="<?= (int) $sizeOption ?>"<?= $consultationPerPage === $sizeOption ? ' selected' : '' ?>>Show <?= (int) $sizeOption ?></option>
             <?php endforeach; ?>
         </select></label>
-        <button class="btn btn-primary btn-sm" type="submit"><?= tdc_icon('filter', 14) ?><span>Apply</span></button>
+        <button class="btn-primary btn  btn-sm" type="submit"><?= tdc_icon('filter', 14) ?><span>Apply</span></button>
         <span class="toolbar-spacer"></span>
         <?= tdc_export_buttons(['csv' => $consultationExportUrl]) ?>
-        <button type="button" class="btn btn-secondary btn-sm" onclick="window.print()"><?= tdc_icon('printer', 14) ?><span>Export PDF</span></button>
+        <button type="button" class="btn-info btn  btn-sm" onclick="window.print()"><?= tdc_icon('printer', 14) ?><span>Export PDF</span></button>
     </form>
 
     <div class="data-table-wrap"><table class="data-table"><thead><tr><th>Appointment</th><th>Patient</th><th>Gender</th><th>Age</th><th>Phone</th><th>Visit date</th><th>Queue</th><th>Payment</th><th>Actions</th></tr></thead><tbody>
@@ -1502,7 +1498,7 @@ $justVisited = isset($_GET['visited']);
             <td><?= tdc_e(date('d M Y H:i', strtotime((string) $v['VisitDate']))) ?></td>
             <td><?= tdc_badge((string) $v['QueueStatus']) ?></td>
             <td><?= tdc_badge((string) $v['PaymentStatus']) ?></td>
-            <td><?php if (tdc_can('doctor.workspace')): ?><a class="btn-sm" href="doctors.php?visit=<?= (int) $v['VisitID'] ?>" title="Open consultation workspace">Open</a><?php endif; ?><?php if ((float) $v['DueBalance'] > 0 && $v['QueueStatus'] === 'Pending Payment'): ?><form method="post" action="reception.php?section=consultations" class="balance-form"><input type="hidden" name="csrf_token" value="<?= tdc_e($csrfToken) ?>"><input type="hidden" name="form_action" value="collect"><input type="hidden" name="VisitID" value="<?= (int) $v['VisitID'] ?>"><input aria-label="Payment amount" type="number" name="PaymentAmount" min="0.01" max="<?= tdc_e((string) $v['DueBalance']) ?>" step="0.01" value="<?= tdc_e((string) $v['DueBalance']) ?>" required><select aria-label="Payment method" name="PaymentMethod"><?php foreach ($paymentMethods as $method): ?><option><?= tdc_e($method['MethodName']) ?></option><?php endforeach; ?></select><button class="btn-sm" type="submit">Collect</button></form><?php elseif ((float) $v['DueBalance'] > 0): ?><span class="cell-sub">Balance <?= number_format((float) $v['DueBalance'], 2) ?></span><?php else: ?><span class="cell-sub">Settled</span><?php endif; ?></td>
+            <td><?php if (tdc_can('doctor.workspace')): ?><a class="btn-sm" href="doctors.php?visit=<?= (int) $v['VisitID'] ?>" title="Open consultation workspace">Open</a><?php endif; ?><?php if ((float) $v['DueBalance'] > 0 && $v['QueueStatus'] === 'Pending Payment'): ?><form method="post" action="reception.php?section=consultations" class="balance-form"><input type="hidden" name="csrf_token" value="<?= tdc_e($csrfToken) ?>"><input type="hidden" name="form_action" value="collect"><input type="hidden" name="VisitID" value="<?= (int) $v['VisitID'] ?>"><input aria-label="Payment amount" type="number" name="PaymentAmount" min="0.01" max="<?= tdc_e((string) $v['DueBalance']) ?>" step="0.01" value="<?= tdc_e((string) $v['DueBalance']) ?>" required><select aria-label="Payment method" name="PaymentMethod"><?php foreach ($paymentMethods as $method): ?><option><?= tdc_e($method['MethodName']) ?></option><?php endforeach; ?></select><button class="btn-success btn-sm" type="submit">Collect</button></form><?php elseif ((float) $v['DueBalance'] > 0): ?><span class="cell-sub">Balance <?= number_format((float) $v['DueBalance'], 2) ?></span><?php else: ?><span class="cell-sub">Settled</span><?php endif; ?></td>
         </tr>
     <?php endforeach; endif; ?>
     </tbody></table></div>
@@ -1531,10 +1527,10 @@ $justVisited = isset($_GET['visited']);
                 <?php foreach ($doctors as $d): ?><option value="<?= (int) $d['DoctorID'] ?>" <?= $patientDoctorFilter === (int) $d['DoctorID'] ? 'selected' : '' ?>><?= tdc_e($d['DoctorName']) ?></option><?php endforeach; ?>
             </select>
             <input type="date" name="registered" value="<?= tdc_e($patientDateFilter) ?>" aria-label="Registration date">
-            <button type="submit" class="btn btn-secondary">Filter</button>
+            <button type="submit" class="btn-primary btn "><?= tdc_icon('search',16) ?><span>Filter</span></button>
             <?php if ($patientSearch !== '' || $patientTypeFilter !== '' || $patientDoctorFilter > 0 || $patientDateFilter !== ''): ?><a href="reception.php?section=patients" class="clear-filters">Clear</a><?php endif; ?>
         </form>
-        <?php if($canPatientCreate):?><button type="button" id="addPatientBtn" class="btn btn-primary">+ Register Patient</button><?php endif;?>
+        <?php if($canPatientCreate):?><button type="button" id="addPatientBtn" class="btn btn-success">+ Register Patient</button><?php endif;?>
     </div>
 
     <div class="data-table-wrap">
@@ -1558,7 +1554,7 @@ $justVisited = isset($_GET['visited']);
                     <td><?= tdc_e(date('Y-m-d', strtotime((string) $p['RegisteredAt']))) ?></td>
                     <td>
                         <div class="row-actions">
-                            <?php if($canPatientEdit):?><button type="button" class="btn-sm edit-patient-btn"
+                            <?php if($canPatientEdit):?><button type="button" class="btn-warning btn-sm edit-patient-btn"
                                 data-id="<?= (int) $p['PatientID'] ?>"
                                 data-name="<?= tdc_e($p['PatientName']) ?>"
                                 data-phone="<?= tdc_e((string) $p['PatientPhone']) ?>"
@@ -1568,13 +1564,13 @@ $justVisited = isset($_GET['visited']);
                                 data-dob="<?= tdc_e((string) $p['DateOfBirth']) ?>"
                                 data-type="<?= tdc_e((string) $p['PatientType']) ?>"
                                 data-doctor="<?= tdc_e((string) $p['AllocatedDoctor']) ?>"
-                                data-remark="<?= tdc_e((string) $p['Remark']) ?>">Edit</button><?php endif;?>
+                                data-remark="<?= tdc_e((string) $p['Remark']) ?>"><?= tdc_icon('pencil',16) ?><span>Edit</span></button><?php endif;?>
                             <?php if($canBookConsultation):?><a class="btn-sm" href="reception.php?section=consultations&amp;patient=<?= (int) $p['PatientID'] ?>">Book</a><?php endif;?>
-                            <?php if($canPatientDelete):?><form method="POST" action="reception.php?section=patients" onsubmit="return confirm('Delete this patient? This cannot be undone.');">
+                            <?php if($canPatientDelete):?><form method="POST" action="reception.php?section=patients" data-confirm="Delete this patient? This cannot be undone.">
                                 <input type="hidden" name="csrf_token" value="<?= tdc_e($csrfToken) ?>">
                                 <input type="hidden" name="form_action" value="delete">
                                 <input type="hidden" name="PatientID" value="<?= (int) $p['PatientID'] ?>">
-                                <button type="submit" class="btn-sm danger">Delete</button>
+                                <button type="submit" class="btn-danger btn-sm danger">Delete</button>
                             </form><?php endif;?>
                         </div>
                     </td>
@@ -1649,7 +1645,7 @@ $justVisited = isset($_GET['visited']);
 
                     <div class="modal-actions">
                         <button type="button" class="btn btn-secondary" id="patientModalCancelBtn">Cancel</button>
-                        <button type="submit" class="btn btn-primary">Save Patient</button>
+                        <button type="submit" class="btn-success  btn "><?= tdc_icon('check',16) ?><span>Save Patient</span></button>
                     </div>
                 </div>
             </form>
@@ -1680,7 +1676,7 @@ $justVisited = isset($_GET['visited']);
                     <td><?= number_format((float)$l['AmountPaid'],2) ?></td><td><?= number_format((float)$l['DueBalance'],2) ?></td>
                     <td><span class="status-badge<?= $l['PaymentStatus'] === 'Unpaid' ? ' danger' : ($l['PaymentStatus'] === 'Partial' ? ' warn' : '') ?>"><?= tdc_e($l['PaymentStatus']) ?></span></td>
                     <td>
-                        <?php if((float)$l['DueBalance']>0 && in_array($l['WorkflowStatus'],['Requested','Awaiting Payment'],true)): ?><form method="POST" action="reception.php?section=laboratory" class="balance-form"><input type="hidden" name="csrf_token" value="<?= tdc_e($csrfToken) ?>"><input type="hidden" name="form_action" value="collect"><input type="hidden" name="LaboratoryID" value="<?= tdc_e($l['LaboratoryID']) ?>"><input aria-label="Amount received" type="number" name="PaymentAmount" min="0.01" max="<?= tdc_e((string)$l['DueBalance']) ?>" step="0.01" value="<?= tdc_e((string)$l['DueBalance']) ?>" required><select aria-label="Payment method" name="PaymentMethod" required><option value="">Select method</option><?php foreach($paymentMethods as $method):?><option><?=tdc_e($method['MethodName'])?></option><?php endforeach;?></select><button class="btn-sm" type="submit">Record Payment</button></form><?php else: ?><span class="status-badge"><?= tdc_e($l['WorkflowStatus']) ?></span><?php endif; ?>
+                        <?php if((float)$l['DueBalance']>0 && in_array($l['WorkflowStatus'],['Requested','Awaiting Payment'],true)): ?><form method="POST" action="reception.php?section=laboratory" class="balance-form"><input type="hidden" name="csrf_token" value="<?= tdc_e($csrfToken) ?>"><input type="hidden" name="form_action" value="collect"><input type="hidden" name="LaboratoryID" value="<?= tdc_e($l['LaboratoryID']) ?>"><input aria-label="Amount received" type="number" name="PaymentAmount" min="0.01" max="<?= tdc_e((string)$l['DueBalance']) ?>" step="0.01" value="<?= tdc_e((string)$l['DueBalance']) ?>" required><select aria-label="Payment method" name="PaymentMethod" required><option value="">Select method</option><?php foreach($paymentMethods as $method):?><option><?=tdc_e($method['MethodName'])?></option><?php endforeach;?></select><button class="btn-success btn-sm" type="submit">Record Payment</button></form><?php else: ?><?= tdc_badge($l['WorkflowStatus']) ?><?php endif; ?>
                     </td>
                 </tr>
                 <?php endforeach; endif; ?>
@@ -1700,7 +1696,7 @@ $justVisited = isset($_GET['visited']);
 
     <div class="section-toolbar">
         <div></div>
-        <a href="reception.php?section=pharmacy&new=1" class="btn btn-primary">+ New Pharmacy Bill</a>
+        <a href="reception.php?section=pharmacy&new=1" class="btn-success btn ">+ New Pharmacy Bill</a>
     </div>
 
     <div class="data-table-wrap">
@@ -1721,13 +1717,13 @@ $justVisited = isset($_GET['visited']);
                     <td><?= tdc_e(date('Y-m-d', strtotime((string) $b['PrescriptionDate']))) ?></td>
                     <td>
                         <div class="row-actions">
-                            <a href="reception.php?section=pharmacy&edit=<?= urlencode($b['BillRef']) ?>" class="btn-sm">Edit</a>
-                            <a href="../print_prescription.php?ref=<?= urlencode($b['BillRef']) ?>" class="btn-sm" target="_blank" rel="noopener">Print</a>
-                            <form method="POST" action="reception.php?section=pharmacy" onsubmit="return confirm('Delete this entire pharmacy bill? This cannot be undone.');">
+                            <a href="reception.php?section=pharmacy&edit=<?= urlencode($b['BillRef']) ?>" class="btn-warning btn-sm"><?= tdc_icon('pencil',16) ?><span>Edit</span></a>
+                            <a href="../print_prescription.php?ref=<?= urlencode($b['BillRef']) ?>" class="btn-info btn-sm" target="_blank" rel="noopener"><?= tdc_icon('printer',16) ?><span>Print</span></a>
+                            <form method="POST" action="reception.php?section=pharmacy" data-confirm="Delete this entire pharmacy bill? This cannot be undone.">
                                 <input type="hidden" name="csrf_token" value="<?= tdc_e($csrfToken) ?>">
                                 <input type="hidden" name="form_action" value="delete">
                                 <input type="hidden" name="BillRef" value="<?= tdc_e($b['BillRef']) ?>">
-                                <button type="submit" class="btn-sm danger">Delete</button>
+                                <button type="submit" class="btn-danger btn-sm danger">Delete</button>
                             </form>
                         </div>
                     </td>
@@ -1793,7 +1789,7 @@ $justVisited = isset($_GET['visited']);
                 </tbody>
             </table>
         </div>
-        <button type="button" class="btn btn-secondary add-line-btn" id="addLineBtn">+ Add Medication Line</button>
+        <button type="button" class="btn-success  btn  add-line-btn" id="addLineBtn"><?= tdc_icon('plus',16) ?><span>+ Add Medication Line</span></button>
 
         <div class="totals-row">
             <div class="form-group"><label for="rf_TotalAmount">Total Amount</label>
@@ -1806,7 +1802,7 @@ $justVisited = isset($_GET['visited']);
 
         <div class="form-actions">
             <a href="reception.php?section=pharmacy" class="btn btn-secondary">Cancel</a>
-            <button type="submit" class="btn btn-primary">Save Pharmacy Bill</button>
+            <button type="submit" class="btn-success  btn "><?= tdc_icon('check',16) ?><span>Save Pharmacy Bill</span></button>
         </div>
     </form>
 

@@ -1,0 +1,42 @@
+<?php
+// Real requests and mutations against the disposable schema owned by test_role_access.php.
+foreach (['receptionuser','superuser'] as $index=>$role) {
+    $itemId='ITM'.str_pad((string)($index+3),6,'0',STR_PAD_LEFT);
+    $medicine='Operational Medicine '.$role;
+    $stock=['form_action'=>'save','ItemID'=>'','ItemName'=>$medicine,'Category'=>'Medicine','QuantityInStock'=>'10','SalesUnit'=>'Tablet','SellingPrice'=>'8.50','ReorderLevel'=>'2','ExpiryDate'=>'2028-12-31'];
+    $cases[]=['name'=>"$role creates medicine",'role'=>$role,'page'=>'pharmacy.php','get'=>['section'=>'inventory'],'post'=>$stock,'status'=>302,'sql'=>[["SELECT SellingPrice FROM Inventory WHERE ItemID='$itemId'",'8.50'],["SELECT QuantityInStock FROM Inventory WHERE ItemID='$itemId'",'10']]];
+    $cases[]=['name'=>"$role edits medicine",'role'=>$role,'page'=>'pharmacy.php','get'=>['section'=>'inventory'],'post'=>array_replace($stock,['ItemID'=>$itemId,'SellingPrice'=>'9.50']),'status'=>302,'sql'=>[["SELECT SellingPrice FROM Inventory WHERE ItemID='$itemId'",'9.50']]];
+    $cases[]=['name'=>"$role POS uses selling price and records partial payment",'role'=>$role,'page'=>'pharmacy.php','get'=>['section'=>'pos'],'post'=>['CustomerName'=>'Operational '.$role,'CustomerPhone'=>'','AmountPaid'=>'10','ItemID'=>[$itemId],'Quantity'=>['2'],'UnitPrice'=>['0.01']],'status'=>302,'sql'=>[["SELECT TotalAmount FROM PharmacySales WHERE CustomerName='Operational $role'",'19.00'],["SELECT DueBalance FROM PharmacySales WHERE CustomerName='Operational $role'",'9.00'],["SELECT QuantityInStock FROM Inventory WHERE ItemID='$itemId'",'8']]];
+    $rx='OPRX'.($index+1);
+    $cases[]=['name'=>"$role fulfills prescription",'role'=>$role,'page'=>'pharmacy.php','get'=>['section'=>'prescriptions'],'before_sql'=>["INSERT INTO Prescriptions (PrescriptionID,PatientID,VisitID,PatientName,DoctorID,MedicationName,Quantity,Status) VALUES ('$rx-01',1,1,'Test Patient',1,'$medicine',1,'Pending')"],'post'=>['form_action'=>'dispense','PrescriptionReference'=>$rx,'AmountPaid'=>'9.50','PaymentMethod'=>'Cash'],'status'=>302,'sql'=>[["SELECT Status FROM Prescriptions WHERE PrescriptionID='$rx-01'",'Dispensed'],["SELECT QuantityInStock FROM Inventory WHERE ItemID='$itemId'",'7']]];
+    $lab='OPLAB'.($index+1);
+    $cases[]=['name'=>"$role starts laboratory work",'role'=>$role,'page'=>'laboratory.php','before_sql'=>["INSERT INTO Laboratory (LaboratoryID,PatientID,VisitID,DoctorID,TestName,TotalAmount,AmountPaid,DueBalance,PaymentStatus,WorkflowStatus) VALUES ('$lab',1,1,1,'Operational test',10,10,0,'Paid','Ready')"],'post'=>['form_action'=>'start','LaboratoryID'=>$lab],'status'=>302,'sql'=>[["SELECT WorkflowStatus FROM Laboratory WHERE LaboratoryID='$lab'",'In Progress']]];
+    $cases[]=['name'=>"$role completes laboratory results",'role'=>$role,'page'=>'laboratory.php','post'=>['form_action'=>'save','LaboratoryID'=>$lab,'Result'=>'Negative','Description'=>'Test result','IsAvailable'=>'1'],'status'=>302,'sql'=>[["SELECT WorkflowStatus FROM Laboratory WHERE LaboratoryID='$lab'",'Completed'],["SELECT TotalAmount FROM Laboratory WHERE LaboratoryID='$lab'",'10.00']]];
+    $cases[]=['name'=>"$role posts balanced expense",'role'=>$role,'page'=>'accounting.php','get'=>['section'=>'ledger'],'post'=>['form_action'=>'save','TransactionDate'=>date('Y-m-d'),'BookType'=>'General Journal','ReferenceID'=>'OP-'.$role,'Description'=>'Operational expense test','AccountName'=>['Office supplies','Cash'],'AccountType'=>['Expense','Asset'],'Debit'=>['15','0'],'Credit'=>['0','15']],'status'=>302,'sql'=>[["SELECT COUNT(*) FROM Accounting WHERE ReferenceID='OP-$role'",'2'],["SELECT SUM(Debit)-SUM(Credit) FROM Accounting WHERE ReferenceID='OP-$role'",'0.00']]];
+    $cases[]=['name'=>"$role registers patient",'role'=>$role,'page'=>'reception.php','get'=>['section'=>'patients'],'post'=>['form_action'=>'save','PatientName'=>'Operational Patient '.$role,'PatientPhone'=>'61590000'.($index+1),'Gender'=>'Female','Age'=>'30','PatientType'=>'New Patient','AllocatedDoctor'=>''],'status'=>302,'sql'=>[["SELECT COUNT(*) FROM Patients WHERE PatientName='Operational Patient $role'",'1']]];
+    $cases[]=['name'=>"$role books supported visit",'role'=>$role,'page'=>'reception.php','get'=>['section'=>'consultations'],'post'=>['PatientID'=>'1','DoctorID'=>'1','VisitDate'=>date('Y-m-d\TH:i'),'AmountPaid'=>'25','PaymentMethod'=>'Cash','ChiefComplaint'=>'OP-'.$role],'status'=>302,'sql'=>[["SELECT QueueStatus FROM Visits WHERE ChiefComplaint='OP-$role'",'Waiting']]];
+}
+foreach (['users','roles','permissions','audit','payment-methods'] as $section) $cases[]=['name'=>'Reception denied Setup '.$section,'role'=>'receptionuser','page'=>'setup.php','get'=>['section'=>$section],'post'=>['setup_action'=>'save_user'],'status'=>403];
+$cases[]=['name'=>'Reception cannot author clinical notes','role'=>'receptionuser','page'=>'doctors.php','get'=>['visit'=>'1'],'post'=>['portal_action'=>'save_notes','VisitID'=>'1','Diagnosis'=>'Unauthorized'],'status'=>403];
+$cases[]=['name'=>'Reception cannot rename financial configuration','role'=>'receptionuser','page'=>'accounting.php','get'=>['section'=>'accounts'],'post'=>['form_action'=>'rename','AccountID'=>'REV-PHARM','NewName'=>'Unauthorized'],'status'=>403];
+$cases[]=['name'=>'Reception financial configuration controls absent','role'=>'receptionuser','page'=>'accounting.php','get'=>['section'=>'accounts'],'absent'=>['class="btn-sm rename-account-btn"']];
+// Snapshots contain only disposable fixtures, for browser layout and interaction checks.
+$views=[
+    'dashboard'=>['home.php',[]], 'reception'=>['reception.php',[]], 'registration'=>['reception.php',['section'=>'patients']],
+    'waiting'=>['doctors.php',['workspace'=>'1']], 'schedule'=>['doctors.php',['workspace'=>'1','tab'=>'schedule']], 'doctors'=>['doctors.php',[]],
+    'laboratory'=>['laboratory.php',[]], 'inventory'=>['pharmacy.php',['section'=>'inventory']], 'purchase'=>['pharmacy.php',['section'=>'purchases','new'=>'1']],
+    'purchases'=>['pharmacy.php',['section'=>'purchases']], 'pos'=>['pharmacy.php',['section'=>'pos','new'=>'1']],
+    'accounting'=>['accounting.php',['section'=>'ledger']], 'expense'=>['accounting.php',['section'=>'ledger','new'=>'1']],
+    'reports'=>['reports.php',[]], 'setup'=>['setup.php',['section'=>'users']],
+];
+foreach ($views as $name=>[$page,$get]) $cases[]=['name'=>'Render '.$name,'snapshot'=>'ui-'.$name,'role'=>'superuser','page'=>$page,'get'=>$get,'absent'=>['Fatal error','Warning:','Access denied']];
+$cases[]=['name'=>'Render Reception combined navigation','snapshot'=>'ui-reception-role','role'=>'receptionuser','page'=>'pharmacy.php','get'=>['section'=>'inventory'],'contains'=>['href="pharmacy.php"','href="laboratory.php"','href="accounting.php"'],'absent'=>['href="setup.php"','href="doctors.php"','Purchase Price','name="UnitPrice[]"']];
+$cases[]=['name'=>'Render Pharmacy dedicated navigation','snapshot'=>'ui-pharmacy-role','role'=>'pharmacyuser','page'=>'pharmacy.php','get'=>['section'=>'inventory'],'absent'=>['href="setup.php"','href="doctors.php"','href="accounting.php"','Purchase Price','name="UnitPrice[]"']];
+
+foreach (['superuser','receptionuser','pharmacyuser'] as $role) {
+    $name='Unit regression '.$role;
+    $fields=['form_action'=>'save','ItemID'=>'','ItemName'=>$name,'Category'=>'Medicine','QuantityInStock'=>'3','SalesUnit'=>'Bottle','SellingPrice'=>'3.25','ReorderLevel'=>'1','ExpiryDate'=>'2028-01-01'];
+    $cases[]=['name'=>"$role unit create persists",'role'=>$role,'page'=>'pharmacy.php','get'=>['section'=>'inventory'],'post'=>$fields,'status'=>302,'sql'=>[["SELECT SalesUnit FROM Inventory WHERE ItemName='$name'",'Bottle'],["SELECT SellingPrice FROM Inventory WHERE ItemName='$name'",'3.25'],["SELECT QuantityInStock FROM Inventory WHERE ItemName='$name'",3]]];
+    foreach (['SellingPrice','QuantityInStock','ReorderLevel'] as $field) $cases[]=['name'=>"$role rejects negative $field",'role'=>$role,'page'=>'pharmacy.php','get'=>['section'=>'inventory'],'post'=>array_replace($fields,[$field=>'-1','ItemName'=>'Invalid negative '.$role]),'sql'=>[["SELECT COUNT(*) FROM Inventory WHERE ItemName='Invalid negative $role'",0]]];
+}
+$cases[]=['name'=>'Editable permission form snapshot','role'=>'superuser','page'=>'setup.php','get'=>['section'=>'permissions','role_id'=>$accountantRoleId],'snapshot'=>'ui-permissions-edit','contains'=>['permission-form']];

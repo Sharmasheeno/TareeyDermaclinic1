@@ -29,7 +29,8 @@ if (($argv[1] ?? '') === 'worker') {
         $html = ob_get_clean();
         if (isset($case['snapshot'])) {
             $assetRoot = 'file:///' . str_replace('\\', '/', realpath(__DIR__ . '/../auth/assets')) . '/';
-            file_put_contents(sys_get_temp_dir() . '/tdc-' . $case['snapshot'] . '.html', str_replace('../assets/', $assetRoot, $html));
+            $uploadRoot = 'file:///' . str_replace('\\', '/', realpath(__DIR__ . '/../auth/uploads')) . '/';
+            file_put_contents(sys_get_temp_dir() . '/tdc-' . $case['snapshot'] . '.html', str_replace(['../assets/', '../uploads/'], [$assetRoot, $uploadRoot], $html));
         }
         $failures = [];
         $status = http_response_code() ?: 200;
@@ -58,6 +59,10 @@ try {
     foreach (['Roles','Permissions','RolePermissions','PaymentMethods'] as $seedTable) {
         $test->exec('INSERT INTO `' . $seedTable . '` SELECT * FROM `' . DB_NAME . '`.`' . $seedTable . '`');
     }
+    require_once __DIR__ . '/../auth/includes/operational-role-defaults.php';
+    tdc_apply_operational_role_defaults($test);
+    // Explicit isolated baseline: live Setup grants may be customized by clinic administrators.
+    $test->exec("DELETE rp FROM RolePermissions rp JOIN Roles r ON r.RoleID=rp.RoleID JOIN Permissions p ON p.PermissionID=rp.PermissionID WHERE r.RoleKey='receptionuser' AND p.PermissionKey IN ('doctors.view','doctors.export')");
     $roles = ['superuser', 'receptionuser', 'doctoruser', 'pharmacyuser', 'labuser'];
     $stmt = $test->prepare('INSERT INTO users (userlegalname,role,role_id,username,password,is_active,is_root) SELECT ?,r.RoleKey,r.RoleID,?,?,1,? FROM Roles r WHERE r.RoleKey=?');
     foreach ($roles as $role) $stmt->execute(['Test ' . $role, $role, password_hash('Test-only-123!', PASSWORD_DEFAULT), $role === 'superuser' ? 1 : 0, $role]);
@@ -76,17 +81,17 @@ try {
     $test->exec("INSERT INTO LabServices (ServiceName,Category,Price,IsActive) VALUES ('CBC','Haematology',10,1),('Blood Sugar','Chemistry',5,1)");
     $test->exec("INSERT INTO Inventory (ItemID,Category,ItemName,QuantityInStock,SalesUnit,SellingPrice,ReorderLevel) VALUES ('ITM000001','Medicine','Test Cream',10,'Tube',10,2), ('ITM000002','Medicine','Test Wash',10,'Bottle',5,2)");
     $pages = ['home.php', 'reception.php', 'doctors.php', 'patients.php', 'laboratory.php', 'pharmacy.php', 'accounting.php', 'reports.php', 'setup.php'];
-    $allowed = ['superuser' => $pages, 'receptionuser' => ['home.php', 'reception.php', 'patients.php'], 'doctoruser' => ['home.php', 'doctors.php'], 'pharmacyuser' => ['home.php', 'pharmacy.php'], 'labuser' => ['home.php', 'laboratory.php']];
+    $allowed = ['superuser' => $pages, 'receptionuser' => ['home.php', 'reception.php', 'patients.php', 'pharmacy.php', 'laboratory.php', 'accounting.php', 'reports.php'], 'doctoruser' => ['home.php', 'doctors.php'], 'pharmacyuser' => ['home.php', 'pharmacy.php'], 'labuser' => ['home.php', 'laboratory.php']];
     $cases = [];
     foreach ($roles as $role) foreach ($pages as $page) {
         $access = in_array($page, $allowed[$role], true);
         $cases[] = ['name' => "$role $page", 'role' => $role, 'page' => $page, 'status' => $access ? 200 : 403, 'contains' => [$access ? 'profile-trigger' : 'Access denied']];
     }
     foreach ($roles as $role) {
-        $cases[] = ['name' => "$role dashboard navigation", 'role' => $role, 'page' => 'home.php', 'contains' => ['dashboard-metrics'], 'absent' => $role === 'superuser' ? [] : ['href="settings.php', 'href="reports.php', 'href="accounting.php']];
+        $cases[] = ['name' => "$role dashboard navigation", 'role' => $role, 'page' => 'home.php', 'contains' => ['dashboard-metrics'], 'absent' => $role === 'superuser' ? [] : ($role === 'receptionuser' ? ['href="settings.php','href="setup.php','href="doctors.php'] : ['href="settings.php', 'href="reports.php', 'href="accounting.php'])];
     }
     $cases[] = ['name' => 'Doctor has dedicated workspace', 'role' => 'doctoruser', 'page' => 'doctors.php', 'contains' => ['Doctor Workspace', 'Patient Waiting'], 'absent' => ['Add Doctor']];
-    $cases[] = ['name' => 'Pharmacist sees only permitted operations', 'role' => 'pharmacyuser', 'page' => 'pharmacy.php', 'contains' => ['href="pharmacy.php?section=prescriptions"', 'href="pharmacy.php?section=pos"'], 'absent'=>['href="pharmacy.php?section=purchases"','href="pharmacy.php?section=inventory"']];
+    $cases[] = ['name' => 'Pharmacist sees only permitted operations', 'role' => 'pharmacyuser', 'page' => 'pharmacy.php', 'contains' => ['href="pharmacy.php?section=prescriptions"', 'href="pharmacy.php?section=pos"','href="pharmacy.php?section=purchases"','href="pharmacy.php?section=inventory"'], 'absent'=>['href="setup.php"','href="accounting.php"']];
     $cases[] = ['name' => 'Setup exposes system and custom role architecture', 'role' => 'superuser', 'page' => 'setup.php', 'get' => ['section'=>'roles'], 'contains' => ['SuperAdmin','Reception','Doctor','Pharmacy','Laboratory','Add Role'], 'sql'=>[["SELECT DATA_TYPE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='users' AND COLUMN_NAME='role'",'varchar']]];
     $cases[] = ['name' => 'SuperAdmin configures authoritative lab service in Setup', 'role' => 'superuser', 'page' => 'setup.php', 'get'=>['section'=>'laboratory'], 'post' => ['setup_action'=>'save_lab_service','service_name'=>'Skin Biopsy','category'=>'Dermatology','description'=>'QA service','price'=>'30.00','is_available'=>'1','is_active'=>'1'], 'status'=>302, 'sql'=>[["SELECT Price FROM LabServices WHERE ServiceName='Skin Biopsy'",'30.00']]];
     $labRoleId=(int)$test->query("SELECT RoleID FROM Roles WHERE RoleKey='labuser'")->fetchColumn();
@@ -177,6 +182,7 @@ try {
     }
     $cases[] = ['name' => 'Non-root SuperAdmin opens doctor workspace for assigned visit', 'role' => 'superadmin_nonroot', 'session_role' => 'superuser', 'page' => 'doctors.php', 'get' => ['workspace' => '1', 'doctor' => '1'], 'status' => 200, 'contains' => ['Doctor Workspace'], 'absent' => ['Access denied', 'Fatal error']];
     $cases[] = ['name' => 'Non-root SuperAdmin sees doctor workspace action in directory', 'role' => 'superadmin_nonroot', 'session_role' => 'superuser', 'page' => 'doctors.php', 'status' => 200, 'contains' => ['workspace=1'], 'absent' => ['Access denied']];
+    require __DIR__ . '/operational_ui_cases.php';
     require __DIR__ . '/purchase_waiting_cases.php';
     foreach ($cases as $case) {
         if (in_array($case['name'], ['Lab saves results without changing bill', 'Deleted account loses access'], true)) $case['status'] = 302;
@@ -195,6 +201,14 @@ try {
         }
     }
     echo count($cases) . ' checks; ' . $failed . ' failed.' . PHP_EOL;
+    if (in_array('--http', $argv, true)) {
+        $env = getenv();
+        $env['TDC_TEST_DB'] = $testDb;
+        $env['TDC_TEST_SECRET'] = bin2hex(random_bytes(24));
+        $env['TDC_TEST_PHP'] = PHP_BINARY;
+        $process = proc_open(['node', __DIR__ . '/test_ui_http.mjs'], [1=>STDOUT, 2=>STDERR], $pipes, dirname(__DIR__), $env);
+        if (proc_close($process) !== 0) $failed++;
+    }
 } finally {
     $pdo->exec('DROP DATABASE `' . $testDb . '`');
 }

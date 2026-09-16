@@ -39,6 +39,9 @@ if (!function_exists('tdc_icon')) {
     {
         static $paths = [
             'grid'         => '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
+            'logout'       => '<path d="M9 4H4v16h5M14 8l4 4-4 4M8 12h12"/>',
+            'chart'        => '<path d="M3 3v18h18M7 17v-5M12 17V7M17 17V4"/>',
+            'bell'         => '<path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/>',
             'building'     => '<path d="M4 21V5a2 2 0 0 1 2-2h7a2 2 0 0 1 2 2v16"/><path d="M15 9h3a2 2 0 0 1 2 2v10"/><path d="M8 7h3M8 11h3M8 15h3M2 21h20"/>',
             'users'        => '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
             'user'         => '<path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>',
@@ -98,6 +101,8 @@ if (!function_exists('tdc_badge')) {
             'inactive' => 'neutral', 'cancelled' => 'danger', 'canceled' => 'danger', 'unpaid' => 'danger', 'not linked' => 'danger',
             'pending' => 'warn', 'pending payment' => 'warn', 'partial' => 'warn', 'waiting' => 'warn', 'unavailable' => 'warn',
             'in consultation' => 'info', 'in progress' => 'info', 'requested' => 'info',
+            'available' => 'success', 'ready' => 'info', 'processing' => 'info', 'scheduled' => 'info',
+            'low stock' => 'warn', 'expired' => 'danger', 'failed' => 'danger', 'draft' => 'neutral', 'unknown' => 'neutral',
         ];
         $lookup = strtolower(trim((string) $label));
         if (isset($map[$lookup])) $tone = $map[$lookup];
@@ -329,17 +334,23 @@ if (!function_exists('tdc_export_buttons')) {
     {
         $html = '<div class="export-group">';
         if (!empty($links['csv'])) {
-            $html .= '<a class="btn btn-secondary btn-sm" href="' . tdc_ui_h($links['csv']) . '">' . tdc_icon('download', 14) . '<span>Export CSV</span></a>';
+            $html .= '<a class="btn btn-info btn-sm" href="' . tdc_ui_h($links['csv']) . '">' . tdc_icon('download', 14) . '<span>Export CSV</span></a>';
         }
         if (!empty($links['excel'])) {
-            $html .= '<a class="btn btn-secondary btn-sm" href="' . tdc_ui_h($links['excel']) . '">' . tdc_icon('file-text', 14) . '<span>Excel</span></a>';
+            $html .= '<a class="btn btn-info btn-sm" href="' . tdc_ui_h($links['excel']) . '">' . tdc_icon('file-text', 14) . '<span>Excel</span></a>';
         }
         if (!empty($links['pdf'])) {
-            $html .= '<a class="btn btn-secondary btn-sm" href="' . tdc_ui_h($links['pdf']) . '">' . tdc_icon('file-text', 14) . '<span>PDF</span></a>';
+            $html .= '<a class="btn btn-info btn-sm" href="' . tdc_ui_h($links['pdf']) . '">' . tdc_icon('file-text', 14) . '<span>PDF</span></a>';
         }
         if ($withPrint) {
-            $html .= '<button type="button" class="btn btn-secondary btn-sm" data-print-page>' . tdc_icon('printer', 14) . '<span>Print</span></button>';
+            $html .= '<button type="button" class="btn btn-info btn-sm" data-print-page>' . tdc_icon('printer', 14) . '<span>Print</span></button>';
         }
         return $html . '</div>';
     }
+}
+
+function tdc_navigation_icon(string $page): string
+{
+    $icons = ['home.php'=>'grid','reception.php'=>'bell','patients.php'=>'users','doctors.php'=>'stethoscope','laboratory.php'=>'flask','pharmacy.php'=>'pill','accounting.php'=>'wallet','reports.php'=>'chart','setup.php'=>'sliders'];
+    return tdc_icon($icons[$page] ?? 'grid',18);
 }

@@ -14,6 +14,14 @@
     document.addEventListener('keydown', event => {
         if (event.key === 'Escape' && !panel.hidden) { close(); trigger.focus(); }
     });
+    trigger.addEventListener('keydown', event => {
+        if (event.key !== 'ArrowDown') return;
+        event.preventDefault(); panel.hidden = false;
+        trigger.setAttribute('aria-expanded', 'true'); panel.querySelector('a')?.focus();
+    });
+    document.addEventListener('focusin', event => {
+        if (!event.target.closest('.profile-area')) close();
+    });
     document.querySelectorAll('[data-menu] .icon-btn').forEach(button => {
         button.setAttribute('aria-expanded', 'false');
         button.setAttribute('title', button.getAttribute('aria-label') || 'Notifications');
@@ -25,6 +33,7 @@
 document.addEventListener('submit', event => {
     const form = event.target;
     if (!(form instanceof HTMLFormElement)) return;
+    if (event.defaultPrevented) return;
     if (form.dataset.submitting === 'true') {
         event.preventDefault();
         return;
@@ -56,9 +65,16 @@ document.addEventListener('submit', event => {
     const lock = () => {
         const open = openOverlays();
         document.body.classList.toggle('modal-open', open.length > 0);
-        if (open.length === 0) return;
+        if (open.length === 0) {
+            const target = lastFocus;
+            lastFocus = null;
+            if (target && document.body.contains(target)) target.focus({ preventScroll: true });
+            return;
+        }
         if (!lastFocus || !document.body.contains(lastFocus)) lastFocus = document.activeElement;
         const panel = open[open.length - 1].querySelector('.modal-box, [role="dialog"]');
+        open[open.length - 1].removeAttribute('aria-hidden');
+        panel?.removeAttribute('aria-hidden');
         if (panel && !panel.hasAttribute('role')) panel.setAttribute('role', 'dialog');
         if (panel && !panel.hasAttribute('aria-modal')) panel.setAttribute('aria-modal', 'true');
         if (panel && !panel.contains(document.activeElement)) {
@@ -72,6 +88,7 @@ document.addEventListener('submit', event => {
         overlay.setAttribute('aria-hidden', 'true');
         const panel = overlay.querySelector('.modal-box');
         if (panel) panel.setAttribute('aria-hidden', 'true');
+        overlay.dispatchEvent(new CustomEvent('tdc:modal-close'));
         if (openOverlays().length === 0) {
             document.body.classList.remove('modal-open');
             const target = lastFocus;
@@ -79,6 +96,47 @@ document.addEventListener('submit', event => {
             if (target && document.body.contains(target)) target.focus({ preventScroll: true });
         }
     };
+
+    window.TDCModal = {
+        open(overlay, opener = document.activeElement) {
+            if (!overlay) return;
+            lastFocus = opener;
+            overlay.classList.add('show');
+            lock();
+        },
+        close: closeTop
+    };
+
+    window.TDCModal.confirm = (config = {}) => new Promise(resolve => {
+        const overlay = document.createElement('div');
+        overlay.className = 'modal-overlay';
+        overlay.innerHTML = '<div class="modal-box confirmation-dialog" role="dialog" aria-modal="true" aria-labelledby="confirmation-title" aria-describedby="confirmation-message"><div class="modal-head"><h3 id="confirmation-title"></h3><button type="button" class="modal-close" aria-label="Close" title="Close">×</button></div><div class="modal-body"><p id="confirmation-message"></p><div class="modal-actions"><button type="button" class="btn btn-secondary" data-cancel>Cancel</button><button type="button" data-confirm></button></div></div></div>';
+        overlay.querySelector('h3').textContent = config.title || 'Confirm action';
+        overlay.querySelector('p').textContent = config.message || 'Continue with this action?';
+        const confirm = overlay.querySelector('[data-confirm]');
+        confirm.className = 'btn ' + (config.destructive ? 'btn-danger' : 'btn-primary');
+        confirm.textContent = config.confirmLabel || 'Confirm';
+        let accepted = false;
+        overlay.addEventListener('tdc:modal-close', () => { overlay.remove(); resolve(accepted); }, { once: true });
+        overlay.querySelectorAll('[data-cancel], .modal-close').forEach(button => button.addEventListener('click', () => closeTop(overlay)));
+        confirm.addEventListener('click', () => { accepted = true; closeTop(overlay); });
+        document.body.append(overlay);
+        window.TDCModal.open(overlay);
+        overlay.querySelector('[data-cancel]').focus();
+    });
+    const confirmed = new WeakSet();
+    document.addEventListener('submit', async event => {
+        const form = event.target;
+        if (!(form instanceof HTMLFormElement) || !form.dataset.confirm) return;
+        if (confirmed.delete(form)) return;
+        event.preventDefault(); event.stopImmediatePropagation();
+        const submitter = event.submitter;
+        if (form.dataset.confirming) return;
+        form.dataset.confirming = 'true';
+        const accepted = await window.TDCModal.confirm({ message: form.dataset.confirm, destructive: true });
+        delete form.dataset.confirming;
+        if (accepted) { confirmed.add(form); form.requestSubmit(submitter); }
+    }, true);
 
     new MutationObserver(lock).observe(document.body, {
         subtree: true, attributes: true, attributeFilter: ['class']
@@ -207,6 +265,29 @@ document.addEventListener('submit', event => {
         initActionMenus(root);
         initDateRanges(root);
         initPrintButtons(root);
+        (root || document).querySelectorAll('.form-group').forEach(function (group, index) {
+            const label = group.querySelector('label');
+            const input = group.querySelector('input:not([type="hidden"]), select, textarea');
+            if (!label || !input || label.htmlFor || label.contains(input)) return;
+            if (!input.id) {
+                let id = 'tdc-field-' + index;
+                while (document.getElementById(id)) id += '-field';
+                input.id = id;
+            }
+            label.htmlFor = input.id;
+        });
+        (root || document).querySelectorAll('.modal-box').forEach(function (panel, index) {
+            const title = panel.querySelector('.modal-head h2, .modal-head h3');
+            if (!title || panel.hasAttribute('aria-labelledby')) return;
+            if (!title.id) title.id = 'tdc-modal-title-' + index;
+            panel.setAttribute('aria-labelledby', title.id);
+        });
+        (root || document).querySelectorAll('.modal-close, .btn-icon, .icon-action').forEach(function (button) {
+            const label = button.getAttribute('aria-label') || button.getAttribute('title') || button.textContent.trim();
+            if (!label) return;
+            if (!button.hasAttribute('title')) button.setAttribute('title', label);
+            if (!button.hasAttribute('aria-label')) button.setAttribute('aria-label', label);
+        });
     };
 
     ready(function () { window.tdcInitUi(document); });

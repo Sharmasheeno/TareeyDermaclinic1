@@ -710,7 +710,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($section, ALLOWED_SECTIONS
 
         // --- Chart of Accounts -----------------------------------------
         } elseif ($section === 'accounts') {
-            tdc_require_permission('accounting.expenses.edit');
+            tdc_require_permission('setup.financial.manage');
             if ($formAction === 'rename') {
                 $accountId = trim((string) ($_POST['AccountID'] ?? ''));
                 $newName   = trim((string) ($_POST['NewName'] ?? ''));
@@ -1025,22 +1025,20 @@ $justRenamed  = isset($_GET['renamed']);
     .error-msg ul{ list-style:none; padding-left:24px; }
     .error-msg li::before{ content:"— "; }
 
-    .form-group{ display:flex; flex-direction:column; }
-    .form-group label{ font-size:11px; font-weight:600; letter-spacing:0.06em; text-transform:uppercase; color:var(--navy); margin-bottom:6px; }
-    .form-group input, .form-group select, .form-group textarea{ width:100%; padding:11px 12px; border:2px solid rgba(46,49,146,0.3); font-size:14px; font-family:'Google Sans', sans-serif; color:var(--navy); background:var(--white); outline:none; transition:border-color 0.15s; }
-    .form-group textarea{ resize:vertical; min-height:70px; }
-    .form-group input::placeholder, .form-group textarea::placeholder{ color:rgba(46,49,146,0.45); }
-    .form-group input:focus, .form-group select:focus, .form-group textarea:focus{ border-color:var(--orange); }
-    .form-group select{ cursor:pointer; }
+
+
+
+
+
+
     .form-row{ display:flex; gap:16px; flex-wrap:wrap; }
     .form-row .form-group{ flex:1; min-width:180px; }
-    .btn{ padding:11px 22px; font-size:14px; font-weight:600; border:2px solid var(--navy); cursor:pointer; letter-spacing:0.02em; transition:background 0.12s, color 0.12s, border-color 0.12s; text-decoration:none; display:inline-flex; align-items:center; gap:6px; }
-    .btn-primary{ background:var(--navy); color:var(--white); }
-    .btn-primary:hover{ background:var(--orange); border-color:var(--orange); }
+
+
+
     .btn-primary:disabled{ opacity:0.5; cursor:not-allowed; }
     .btn-primary:disabled:hover{ background:var(--navy); border-color:var(--navy); }
-    .btn-secondary{ background:var(--white); color:var(--navy); }
-    .btn-secondary:hover{ color:var(--orange); border-color:var(--orange); }
+
 
     .setup-grid{ display:grid; grid-template-columns:repeat(2, minmax(220px,1fr)); gap:20px; max-width:640px; margin-bottom:32px; }
     .setup-card{ display:flex; align-items:flex-start; gap:14px; padding:20px; border:2px solid var(--navy); text-decoration:none; color:var(--navy); transition:background 0.12s, border-color 0.12s; }
@@ -1065,12 +1063,11 @@ $justRenamed  = isset($_GET['renamed']);
     .filter-box input{ min-width:200px; }
     .filter-box input:focus, .filter-box select:focus{ outline:none; border-color:var(--orange); }
 
-    .data-table-wrap{ max-width:1200px; border:2px solid var(--navy); overflow-x:auto; }
-    .data-table{ width:100%; border-collapse:collapse; }
-    .data-table th, .data-table td{ padding:12px 14px; font-size:13px; text-align:left; border-bottom:1px solid var(--navy-30); white-space:nowrap; }
-    .data-table th{ background:var(--navy-10); font-weight:700; text-transform:uppercase; font-size:11px; letter-spacing:.05em; color:var(--navy); }
-    .data-table tbody tr:last-child td{ border-bottom:none; }
-    .data-table tbody tr:hover{ background:var(--navy-10); }
+
+
+
+
+
     .empty-row td{ text-align:center; padding:28px; color:var(--navy-55); }
 
     .status-badge{ display:inline-block; padding:3px 9px; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.03em; border:1.5px solid var(--navy); color:var(--navy); white-space:nowrap; }
@@ -1080,10 +1077,10 @@ $justRenamed  = isset($_GET['renamed']);
 
     .row-actions{ display:flex; gap:8px; flex-wrap:wrap; }
     .row-actions form{ display:inline; }
-    .btn-sm{ padding:6px 12px; font-size:12px; font-weight:600; border:2px solid var(--navy); cursor:pointer; background:var(--white); color:var(--navy); text-decoration:none; display:inline-flex; align-items:center; }
-    .btn-sm:hover{ background:var(--orange); border-color:var(--orange); color:var(--white); }
-    .btn-sm.danger{ border-color:#c0392b; color:#c0392b; }
-    .btn-sm.danger:hover{ background:#c0392b; border-color:#c0392b; color:var(--white); }
+
+
+
+
     .btn-sm:disabled{ opacity:0.4; cursor:not-allowed; }
     .btn-sm:disabled:hover{ background:var(--white); color:var(--navy); }
 
@@ -1155,7 +1152,7 @@ $justRenamed  = isset($_GET['renamed']);
             <?php foreach (tdc_navigation(NAV_ITEMS) as $item): ?>
                 <li class="nav-item<?= $item['href'] === $currentPage ? ' active' : '' ?>">
                     <a href="<?= tdc_e($item['href']) ?>" class="nav-link">
-                        <svg viewBox="0 0 20 20"><?= $item['icon'] ?></svg>
+                        <?= tdc_navigation_icon($item['href']) ?>
                         <span><?= tdc_e($item['label']) ?></span>
                     </a>
                 </li>
@@ -1273,8 +1270,8 @@ $justRenamed  = isset($_GET['renamed']);
         </div>
 
         <div class="row-actions no-print">
-            <button type="button" class="btn btn-secondary" onclick="window.print()">Print</button>
-            <form method="POST" action="accounting.php?section=ledger" onsubmit="return confirm('Reverse this entry? A new offsetting entry will be posted — the original is never deleted. This cannot be undone.');">
+            <button type="button" class="btn-info btn " onclick="window.print()">Print</button>
+            <form method="POST" action="accounting.php?section=ledger" data-confirm="Reverse this entry? A new offsetting entry will be posted — the original is never deleted. This cannot be undone.">
                 <input type="hidden" name="csrf_token" value="<?= tdc_e($csrfToken) ?>">
                 <input type="hidden" name="form_action" value="void">
                 <input type="hidden" name="EntryRef" value="<?= tdc_e($viewEntryRef) ?>">
@@ -1337,7 +1334,7 @@ $justRenamed  = isset($_GET['renamed']);
                     </tbody>
                 </table>
             </div>
-            <button type="button" class="btn btn-secondary add-line-btn" id="addLineBtn">+ Add Line</button>
+            <button type="button" class="btn-success  btn  add-line-btn" id="addLineBtn"><?= tdc_icon('plus',16) ?><span>+ Add Line</span></button>
 
             <div class="totals-row">
                 <div class="form-group"><label>Total Debit</label><div class="due-display" id="jf_TotalDebit">0.00</div></div>
@@ -1368,9 +1365,9 @@ $justRenamed  = isset($_GET['renamed']);
                 </select>
                 <input type="date" name="from" value="<?= tdc_e($ledgerFrom) ?>">
                 <input type="date" name="to" value="<?= tdc_e($ledgerTo) ?>">
-                <button type="submit" class="btn btn-secondary">Filter</button>
+                <button type="submit" class="btn-primary btn "><?= tdc_icon('search',16) ?><span>Filter</span></button>
             </form>
-            <a href="accounting.php?section=ledger&new=1" class="btn btn-primary">+ New Entry</a>
+            <a href="accounting.php?section=ledger&new=1" class="btn-success btn ">+ New Entry</a>
         </div>
 
         <div class="data-table-wrap">
@@ -1395,7 +1392,7 @@ $justRenamed  = isset($_GET['renamed']);
                         <td>
                             <div class="row-actions">
                                 <a href="accounting.php?section=ledger&view=<?= urlencode($je['EntryRef']) ?>" class="btn-sm">View</a>
-                                <form method="POST" action="accounting.php?section=ledger" onsubmit="return confirm('Reverse this entry? A new offsetting entry will be posted — the original is never deleted. This cannot be undone.');">
+                                <form method="POST" action="accounting.php?section=ledger" data-confirm="Reverse this entry? A new offsetting entry will be posted — the original is never deleted. This cannot be undone.">
                                     <input type="hidden" name="csrf_token" value="<?= tdc_e($csrfToken) ?>">
                                     <input type="hidden" name="form_action" value="void">
                                     <input type="hidden" name="EntryRef" value="<?= tdc_e($je['EntryRef']) ?>">
@@ -1429,8 +1426,8 @@ $justRenamed  = isset($_GET['renamed']);
         </div>
 
         <div class="row-actions no-print" style="margin-bottom:20px;">
-            <button type="button" class="btn btn-secondary rename-account-btn"
-                data-id="<?= tdc_e($viewAccountId) ?>" data-name="<?= tdc_e($viewAccountHead['AccountName']) ?>">Rename Account</button>
+            <?php if (tdc_can('setup.financial.manage')): ?><button type="button" class="btn-warning btn  rename-account-btn"
+                data-id="<?= tdc_e($viewAccountId) ?>" data-name="<?= tdc_e($viewAccountHead['AccountName']) ?>"><?= tdc_icon('pencil',16) ?><span>Rename Account</span></button><?php endif; ?>
         </div>
 
         <div class="subsection-title">Transaction History</div>
@@ -1463,7 +1460,7 @@ $justRenamed  = isset($_GET['renamed']);
             <form method="GET" action="accounting.php" class="filter-box">
                 <input type="hidden" name="section" value="accounts">
                 <input type="text" name="q" placeholder="Search by account name or ID..." value="<?= tdc_e($accountSearch) ?>">
-                <button type="submit" class="btn btn-secondary">Search</button>
+                <button type="submit" class="btn-primary btn "><?= tdc_icon('search',16) ?><span>Search</span></button>
             </form>
             <span style="font-size:12.5px;color:var(--navy-55);">New accounts are created automatically the first time they're used on a journal entry.</span>
         </div>
@@ -1486,8 +1483,8 @@ $justRenamed  = isset($_GET['renamed']);
                         <td>
                             <div class="row-actions">
                                 <a href="accounting.php?section=accounts&view=<?= urlencode($acct['AccountID']) ?>" class="btn-sm">View</a>
-                                <button type="button" class="btn-sm rename-account-btn"
-                                    data-id="<?= tdc_e($acct['AccountID']) ?>" data-name="<?= tdc_e($acct['AccountName']) ?>">Rename</button>
+                                <?php if (tdc_can('setup.financial.manage')): ?><button type="button" class="btn-warning btn-sm rename-account-btn"
+                                    data-id="<?= tdc_e($acct['AccountID']) ?>" data-name="<?= tdc_e($acct['AccountName']) ?>"><?= tdc_icon('pencil',16) ?><span>Rename</span></button><?php endif; ?>
                             </div>
                         </td>
                     </tr>
@@ -1515,7 +1512,7 @@ $justRenamed  = isset($_GET['renamed']);
                             <input type="text" id="rf_NewName" name="NewName" required></div>
                         <div class="modal-actions">
                             <button type="button" class="btn btn-secondary" id="renameModalCancelBtn">Cancel</button>
-                            <button type="submit" class="btn btn-primary">Save</button>
+                            <button type="submit" class="btn-success  btn "><?= tdc_icon('check',16) ?><span>Save</span></button>
                         </div>
                     </div>
                 </form>

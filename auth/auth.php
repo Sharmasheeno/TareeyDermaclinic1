@@ -28,6 +28,7 @@ header('Referrer-Policy: strict-origin-when-cross-origin');
 header('Cache-Control: no-store, no-cache, must-revalidate');
 
 require_once __DIR__ . '/../db.php';
+require_once __DIR__ . '/includes/ui.php';
 
 // Already authenticated -> skip straight to Home
 if (!empty($_SESSION['user_id'])) {
@@ -193,8 +194,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         #js-toast svg { width: 16px; height: 16px; flex-shrink: 0; }
         #js-toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
     </style>
+    <link rel="stylesheet" href="assets/clinic.css">
 </head>
-<body>
+<body class="login-page">
 <div class="login-card">
     <div class="login-header">
         <div class="logo-icon">
@@ -234,7 +236,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 <input type="password" id="password" name="password"
                     placeholder="Enter your password"
                     autocomplete="current-password" required>
-                <button type="button" class="toggle-pw" id="togglePw" aria-label="Toggle password visibility">
+                <button type="button" class="toggle-pw" id="togglePw" aria-label="Toggle password visibility" title="Toggle password visibility">
                     <svg id="eyeOpen" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                         <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
                         <circle cx="12" cy="12" r="3"/>
@@ -247,7 +249,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 </button>
             </div>
         </div>
-        <button type="submit" class="btn-login">Sign In</button>
+        <button type="submit" class="btn btn-primary btn-login"><?= tdc_icon('logout', 18) ?><span>Sign In</span></button>
     </form>
 </div>
 

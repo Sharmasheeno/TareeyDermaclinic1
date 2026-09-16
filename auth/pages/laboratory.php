@@ -589,7 +589,7 @@ $justDeleted = isset($_GET['deleted']);
             <?php foreach (tdc_navigation(NAV_ITEMS) as $item): ?>
                 <li class="nav-item<?= $item['href'] === $currentPage ? ' active' : '' ?>">
                     <a href="<?= tdc_e($item['href']) ?>" class="nav-link">
-                        <svg viewBox="0 0 20 20"><?= $item['icon'] ?></svg>
+                        <?= tdc_navigation_icon($item['href']) ?>
                         <span><?= tdc_e($item['label']) ?></span>
                     </a>
                 </li>
@@ -635,7 +635,7 @@ $justDeleted = isset($_GET['deleted']);
                     <option value="<?= tdc_e($v) ?>" <?= $paymentFilter === $v ? 'selected' : '' ?>><?= tdc_e($l) ?></option>
                 <?php endforeach; ?>
             </select>
-            <button type="submit" class="btn btn-secondary">Search</button>
+            <button type="submit" class="btn btn-primary">Search</button>
             <?php if ($hasActiveFilters): ?>
                 <a href="laboratory.php" class="clear-filters">Clear filters</a>
             <?php endif; ?>
@@ -665,8 +665,8 @@ $justDeleted = isset($_GET['deleted']);
                     <td><?= number_format((float) $l['TotalAmount'], 2) ?></td>
                     <td><span class="status-badge<?= (int) $l['IsAvailable'] === 1 ? '' : ' warn' ?>"><?= (int) $l['IsAvailable'] === 1 ? 'In-House' : 'Sent Out' ?></span></td>
                     <td><span class="status-badge<?= $l['Result'] === 'Positive' ? ' danger' : ($l['Result'] === 'Pending' ? ' warn' : '') ?>"><?= tdc_e($l['Result']) ?></span></td>
-                    <td><span class="status-badge"><?= tdc_e($l['WorkflowStatus']) ?></span></td>
-                    <td><span class="status-badge<?= $l['PaymentStatus'] === 'Unpaid' ? ' danger' : ($l['PaymentStatus'] === 'Partial' ? ' warn' : '') ?>"><?= tdc_e($l['PaymentStatus']) ?></span></td>
+                    <td><?= tdc_badge($l['WorkflowStatus']) ?></td>
+                    <td><?= tdc_badge($l['PaymentStatus']) ?></td>
                     <td><?= tdc_e(date('Y-m-d', strtotime((string) $l['OrderDate']))) ?></td>
                     <?php if ($canManage): ?>
                     <td>
@@ -684,7 +684,7 @@ $justDeleted = isset($_GET['deleted']);
                                 data-resultdate="<?= tdc_e($l['ResultDate'] ? date('Y-m-d\TH:i', strtotime((string) $l['ResultDate'])) : '') ?>"
                                 data-paymentstatus="<?= tdc_e($l['PaymentStatus']) ?>"
                                 data-items="<?= tdc_e(json_encode($labItemsByOrder[$l['LaboratoryID']] ?? [])) ?>">Record results</button><?php endif; ?>
-                            <?php if ($canProcess && $l['WorkflowStatus'] === 'Ready'): ?><form method="POST" action="laboratory.php"><input type="hidden" name="csrf_token" value="<?= tdc_e($csrfToken) ?>"><input type="hidden" name="form_action" value="start"><input type="hidden" name="LaboratoryID" value="<?= tdc_e($l['LaboratoryID']) ?>"><button type="submit" class="btn-sm">Start Test</button></form><?php endif; ?>
+                            <?php if ($canProcess && $l['WorkflowStatus'] === 'Ready'): ?><form method="POST" action="laboratory.php"><input type="hidden" name="csrf_token" value="<?= tdc_e($csrfToken) ?>"><input type="hidden" name="form_action" value="start"><input type="hidden" name="LaboratoryID" value="<?= tdc_e($l['LaboratoryID']) ?>"><button type="submit" class="btn-success btn-sm">Start Test</button></form><?php endif; ?>
                             <?php if ($isLabStaff && $l['WorkflowStatus'] === 'Awaiting Payment'): ?><span class="status-badge danger">Payment Locked</span><?php endif; ?>
                             <?php if ($isLabStaff && $l['WorkflowStatus'] === 'Completed'): ?><span class="status-badge">View Result</span><?php endif; ?>
                         </div>
@@ -724,7 +724,7 @@ $justDeleted = isset($_GET['deleted']);
 
                     <div class="modal-actions">
                         <button type="button" class="btn btn-secondary" id="labModalCancelBtn">Cancel</button>
-                        <button type="submit" class="btn btn-primary">Save results</button>
+                        <button type="submit" class="btn-success  btn "><?= tdc_icon('check',16) ?><span>Save results</span></button>
                     </div>
                 </div>
             </form>

@@ -613,20 +613,18 @@ $justVisited = isset($_GET['visited']);
     .error-msg ul{ list-style:none; padding-left:24px; }
     .error-msg li::before{ content:"— "; }
 
-    .form-group{ display:flex; flex-direction:column; }
-    .form-group label{ font-size:11px; font-weight:600; letter-spacing:0.06em; text-transform:uppercase; color:var(--navy); margin-bottom:6px; }
-    .form-group input, .form-group select, .form-group textarea{ width:100%; padding:11px 12px; border:2px solid rgba(46,49,146,0.3); font-size:14px; font-family:'Google Sans', sans-serif; color:var(--navy); background:var(--white); outline:none; transition:border-color 0.15s; }
-    .form-group textarea{ resize:vertical; min-height:70px; }
-    .form-group input::placeholder, .form-group textarea::placeholder{ color:rgba(46,49,146,0.45); }
-    .form-group input:focus, .form-group select:focus, .form-group textarea:focus{ border-color:var(--orange); }
-    .form-group select{ cursor:pointer; }
+
+
+
+
+
+
     .form-row{ display:flex; gap:16px; flex-wrap:wrap; }
     .form-row .form-group{ flex:1; min-width:180px; }
-    .btn{ padding:11px 22px; font-size:14px; font-weight:600; border:2px solid var(--navy); cursor:pointer; letter-spacing:0.02em; transition:background 0.12s, color 0.12s, border-color 0.12s; text-decoration:none; display:inline-flex; align-items:center; gap:6px; }
-    .btn-primary{ background:var(--navy); color:var(--white); }
-    .btn-primary:hover{ background:var(--orange); border-color:var(--orange); }
-    .btn-secondary{ background:var(--white); color:var(--navy); }
-    .btn-secondary:hover{ color:var(--orange); border-color:var(--orange); }
+
+
+
+
 
     .back-link{ display:inline-flex; align-items:center; gap:6px; font-size:13px; font-weight:600; color:var(--navy-55); text-decoration:none; margin-bottom:16px; }
     .back-link:hover{ color:var(--orange); }
@@ -637,12 +635,11 @@ $justVisited = isset($_GET['visited']);
     .filter-box input{ min-width:220px; }
     .filter-box input:focus, .filter-box select:focus{ outline:none; border-color:var(--orange); }
 
-    .data-table-wrap{ max-width:1200px; border:2px solid var(--navy); overflow-x:auto; }
-    .data-table{ width:100%; border-collapse:collapse; }
-    .data-table th, .data-table td{ padding:12px 14px; font-size:13px; text-align:left; border-bottom:1px solid var(--navy-30); white-space:nowrap; }
-    .data-table th{ background:var(--navy-10); font-weight:700; text-transform:uppercase; font-size:11px; letter-spacing:.05em; color:var(--navy); }
-    .data-table tbody tr:last-child td{ border-bottom:none; }
-    .data-table tbody tr:hover{ background:var(--navy-10); }
+
+
+
+
+
     .empty-row td{ text-align:center; padding:28px; color:var(--navy-55); }
 
     .status-badge{ display:inline-block; padding:3px 9px; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.03em; border:1.5px solid var(--navy); color:var(--navy); white-space:nowrap; }
@@ -651,10 +648,9 @@ $justVisited = isset($_GET['visited']);
 
     .row-actions{ display:flex; gap:8px; flex-wrap:wrap; }
     .row-actions form{ display:inline; }
-    .btn-sm{ padding:6px 12px; font-size:12px; font-weight:600; border:2px solid var(--navy); cursor:pointer; background:var(--white); color:var(--navy); text-decoration:none; display:inline-flex; align-items:center; }
-    .btn-sm:hover{ background:var(--orange); border-color:var(--orange); color:var(--white); }
-    .btn-sm.danger{ border-color:#c0392b; color:#c0392b; }
-    .btn-sm.danger:hover{ background:#c0392b; border-color:#c0392b; color:var(--white); }
+
+
+
 
     /* --- Patient detail view ------------------------------------------ */
     .info-grid{ display:grid; grid-template-columns:repeat(auto-fill, minmax(180px, 1fr)); gap:18px 24px; max-width:1200px; margin-bottom:32px; padding:24px; border:2px solid var(--navy); }
@@ -704,7 +700,7 @@ $justVisited = isset($_GET['visited']);
             <?php foreach (tdc_navigation(NAV_ITEMS) as $item): ?>
                 <li class="nav-item<?= $item['href'] === $currentPage ? ' active' : '' ?>">
                     <a href="<?= tdc_e($item['href']) ?>" class="nav-link">
-                        <svg viewBox="0 0 20 20"><?= $item['icon'] ?></svg>
+                        <?= tdc_navigation_icon($item['href']) ?>
                         <span><?= tdc_e($item['label']) ?></span>
                     </a>
                 </li>
@@ -833,8 +829,8 @@ $justVisited = isset($_GET['visited']);
                     <td><?= tdc_e(date('Y-m-d', strtotime((string) $b['PrescriptionDate']))) ?></td>
                     <td>
                         <div class="row-actions">
-                            <a href="reception.php?section=pharmacy&edit=<?= urlencode($b['BillRef']) ?>" class="btn-sm">Edit</a>
-                            <a href="../print_prescription.php?ref=<?= urlencode($b['BillRef']) ?>" class="btn-sm" target="_blank" rel="noopener">Print</a>
+                            <a href="reception.php?section=pharmacy&edit=<?= urlencode($b['BillRef']) ?>" class="btn-warning btn-sm"><?= tdc_icon('pencil',16) ?><span>Edit</span></a>
+                            <a href="../print_prescription.php?ref=<?= urlencode($b['BillRef']) ?>" class="btn-info btn-sm" target="_blank" rel="noopener"><?= tdc_icon('printer',16) ?><span>Print</span></a>
                         </div>
                     </td>
                 </tr>
@@ -867,10 +863,10 @@ $justVisited = isset($_GET['visited']);
                 <?php endforeach; ?>
             </select>
             <input type="date" name="registered" value="<?= tdc_e($patientDateFilter) ?>" aria-label="Registration date">
-            <button type="submit" class="btn btn-secondary">Filter</button>
+            <button type="submit" class="btn-primary btn "><?= tdc_icon('search',16) ?><span>Filter</span></button>
             <?php if ($patientSearch !== '' || $patientTypeFilter !== '' || $doctorFilter > 0 || $patientDateFilter !== ''): ?><a href="patients.php" class="clear-filters">Clear</a><?php endif; ?>
         </form>
-        <div class="table-command-bar"><?php if($canImport):?><button type="button" id="importPatientBtn" class="btn btn-secondary">Import CSV</button><a class="btn btn-secondary" href="patients.php?download=patient-template">Download CSV Template</a><?php endif;?><?php if($canExport):?><a class="btn btn-secondary" href="patients.php?download=patients">Export CSV</a><button type="button" class="btn btn-secondary" onclick="window.print()">Export PDF</button><?php endif;?><?php if ($canCreate): ?><button type="button" id="addPatientBtn" class="btn btn-primary">Register Patient</button><?php endif; ?></div>
+        <div class="table-command-bar"><?php if($canImport):?><button type="button" id="importPatientBtn" class="btn-success btn "><?= tdc_icon('upload',16) ?><span>Import CSV</span></button><a class="btn-info btn " href="patients.php?download=patient-template"><?= tdc_icon('download',16) ?><span>Download CSV Template</span></a><?php endif;?><?php if($canExport):?><a class="btn-info btn " href="patients.php?download=patients"><?= tdc_icon('download',16) ?><span>Export CSV</span></a><button type="button" class="btn-info btn " onclick="window.print()"><?= tdc_icon('printer',16) ?><span>Print / Save PDF</span></button><?php endif;?><?php if ($canCreate): ?><button type="button" id="addPatientBtn" class="btn-success btn "><?= tdc_icon('plus',16) ?><span>Register Patient</span></button><?php endif; ?></div>
     </div>
 
     <div class="data-table-wrap">
@@ -899,7 +895,7 @@ $justVisited = isset($_GET['visited']);
                         <div class="row-actions">
                             <a href="patients.php?view=<?= (int) $p['PatientID'] ?>" class="btn-sm">View</a>
                             <?php if ($canEdit): ?>
-                            <button type="button" class="btn-sm edit-patient-btn"
+                            <button type="button" class="btn-warning btn-sm edit-patient-btn"
                                 data-id="<?= (int) $p['PatientID'] ?>"
                                 data-name="<?= tdc_e($p['PatientName']) ?>"
                                 data-phone="<?= tdc_e((string) $p['PatientPhone']) ?>"
@@ -909,13 +905,13 @@ $justVisited = isset($_GET['visited']);
                                 data-dob="<?= tdc_e((string) $p['DateOfBirth']) ?>"
                                 data-type="<?= tdc_e((string) $p['PatientType']) ?>"
                                 data-doctor="<?= tdc_e((string) $p['AllocatedDoctor']) ?>"
-                                data-remark="<?= tdc_e((string) $p['Remark']) ?>">Edit</button>
+                                data-remark="<?= tdc_e((string) $p['Remark']) ?>"><?= tdc_icon('pencil',16) ?><span>Edit</span></button>
                             <?php endif; ?><?php if($canCreateVisit): ?><a class="btn-sm" href="reception.php?section=consultations&amp;patient=<?= (int) $p['PatientID'] ?>">Book</a><?php endif; ?>
-                            <?php if($canDelete): ?><form method="POST" action="patients.php" onsubmit="return confirm('Delete this patient? This cannot be undone.');">
+                            <?php if($canDelete): ?><form method="POST" action="patients.php" data-confirm="Delete this patient? This cannot be undone.">
                                 <input type="hidden" name="csrf_token" value="<?= tdc_e($csrfToken) ?>">
                                 <input type="hidden" name="form_action" value="delete">
                                 <input type="hidden" name="PatientID" value="<?= (int) $p['PatientID'] ?>">
-                                <button type="submit" class="btn-sm danger">Delete</button>
+                                <button type="submit" class="btn-danger btn-sm danger">Delete</button>
                             </form><?php endif; ?>
                         </div>
                     </td>
@@ -996,7 +992,7 @@ $justVisited = isset($_GET['visited']);
 
                 <div class="modal-actions">
                     <button type="button" class="btn btn-secondary" id="patientModalCancelBtn">Cancel</button>
-                    <button type="submit" class="btn btn-primary">Save Patient</button>
+                    <button type="submit" class="btn-success  btn "><?= tdc_icon('check',16) ?><span>Save Patient</span></button>
                 </div>
             </div>
         </form>
@@ -1004,7 +1000,7 @@ $justVisited = isset($_GET['visited']);
 </div>
 <?php endif; ?>
 
-<?php if($canImport):?><div class="modal-overlay" id="importPatientModal"><div class="modal-box"><div class="modal-head"><h3>Import Patients</h3><button type="button" class="modal-close" data-close-import aria-label="Close">×</button></div><form method="post" enctype="multipart/form-data"><div class="modal-body"><input type="hidden" name="csrf_token" value="<?=tdc_e($csrfToken)?>"><input type="hidden" name="form_action" value="import_csv"><div class="form-section"><div class="form-section-heading"><span><strong>CSV File</strong><span>Use the required CSV template. The import is transactional.</span></span></div><div class="form-group"><label>Select CSV</label><input type="file" name="csv_file" accept=".csv,text/csv" required></div></div><div class="modal-actions"><button type="button" class="btn btn-secondary" data-close-import>Cancel</button><button class="btn btn-primary">Import Patients</button></div></div></form></div></div><?php endif;?>
+<?php if($canImport):?><div class="modal-overlay" id="importPatientModal"><div class="modal-box"><div class="modal-head"><h3><?= tdc_icon('upload',20) ?><span>Import Patients</span></h3><button type="button" class="modal-close" data-close-import aria-label="Close">×</button></div><form method="post" enctype="multipart/form-data"><div class="modal-body"><input type="hidden" name="csrf_token" value="<?=tdc_e($csrfToken)?>"><input type="hidden" name="form_action" value="import_csv"><div class="form-section"><div class="form-section-heading"><span><strong>CSV File</strong><span>Use the required CSV template. The import is transactional.</span></span></div><div class="form-group"><label>Select CSV</label><input type="file" name="csv_file" accept=".csv,text/csv" required></div></div><div class="modal-actions"><button type="button" class="btn btn-secondary" data-close-import>Cancel</button><button class="btn-success btn "><?= tdc_icon('upload',16) ?><span>Import Patients</span></button></div></div></form></div></div><?php endif;?>
 
 </main>
 

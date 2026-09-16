@@ -129,4 +129,6 @@ $methodStmt = $pdo->prepare('INSERT IGNORE INTO PaymentMethods (MethodName,Displ
 foreach (['Cash','Card','Mobile Money','Bank','Other'] as $order => $method) $methodStmt->execute([$method,$order + 1]);
 $pdo->exec("INSERT IGNORE INTO Specializations (SpecializationName) SELECT DISTINCT Specialty FROM Doctors WHERE Specialty IS NOT NULL AND TRIM(Specialty)<>''");
 
+require_once __DIR__ . '/../auth/includes/operational-role-defaults.php';
+tdc_apply_operational_role_defaults($pdo);
 echo "Setup and RBAC schema is ready.\n";
