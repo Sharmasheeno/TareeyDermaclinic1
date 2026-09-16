@@ -1,0 +1,45 @@
+# ------------------------------------------------------------------
+# Tarey Derma Clinic — root .htaccess (InfinityFree / Apache 2.4 safe)
+# No php_value / php_flag directives (unsupported on InfinityFree and
+# a common cause of HTTP 500). Only core Apache features are used.
+# ------------------------------------------------------------------
+
+# Prevent directory listings.
+Options -Indexes
+
+# Default document: the session gate / front controller.
+DirectoryIndex index.php index.html
+
+# ------------------------------------------------------------------
+# Never serve the database configuration, raw SQL dumps, logs or docs.
+# (db.php is included by PHP only — it must never be requested.)
+# ------------------------------------------------------------------
+<Files "db.php">
+    <IfModule mod_authz_core.c>
+        Require all denied
+    </IfModule>
+    <IfModule !mod_authz_core.c>
+        Order allow,deny
+        Deny from all
+    </IfModule>
+</Files>
+
+<FilesMatch "\.(sql|log|ini|env|json|txt|mjs|md)$">
+    <IfModule mod_authz_core.c>
+        Require all denied
+    </IfModule>
+    <IfModule !mod_authz_core.c>
+        Order allow,deny
+        Deny from all
+    </IfModule>
+</FilesMatch>
+
+# ------------------------------------------------------------------
+# Sensible static-asset caching (safe no-op if mod_expires is absent).
+# ------------------------------------------------------------------
+<IfModule mod_expires.c>
+    ExpiresActive On
+    ExpiresByType text/css "access plus 7 days"
+    ExpiresByType application/javascript "access plus 7 days"
+    ExpiresByType image/png "access plus 30 days"
+</IfModule>

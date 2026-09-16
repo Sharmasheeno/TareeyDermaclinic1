@@ -239,9 +239,9 @@ function tdc_income_statement(PDO $pdo, string $from, string $to): array
 {
     $stmt = $pdo->prepare(
         "SELECT a.AccountID,
-                (SELECT AccountName FROM Accounting WHERE AccountID = a.AccountID ORDER BY TransactionDate DESC, EntryID DESC LIMIT 1) AS AccountName,
+                (SELECT AccountName FROM accounting WHERE AccountID = a.AccountID ORDER BY TransactionDate DESC, EntryID DESC LIMIT 1) AS AccountName,
                 a.AccountType, SUM(a.Debit) AS SumDebit, SUM(a.Credit) AS SumCredit
-         FROM Accounting a
+         FROM accounting a
          WHERE a.AccountType IN ('Revenue', 'Expense') AND a.TransactionDate BETWEEN :from AND :to
          GROUP BY a.AccountID, a.AccountType
          ORDER BY AccountName ASC"
@@ -291,9 +291,9 @@ function tdc_balance_sheet(PDO $pdo, string $asOf): array
 {
     $stmt = $pdo->prepare(
         "SELECT a.AccountID,
-                (SELECT AccountName FROM Accounting WHERE AccountID = a.AccountID ORDER BY TransactionDate DESC, EntryID DESC LIMIT 1) AS AccountName,
+                (SELECT AccountName FROM accounting WHERE AccountID = a.AccountID ORDER BY TransactionDate DESC, EntryID DESC LIMIT 1) AS AccountName,
                 a.AccountType, SUM(a.Debit) AS SumDebit, SUM(a.Credit) AS SumCredit
-         FROM Accounting a
+         FROM accounting a
          WHERE a.AccountType IN ('Asset', 'Liability', 'Equity') AND a.TransactionDate <= :asOf
          GROUP BY a.AccountID, a.AccountType
          ORDER BY AccountName ASC"
@@ -326,12 +326,12 @@ function tdc_balance_sheet(PDO $pdo, string $asOf): array
 
     $revenueToDate = (float) tdc_scalar(
         $pdo,
-        "SELECT COALESCE(SUM(Credit) - SUM(Debit), 0) FROM Accounting WHERE AccountType = 'Revenue' AND TransactionDate <= :asOf",
+        "SELECT COALESCE(SUM(Credit) - SUM(Debit), 0) FROM accounting WHERE AccountType = 'Revenue' AND TransactionDate <= :asOf",
         ['asOf' => $asOf]
     );
     $expenseToDate = (float) tdc_scalar(
         $pdo,
-        "SELECT COALESCE(SUM(Debit) - SUM(Credit), 0) FROM Accounting WHERE AccountType = 'Expense' AND TransactionDate <= :asOf",
+        "SELECT COALESCE(SUM(Debit) - SUM(Credit), 0) FROM accounting WHERE AccountType = 'Expense' AND TransactionDate <= :asOf",
         ['asOf' => $asOf]
     );
     $retainedEarnings = $revenueToDate - $expenseToDate;
@@ -450,7 +450,7 @@ if ($isCatalog) {
 
 if (($_GET['export'] ?? '') === 'csv' && $isCatalog && $rcData !== null) {
     tdc_require_permission('reports.export');
-    $rcExportName = (string) ($pdo->query('SELECT CompanyName FROM PrescriptionsHeader LIMIT 1')->fetchColumn() ?: 'Tarey Derma Clinic');
+    $rcExportName = (string) ($pdo->query('SELECT CompanyName FROM prescriptionsheader LIMIT 1')->fetchColumn() ?: 'Tarey Derma Clinic');
     header('Content-Type: text/csv; charset=UTF-8');
     header('Content-Disposition: attachment; filename="tarey-' . $section . '-' . date('Y-m-d') . '.csv"');
     $output = fopen('php://output', 'wb');
@@ -492,20 +492,20 @@ if ($section === null) {
     $hubBalance = tdc_balance_sheet($pdo, $today . ' 23:59:59');
     $hubBalanceSheetOk = $hubBalance['balances'];
     $summaryQueries = [
-        'Consultations' => "SELECT COUNT(*) FROM Visits WHERE DATE(VisitDate)=CURDATE()",
-        'Consultation revenue' => "SELECT COALESCE(SUM(Credit-Debit),0) FROM Accounting WHERE AccountID='REV-CONSULT' AND DATE(TransactionDate)=CURDATE()",
-        'Pharmacy revenue' => "SELECT COALESCE(SUM(Credit-Debit),0) FROM Accounting WHERE AccountID='REV-PHARM' AND DATE(TransactionDate)=CURDATE()",
-        'Laboratory revenue' => "SELECT COALESCE(SUM(Credit-Debit),0) FROM Accounting WHERE AccountID='REV-LAB' AND DATE(TransactionDate)=CURDATE()",
-        'Pending balances' => "SELECT COALESCE((SELECT SUM(DueBalance) FROM Visits WHERE QueueStatus<>'Cancelled'),0)+COALESCE((SELECT SUM(DueBalance) FROM Laboratory WHERE WorkflowStatus<>'Cancelled'),0)+COALESCE((SELECT SUM(s.DueBalance) FROM (SELECT MIN(DueBalance) DueBalance FROM PharmacySales GROUP BY SUBSTRING_INDEX(SaleID,'-',1)) s),0)",
-        'Prescriptions' => "SELECT COUNT(DISTINCT SUBSTRING_INDEX(PrescriptionID,'-',1)) FROM Prescriptions",
-        'Lab tests' => "SELECT COUNT(*) FROM Laboratory",
-        'Low stock' => "SELECT COUNT(*) FROM Inventory WHERE QuantityInStock<=ReorderLevel",
+        'Consultations' => "SELECT COUNT(*) FROM visits WHERE DATE(VisitDate)=CURDATE()",
+        'Consultation revenue' => "SELECT COALESCE(SUM(Credit-Debit),0) FROM accounting WHERE AccountID='REV-CONSULT' AND DATE(TransactionDate)=CURDATE()",
+        'Pharmacy revenue' => "SELECT COALESCE(SUM(Credit-Debit),0) FROM accounting WHERE AccountID='REV-PHARM' AND DATE(TransactionDate)=CURDATE()",
+        'Laboratory revenue' => "SELECT COALESCE(SUM(Credit-Debit),0) FROM accounting WHERE AccountID='REV-LAB' AND DATE(TransactionDate)=CURDATE()",
+        'Pending balances' => "SELECT COALESCE((SELECT SUM(DueBalance) FROM visits WHERE QueueStatus<>'Cancelled'),0)+COALESCE((SELECT SUM(DueBalance) FROM laboratory WHERE WorkflowStatus<>'Cancelled'),0)+COALESCE((SELECT SUM(s.DueBalance) FROM (SELECT MIN(DueBalance) DueBalance FROM pharmacysales GROUP BY SUBSTRING_INDEX(SaleID,'-',1)) s),0)",
+        'Prescriptions' => "SELECT COUNT(DISTINCT SUBSTRING_INDEX(PrescriptionID,'-',1)) FROM prescriptions",
+        'Lab tests' => "SELECT COUNT(*) FROM laboratory",
+        'Low stock' => "SELECT COUNT(*) FROM inventory WHERE QuantityInStock<=ReorderLevel",
     ];
     foreach($summaryQueries as $label=>$query) $clinicSummary[$label]=$pdo->query($query)->fetchColumn();
 }
 
 // --- Letterhead, read from the clinic's existing single source of truth --
-$letterhead     = $pdo->query('SELECT CompanyName, PhoneNumbers, CompanyAddress FROM PrescriptionsHeader LIMIT 1')->fetch();
+$letterhead     = $pdo->query('SELECT CompanyName, PhoneNumbers, CompanyAddress FROM prescriptionsheader LIMIT 1')->fetch();
 $companyName    = $letterhead['CompanyName'] ?? 'Tarey Derma Clinic';
 $companyAddress = $letterhead['CompanyAddress'] ?? '';
 $companyPhone   = $letterhead['PhoneNumbers'] ?? '';

@@ -23,7 +23,7 @@ function setup_add_column(PDO $pdo, string $table, string $column, string $defin
     if (!setup_column_exists($pdo, $table, $column)) $pdo->exec("ALTER TABLE `$table` ADD COLUMN `$column` $definition");
 }
 
-$pdo->exec("CREATE TABLE IF NOT EXISTS Roles (
+$pdo->exec("CREATE TABLE IF NOT EXISTS roles (
     RoleID INT NOT NULL AUTO_INCREMENT, RoleKey VARCHAR(100) NOT NULL, RoleName VARCHAR(100) NOT NULL,
     Description VARCHAR(500) NULL, IsSystem TINYINT(1) NOT NULL DEFAULT 0, IsProtected TINYINT(1) NOT NULL DEFAULT 0,
     IsActive TINYINT(1) NOT NULL DEFAULT 1, CreatedAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -31,42 +31,42 @@ $pdo->exec("CREATE TABLE IF NOT EXISTS Roles (
     PRIMARY KEY (RoleID), UNIQUE KEY uq_roles_key (RoleKey), UNIQUE KEY uq_roles_name (RoleName)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
 
-$pdo->exec("CREATE TABLE IF NOT EXISTS Permissions (
+$pdo->exec("CREATE TABLE IF NOT EXISTS permissions (
     PermissionID INT NOT NULL AUTO_INCREMENT, PermissionKey VARCHAR(150) NOT NULL, ModuleName VARCHAR(100) NOT NULL,
     ResourceName VARCHAR(120) NOT NULL, ActionName VARCHAR(80) NOT NULL, Description VARCHAR(500) NULL,
     PRIMARY KEY (PermissionID), UNIQUE KEY uq_permissions_key (PermissionKey), KEY idx_permissions_module (ModuleName,ResourceName)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
 
-$pdo->exec("CREATE TABLE IF NOT EXISTS RolePermissions (
+$pdo->exec("CREATE TABLE IF NOT EXISTS rolepermissions (
     RoleID INT NOT NULL, PermissionID INT NOT NULL, PRIMARY KEY (RoleID,PermissionID),
     KEY idx_role_permissions_permission (PermissionID)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
 
-$pdo->exec("CREATE TABLE IF NOT EXISTS AuditLog (
+$pdo->exec("CREATE TABLE IF NOT EXISTS auditlog (
     AuditID BIGINT NOT NULL AUTO_INCREMENT, ActorUserID INT NULL, EventType VARCHAR(100) NOT NULL,
     EntityType VARCHAR(100) NOT NULL, EntityID VARCHAR(100) NULL, Summary VARCHAR(500) NOT NULL,
     ChangesJson LONGTEXT NULL, CreatedAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (AuditID), KEY idx_audit_created (CreatedAt), KEY idx_audit_actor (ActorUserID)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
 
-$pdo->exec("CREATE TABLE IF NOT EXISTS PaymentMethods (
+$pdo->exec("CREATE TABLE IF NOT EXISTS paymentmethods (
     PaymentMethodID INT NOT NULL AUTO_INCREMENT, MethodName VARCHAR(80) NOT NULL, Description VARCHAR(255) NULL,
     IsActive TINYINT(1) NOT NULL DEFAULT 1, DisplayOrder INT NOT NULL DEFAULT 0,
     CreatedAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, UpdatedAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     PRIMARY KEY (PaymentMethodID), UNIQUE KEY uq_payment_methods_name (MethodName), KEY idx_payment_methods_active (IsActive,DisplayOrder)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
 
-$pdo->exec("CREATE TABLE IF NOT EXISTS ClinicSettings (
+$pdo->exec("CREATE TABLE IF NOT EXISTS clinicsettings (
     SettingKey VARCHAR(100) NOT NULL, SettingValue TEXT NULL, UpdatedBy INT NULL,
     UpdatedAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, PRIMARY KEY (SettingKey)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
 
-$pdo->exec("CREATE TABLE IF NOT EXISTS Departments (
+$pdo->exec("CREATE TABLE IF NOT EXISTS departments (
     DepartmentID INT NOT NULL AUTO_INCREMENT, DepartmentName VARCHAR(120) NOT NULL, Description VARCHAR(500) NULL,
     IsActive TINYINT(1) NOT NULL DEFAULT 1, PRIMARY KEY (DepartmentID), UNIQUE KEY uq_departments_name (DepartmentName)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
 
-$pdo->exec("CREATE TABLE IF NOT EXISTS Specializations (
+$pdo->exec("CREATE TABLE IF NOT EXISTS specializations (
     SpecializationID INT NOT NULL AUTO_INCREMENT, SpecializationName VARCHAR(120) NOT NULL, Description VARCHAR(500) NULL,
     IsActive TINYINT(1) NOT NULL DEFAULT 1, PRIMARY KEY (SpecializationID), UNIQUE KEY uq_specializations_name (SpecializationName)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
@@ -77,7 +77,7 @@ setup_add_column($pdo, 'users', 'is_active', 'TINYINT(1) NOT NULL DEFAULT 1 AFTE
 setup_add_column($pdo, 'users', 'is_root', 'TINYINT(1) NOT NULL DEFAULT 0 AFTER is_active');
 setup_add_column($pdo, 'users', 'last_login_at', 'DATETIME NULL AFTER is_root');
 if (!setup_index_exists($pdo, 'users', 'idx_users_role_id')) $pdo->exec('ALTER TABLE users ADD KEY idx_users_role_id (role_id)');
-$pdo->exec('ALTER TABLE Payments MODIFY PaymentMethod VARCHAR(80) NOT NULL DEFAULT \'Cash\'');
+$pdo->exec('ALTER TABLE payments MODIFY PaymentMethod VARCHAR(80) NOT NULL DEFAULT \'Cash\'');
 
 $roles = [
     ['superuser','SuperAdmin','Full system administration and operational access.',1,1],
@@ -86,7 +86,7 @@ $roles = [
     ['labuser','Laboratory','Laboratory order processing and clinical results.',1,1],
     ['pharmacyuser','Pharmacy','Prescription dispensing and point-of-sale operations.',1,1],
 ];
-$roleStmt = $pdo->prepare('INSERT INTO Roles (RoleKey,RoleName,Description,IsSystem,IsProtected,IsActive) VALUES (?,?,?,?,?,1) ON DUPLICATE KEY UPDATE RoleName=VALUES(RoleName),Description=VALUES(Description),IsSystem=VALUES(IsSystem),IsProtected=VALUES(IsProtected)');
+$roleStmt = $pdo->prepare('INSERT INTO roles (RoleKey,RoleName,Description,IsSystem,IsProtected,IsActive) VALUES (?,?,?,?,?,1) ON DUPLICATE KEY UPDATE RoleName=VALUES(RoleName),Description=VALUES(Description),IsSystem=VALUES(IsSystem),IsProtected=VALUES(IsProtected)');
 foreach ($roles as $role) $roleStmt->execute($role);
 
 $permissionRows = [
@@ -104,10 +104,10 @@ $permissionRows = [
  ['reports.view','Reports','Reports','view','View reports'], ['reports.export','Reports','Reports','export','Export reports'],
  ['setup.view','Setup','Setup','view','Open system Setup'], ['setup.organization.manage','Setup','Organization','manage','Manage clinic organization'], ['setup.users.manage','Users','Users','manage','Manage user accounts'], ['setup.roles.manage','Roles & Permissions','Roles','manage','Manage roles'], ['setup.permissions.manage','Roles & Permissions','Permissions','manage','Manage role permissions'], ['setup.clinical.manage','Setup','Clinical setup','manage','Manage clinical master data'], ['setup.laboratory.manage','Setup','Laboratory setup','manage','Manage laboratory catalogue'], ['setup.pharmacy.manage','Setup','Pharmacy setup','manage','Manage pharmacy master data'], ['setup.financial.manage','Setup','Financial setup','manage','Manage payment methods'], ['setup.communication.manage','Setup','Communication','manage','Manage supported communications'], ['setup.system.manage','System','System setup','manage','Manage system settings and audit log'],
 ];
-$permissionStmt = $pdo->prepare('INSERT INTO Permissions (PermissionKey,ModuleName,ResourceName,ActionName,Description) VALUES (?,?,?,?,?) ON DUPLICATE KEY UPDATE ModuleName=VALUES(ModuleName),ResourceName=VALUES(ResourceName),ActionName=VALUES(ActionName),Description=VALUES(Description)');
+$permissionStmt = $pdo->prepare('INSERT INTO permissions (PermissionKey,ModuleName,ResourceName,ActionName,Description) VALUES (?,?,?,?,?) ON DUPLICATE KEY UPDATE ModuleName=VALUES(ModuleName),ResourceName=VALUES(ResourceName),ActionName=VALUES(ActionName),Description=VALUES(Description)');
 foreach ($permissionRows as $permission) $permissionStmt->execute($permission);
 
-$pdo->exec('UPDATE users u JOIN Roles r ON r.RoleKey=u.role SET u.role_id=r.RoleID WHERE u.role_id IS NULL OR u.role_id<>r.RoleID');
+$pdo->exec('UPDATE users u JOIN roles r ON r.RoleKey=u.role SET u.role_id=r.RoleID WHERE u.role_id IS NULL OR u.role_id<>r.RoleID');
 $pdo->exec("UPDATE users SET is_root=1 WHERE username='superadmin' AND role='superuser'");
 
 $defaults = [
@@ -118,16 +118,16 @@ $defaults = [
 ];
 $pdo->beginTransaction();
 try {
-    $superRoleId = (int) $pdo->query("SELECT RoleID FROM Roles WHERE RoleKey='superuser'")->fetchColumn();
-    $pdo->prepare('INSERT IGNORE INTO RolePermissions (RoleID,PermissionID) SELECT ?,PermissionID FROM Permissions')->execute([$superRoleId]);
-    $link = $pdo->prepare('INSERT IGNORE INTO RolePermissions (RoleID,PermissionID) SELECT r.RoleID,p.PermissionID FROM Roles r JOIN Permissions p ON p.PermissionKey=? WHERE r.RoleKey=?');
+    $superRoleId = (int) $pdo->query("SELECT RoleID FROM roles WHERE RoleKey='superuser'")->fetchColumn();
+    $pdo->prepare('INSERT IGNORE INTO rolepermissions (RoleID,PermissionID) SELECT ?,PermissionID FROM permissions')->execute([$superRoleId]);
+    $link = $pdo->prepare('INSERT IGNORE INTO rolepermissions (RoleID,PermissionID) SELECT r.RoleID,p.PermissionID FROM roles r JOIN permissions p ON p.PermissionKey=? WHERE r.RoleKey=?');
     foreach ($defaults as $roleKey => $keys) foreach ($keys as $key) $link->execute([$key,$roleKey]);
     $pdo->commit();
 } catch (Throwable $e) { if ($pdo->inTransaction()) $pdo->rollBack(); throw $e; }
 
-$methodStmt = $pdo->prepare('INSERT IGNORE INTO PaymentMethods (MethodName,DisplayOrder) VALUES (?,?)');
+$methodStmt = $pdo->prepare('INSERT IGNORE INTO paymentmethods (MethodName,DisplayOrder) VALUES (?,?)');
 foreach (['Cash','Card','Mobile Money','Bank','Other'] as $order => $method) $methodStmt->execute([$method,$order + 1]);
-$pdo->exec("INSERT IGNORE INTO Specializations (SpecializationName) SELECT DISTINCT Specialty FROM Doctors WHERE Specialty IS NOT NULL AND TRIM(Specialty)<>''");
+$pdo->exec("INSERT IGNORE INTO specializations (SpecializationName) SELECT DISTINCT Specialty FROM doctors WHERE Specialty IS NOT NULL AND TRIM(Specialty)<>''");
 
 require_once __DIR__ . '/../auth/includes/operational-role-defaults.php';
 tdc_apply_operational_role_defaults($pdo);

@@ -249,7 +249,7 @@ function tdc_scalar(PDO $pdo, string $sql, array $params = [])
 
 /**
  * Generates the next zero-padded reference for a VARCHAR primary key,
- * e.g. tdc_next_ref($pdo, 'Inventory', 'ItemID', 'ITM') -> "ITM000042".
+ * e.g. tdc_next_ref($pdo, 'inventory', 'ItemID', 'ITM') -> "ITM000042".
  * Table/column are always hardcoded call-site literals — never user input.
  */
 function tdc_next_ref(PDO $pdo, string $table, string $column, string $prefix, int $pad = 6): string
@@ -298,14 +298,14 @@ function tdc_find_or_create_supplier_id(PDO $pdo, string $supplierName): int
 {
     $existing = tdc_scalar(
         $pdo,
-        'SELECT SupplierID FROM Purchases WHERE LOWER(SupplierName) = LOWER(:name) ORDER BY PurchaseDate DESC LIMIT 1',
+        'SELECT SupplierID FROM purchases WHERE LOWER(SupplierName) = LOWER(:name) ORDER BY PurchaseDate DESC LIMIT 1',
         ['name' => $supplierName]
     );
     if ($existing !== false && $existing !== null) {
         return (int) $existing;
     }
 
-    return (int) tdc_scalar($pdo, 'SELECT COALESCE(MAX(SupplierID), 0) FROM Purchases') + 1;
+    return (int) tdc_scalar($pdo, 'SELECT COALESCE(MAX(SupplierID), 0) FROM purchases') + 1;
 }
 
 /**
@@ -324,7 +324,7 @@ function tdc_fetch_stock_map(PDO $pdo, array $itemIds): array
     }
 
     $placeholders = implode(',', array_fill(0, count($itemIds), '?'));
-    $stmt = $pdo->prepare("SELECT ItemID, ItemName, SellingPrice, QuantityInStock FROM Inventory WHERE ItemID IN ({$placeholders})");
+    $stmt = $pdo->prepare("SELECT ItemID, ItemName, SellingPrice, QuantityInStock FROM inventory WHERE ItemID IN ({$placeholders})");
     $stmt->execute(array_values($itemIds));
 
     $map = [];
@@ -581,7 +581,7 @@ function tdc_save_inventory_item(PDO $pdo, array $input, bool $isEdit, string $e
     if ($isEdit) {
         $params['id'] = $editId;
         $stmt = $pdo->prepare(
-            'UPDATE Inventory SET Category = :Category, ItemName = :ItemName,
+            'UPDATE inventory SET Category = :Category, ItemName = :ItemName,
                 QuantityInStock = :QuantityInStock, SalesUnit = :SalesUnit,
                 SellingPrice = :SellingPrice, ReorderLevel = :ReorderLevel, ExpiryDate = :ExpiryDate, DefaultPurchaseUnit = :DefaultPurchaseUnit, UnitsPerPackage = :UnitsPerPackage
              WHERE ItemID = :id'
@@ -590,9 +590,9 @@ function tdc_save_inventory_item(PDO $pdo, array $input, bool $isEdit, string $e
         return;
     }
 
-    $params['ItemID'] = tdc_next_ref($pdo, 'Inventory', 'ItemID', 'ITM');
+    $params['ItemID'] = tdc_next_ref($pdo, 'inventory', 'ItemID', 'ITM');
     $stmt = $pdo->prepare(
-        'INSERT INTO Inventory (ItemID, Category, ItemName, QuantityInStock, SalesUnit, SellingPrice, ReorderLevel, ExpiryDate, DefaultPurchaseUnit, UnitsPerPackage)
+        'INSERT INTO inventory (ItemID, Category, ItemName, QuantityInStock, SalesUnit, SellingPrice, ReorderLevel, ExpiryDate, DefaultPurchaseUnit, UnitsPerPackage)
          VALUES (:ItemID, :Category, :ItemName, :QuantityInStock, :SalesUnit, :SellingPrice, :ReorderLevel, :ExpiryDate, :DefaultPurchaseUnit, :UnitsPerPackage)'
     );
     $stmt->execute($params);
@@ -603,10 +603,10 @@ function tdc_delete_inventory_item(PDO $pdo, string $id): array
 {
     // App-level referential guard: no FK constraints in this schema, so
     // we check dependents ourselves before allowing a delete.
-    $saleCount = (int) tdc_scalar($pdo, 'SELECT COUNT(*) FROM PharmacySales WHERE ItemID = :id', ['id' => $id]);
+    $saleCount = (int) tdc_scalar($pdo, 'SELECT COUNT(*) FROM pharmacysales WHERE ItemID = :id', ['id' => $id]);
     $purchaseCount = (int) tdc_scalar(
         $pdo,
-        'SELECT COUNT(*) FROM Purchases WHERE LOWER(TRIM(ItemName)) = (SELECT LOWER(TRIM(ItemName)) FROM Inventory WHERE ItemID = :id)',
+        'SELECT COUNT(*) FROM purchases WHERE LOWER(TRIM(ItemName)) = (SELECT LOWER(TRIM(ItemName)) FROM inventory WHERE ItemID = :id)',
         ['id' => $id]
     );
 
@@ -614,7 +614,7 @@ function tdc_delete_inventory_item(PDO $pdo, string $id): array
         return ['This item has purchase or sale history and cannot be deleted. Set its stock to 0 instead.'];
     }
 
-    $stmt = $pdo->prepare('DELETE FROM Inventory WHERE ItemID = :id');
+    $stmt = $pdo->prepare('DELETE FROM inventory WHERE ItemID = :id');
     $stmt->execute(['id' => $id]);
     return [];
 }
@@ -630,12 +630,12 @@ function tdc_upsert_inventory_from_purchase(PDO $pdo, array $line, int $supplier
     $existingId = false;
     $lineItemId = trim((string) ($line['ItemID'] ?? ''));
     if ($lineItemId !== '') {
-        $byId = $pdo->prepare('SELECT ItemID FROM Inventory WHERE ItemID = :id LIMIT 1');
+        $byId = $pdo->prepare('SELECT ItemID FROM inventory WHERE ItemID = :id LIMIT 1');
         $byId->execute(['id' => $lineItemId]);
         $existingId = $byId->fetchColumn();
     }
     if ($existingId === false) {
-        $stmt = $pdo->prepare('SELECT ItemID FROM Inventory WHERE LOWER(TRIM(ItemName)) = LOWER(TRIM(:name)) LIMIT 1');
+        $stmt = $pdo->prepare('SELECT ItemID FROM inventory WHERE LOWER(TRIM(ItemName)) = LOWER(TRIM(:name)) LIMIT 1');
         $stmt->execute(['name' => $line['ItemName']]);
         $existingId = $stmt->fetchColumn();
     }
@@ -644,7 +644,7 @@ function tdc_upsert_inventory_from_purchase(PDO $pdo, array $line, int $supplier
 
     if ($existingId !== false) {
         $upd = $pdo->prepare(
-            'UPDATE Inventory SET QuantityInStock = QuantityInStock + :addQty, Category = COALESCE(:Category, Category),
+            'UPDATE inventory SET QuantityInStock = QuantityInStock + :addQty, Category = COALESCE(:Category, Category),
                 SalesUnit = COALESCE(:SalesUnit, SalesUnit), SellingPrice = :SellingPrice,
                 SupplierID = :SupplierID, ExpiryDate = COALESCE(:ExpiryDate, ExpiryDate)
              WHERE ItemID = :id'
@@ -661,9 +661,9 @@ function tdc_upsert_inventory_from_purchase(PDO $pdo, array $line, int $supplier
         return;
     }
 
-    $itemId = tdc_next_ref($pdo, 'Inventory', 'ItemID', 'ITM');
+    $itemId = tdc_next_ref($pdo, 'inventory', 'ItemID', 'ITM');
     $ins = $pdo->prepare(
-        'INSERT INTO Inventory (ItemID, Category, ItemName, QuantityInStock, SalesUnit, SellingPrice, ReorderLevel, ExpiryDate, SupplierID)
+        'INSERT INTO inventory (ItemID, Category, ItemName, QuantityInStock, SalesUnit, SellingPrice, ReorderLevel, ExpiryDate, SupplierID)
          VALUES (:ItemID, :Category, :ItemName, :QuantityInStock, :SalesUnit, :SellingPrice, 10, :ExpiryDate, :SupplierID)'
     );
     $ins->execute([
@@ -684,7 +684,7 @@ function tdc_upsert_inventory_from_purchase(PDO $pdo, array $line, int $supplier
 function tdc_save_purchase(PDO $pdo, array $input): string
 {
     $supplierId = tdc_find_or_create_supplier_id($pdo, $input['SupplierName']);
-    $base       = tdc_next_bill_base($pdo, 'Purchases', 'PurchaseID', 'PO');
+    $base       = tdc_next_bill_base($pdo, 'purchases', 'PurchaseID', 'PO');
 
     $lines       = [];
     $totalAmount = 0.0;
@@ -733,7 +733,7 @@ function tdc_save_purchase(PDO $pdo, array $input): string
     $pdo->beginTransaction();
     try {
         $insert = $pdo->prepare(
-            'INSERT INTO Purchases (PurchaseID, SupplierID, SupplierName, SupplierPhone, ReferenceNumber, Category, ItemName,
+            'INSERT INTO purchases (PurchaseID, SupplierID, SupplierName, SupplierPhone, ReferenceNumber, Category, ItemName,
                 Quantity, MinimumQuantity, PurchaseUnit, ConversionFactor, SalesUnit, UnitPrice, SellingPrice,
                 TotalAmount, AmountPaid, DueBalance, Discount, VATAmount, PurchaseDate)
              VALUES (:PurchaseID, :SupplierID, :SupplierName, :SupplierPhone, :ReferenceNumber, :Category, :ItemName,
@@ -781,7 +781,7 @@ function tdc_save_purchase(PDO $pdo, array $input): string
 /** @return string[] error messages; empty on success */
 function tdc_void_purchase(PDO $pdo, string $base): array
 {
-    $stmt = $pdo->prepare('SELECT ItemName, Quantity, ConversionFactor FROM Purchases WHERE PurchaseID LIKE :pattern');
+    $stmt = $pdo->prepare('SELECT ItemName, Quantity, ConversionFactor FROM purchases WHERE PurchaseID LIKE :pattern');
     $stmt->execute(['pattern' => $base . '-%']);
     $lines = $stmt->fetchAll();
 
@@ -796,7 +796,7 @@ function tdc_void_purchase(PDO $pdo, string $base): array
         $reduceBy = (int) round($l['Quantity'] * $l['ConversionFactor']);
         $current  = tdc_scalar(
             $pdo,
-            'SELECT QuantityInStock FROM Inventory WHERE LOWER(TRIM(ItemName)) = LOWER(TRIM(:name)) LIMIT 1',
+            'SELECT QuantityInStock FROM inventory WHERE LOWER(TRIM(ItemName)) = LOWER(TRIM(:name)) LIMIT 1',
             ['name' => $l['ItemName']]
         );
         if ($current !== false && (int) $current < $reduceBy) {
@@ -807,13 +807,13 @@ function tdc_void_purchase(PDO $pdo, string $base): array
 
     $pdo->beginTransaction();
     try {
-        $reverse = $pdo->prepare('UPDATE Inventory SET QuantityInStock = QuantityInStock - :qty WHERE LOWER(TRIM(ItemName)) = LOWER(TRIM(:name))');
+        $reverse = $pdo->prepare('UPDATE inventory SET QuantityInStock = QuantityInStock - :qty WHERE LOWER(TRIM(ItemName)) = LOWER(TRIM(:name))');
         foreach ($lines as $l) {
             $reduceBy = (int) round($l['Quantity'] * $l['ConversionFactor']);
             $reverse->execute(['qty' => $reduceBy, 'name' => $l['ItemName']]);
         }
 
-        $del = $pdo->prepare('DELETE FROM Purchases WHERE PurchaseID LIKE :pattern');
+        $del = $pdo->prepare('DELETE FROM purchases WHERE PurchaseID LIKE :pattern');
         $del->execute(['pattern' => $base . '-%']);
 
         $pdo->commit();
@@ -834,7 +834,7 @@ function tdc_void_purchase(PDO $pdo, string $base): array
  */
 function tdc_save_sale(PDO $pdo, array $input, array $stockByItemId): string
 {
-    $base = tdc_next_bill_base($pdo, 'PharmacySales', 'SaleID', 'POS');
+    $base = tdc_next_bill_base($pdo, 'pharmacysales', 'SaleID', 'POS');
 
     $lines       = [];
     $totalAmount = 0.0;
@@ -867,7 +867,7 @@ function tdc_save_sale(PDO $pdo, array $input, array $stockByItemId): string
     $pdo->beginTransaction();
     try {
         $insert = $pdo->prepare(
-            'INSERT INTO PharmacySales (SaleID, ItemID, ItemName, Quantity, UnitPrice, LineTotal,
+            'INSERT INTO pharmacysales (SaleID, ItemID, ItemName, Quantity, UnitPrice, LineTotal,
                 TotalAmount, AmountPaid, DueBalance, PaymentStatus, CustomerName, CustomerPhone, SoldBy)
              VALUES (:SaleID, :ItemID, :ItemName, :Quantity, :UnitPrice, :LineTotal,
                 :TotalAmount, :AmountPaid, :DueBalance, :PaymentStatus, :CustomerName, :CustomerPhone, :SoldBy)'
@@ -878,7 +878,7 @@ function tdc_save_sale(PDO $pdo, array $input, array $stockByItemId): string
         // dropped the item below what this line needs, so two
         // simultaneous sales can never oversell the same item.
         $decrement = $pdo->prepare(
-            'UPDATE Inventory SET QuantityInStock = QuantityInStock - :qty
+            'UPDATE inventory SET QuantityInStock = QuantityInStock - :qty
              WHERE ItemID = :id AND QuantityInStock >= :qtyCheck'
         );
 
@@ -921,7 +921,7 @@ function tdc_save_sale(PDO $pdo, array $input, array $stockByItemId): string
 /** @return string[] error messages; empty on success */
 function tdc_void_sale(PDO $pdo, string $base): array
 {
-    $stmt = $pdo->prepare('SELECT ItemID, Quantity FROM PharmacySales WHERE SaleID LIKE :pattern');
+    $stmt = $pdo->prepare('SELECT ItemID, Quantity FROM pharmacysales WHERE SaleID LIKE :pattern');
     $stmt->execute(['pattern' => $base . '-%']);
     $lines = $stmt->fetchAll();
 
@@ -931,15 +931,15 @@ function tdc_void_sale(PDO $pdo, string $base): array
 
     $pdo->beginTransaction();
     try {
-        $restock = $pdo->prepare('UPDATE Inventory SET QuantityInStock = QuantityInStock + :qty WHERE ItemID = :id');
+        $restock = $pdo->prepare('UPDATE inventory SET QuantityInStock = QuantityInStock + :qty WHERE ItemID = :id');
         foreach ($lines as $l) {
             $restock->execute(['qty' => $l['Quantity'], 'id' => $l['ItemID']]);
         }
 
-        $del = $pdo->prepare('DELETE FROM PharmacySales WHERE SaleID LIKE :pattern');
+        $del = $pdo->prepare('DELETE FROM pharmacysales WHERE SaleID LIKE :pattern');
         $del->execute(['pattern' => $base . '-%']);
 
-        $delAccounting = $pdo->prepare("DELETE FROM Accounting WHERE ReferenceID=? AND AccountID='REV-PHARM'");
+        $delAccounting = $pdo->prepare("DELETE FROM accounting WHERE ReferenceID=? AND AccountID='REV-PHARM'");
         $delAccounting->execute([$base]);
 
         $pdo->commit();
@@ -1032,25 +1032,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($section, ALLOWED_SECTIONS
             if (!in_array($paymentMethod, $paymentMethodNames, true)) tdc_forbidden();
             $pdo->beginTransaction();
             try {
-                $stmt=$pdo->prepare("SELECT * FROM Prescriptions WHERE PrescriptionID LIKE ? AND Status='Pending' ORDER BY PrescriptionID FOR UPDATE");
+                $stmt=$pdo->prepare("SELECT * FROM prescriptions WHERE PrescriptionID LIKE ? AND Status='Pending' ORDER BY PrescriptionID FOR UPDATE");
                 $stmt->execute([$base.'-%']);$lines=$stmt->fetchAll();
                 if(!$lines) throw new RuntimeException('Prescription is no longer pending.');
                 $saleLines=[];$total=0;
                 foreach($lines as $line){
-                    $stmt=$pdo->prepare('SELECT * FROM Inventory WHERE LOWER(TRIM(ItemName))=LOWER(TRIM(?)) LIMIT 1 FOR UPDATE');$stmt->execute([$line['MedicationName']]);$item=$stmt->fetch();
+                    $stmt=$pdo->prepare('SELECT * FROM inventory WHERE LOWER(TRIM(ItemName))=LOWER(TRIM(?)) LIMIT 1 FOR UPDATE');$stmt->execute([$line['MedicationName']]);$item=$stmt->fetch();
                     $qty=max(1,(int)$line['Quantity']);
                     if(!$item) throw new RuntimeException('No inventory item matches '.$line['MedicationName'].'.');
                     if((int)$item['QuantityInStock']<$qty) throw new RuntimeException('Insufficient stock for '.$line['MedicationName'].'.');
                     $lineTotal=round($qty*(float)$item['SellingPrice'],2);$total+=$lineTotal;$saleLines[]=[$line,$item,$qty,$lineTotal];
                 }
                 if($amountPaid<0||$amountPaid>$total) throw new RuntimeException('Amount paid must be between zero and the bill total.');
-                $saleBase=tdc_next_bill_base($pdo,'PharmacySales','SaleID','POS');$status=tdc_workflow_payment_status($total,$amountPaid);$n=0;
-                $insert=$pdo->prepare('INSERT INTO PharmacySales (SaleID,ItemID,ItemName,Quantity,UnitPrice,LineTotal,TotalAmount,AmountPaid,DueBalance,PaymentStatus,CustomerName,CustomerPhone,SoldBy) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)');
-                $stock=$pdo->prepare('UPDATE Inventory SET QuantityInStock=QuantityInStock-? WHERE ItemID=? AND QuantityInStock>=?');
+                $saleBase=tdc_next_bill_base($pdo,'pharmacysales','SaleID','POS');$status=tdc_workflow_payment_status($total,$amountPaid);$n=0;
+                $insert=$pdo->prepare('INSERT INTO pharmacysales (SaleID,ItemID,ItemName,Quantity,UnitPrice,LineTotal,TotalAmount,AmountPaid,DueBalance,PaymentStatus,CustomerName,CustomerPhone,SoldBy) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)');
+                $stock=$pdo->prepare('UPDATE inventory SET QuantityInStock=QuantityInStock-? WHERE ItemID=? AND QuantityInStock>=?');
                 foreach($saleLines as [$line,$item,$qty,$lineTotal]){$n++;$insert->execute([$saleBase.'-'.str_pad((string)$n,2,'0',STR_PAD_LEFT),$item['ItemID'],$item['ItemName'],$qty,$item['SellingPrice'],$lineTotal,$total,$amountPaid,max(0,$total-$amountPaid),$status,$line['PatientName'],$line['PatientPhone'],$_SESSION['user_id']]);$stock->execute([$qty,$item['ItemID'],$qty]);if(!$stock->rowCount())throw new RuntimeException('Stock changed while dispensing. Please retry.');}
-                $stmt=$pdo->prepare("UPDATE Prescriptions SET Status='Dispensed',DispensedAt=NOW(),DispensedBy=?,PharmacySaleReference=?,TotalAmount=?,AmountPaid=?,DueBalance=? WHERE PrescriptionID LIKE ?");$stmt->execute([$_SESSION['user_id'],$saleBase,$total,$amountPaid,max(0,$total-$amountPaid),$base.'-%']);
+                $stmt=$pdo->prepare("UPDATE prescriptions SET Status='Dispensed',DispensedAt=NOW(),DispensedBy=?,PharmacySaleReference=?,TotalAmount=?,AmountPaid=?,DueBalance=? WHERE PrescriptionID LIKE ?");$stmt->execute([$_SESSION['user_id'],$saleBase,$total,$amountPaid,max(0,$total-$amountPaid),$base.'-%']);
                 $patientId=(int)$lines[0]['PatientID'];$payRef=tdc_workflow_record_payment($pdo,$patientId,'Pharmacy',$amountPaid,(int)$_SESSION['user_id'],['PrescriptionReference'=>$base,'PaymentMethod'=>$paymentMethod]);if($payRef)tdc_workflow_post_revenue($pdo,'REV-PHARM','Pharmacy Revenue',$payRef,'Dispensing payment for '.$base,$amountPaid);
-                $stmt=$pdo->prepare('SELECT UserID FROM Doctors WHERE DoctorID=?');$stmt->execute([$lines[0]['DoctorID']]);tdc_workflow_notify($pdo,(int)$stmt->fetchColumn(),'doctoruser','prescription_dispensed','Prescription dispensed',$base.' was dispensed as '.$saleBase,'doctors.php?visit='.(int)$lines[0]['VisitID']);
+                $stmt=$pdo->prepare('SELECT UserID FROM doctors WHERE DoctorID=?');$stmt->execute([$lines[0]['DoctorID']]);tdc_workflow_notify($pdo,(int)$stmt->fetchColumn(),'doctoruser','prescription_dispensed','Prescription dispensed',$base.' was dispensed as '.$saleBase,'doctors.php?visit='.(int)$lines[0]['VisitID']);
                 $pdo->commit();tdc_redirect('prescriptions','success');
             }catch(Throwable $e){if($pdo->inTransaction())$pdo->rollBack();$errors[]=$e instanceof RuntimeException?$e->getMessage():'The prescription could not be dispensed.';}
 
@@ -1142,7 +1142,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($section, ALLOWED_SECTIONS
                 $purchaseIds   = array_values(array_filter(array_map('strval', $oldPurchase['ItemID']), static fn ($v) => trim($v) !== ''));
                 if ($purchaseIds) {
                     $place  = implode(',', array_fill(0, count($purchaseIds), '?'));
-                    $lookup = $pdo->prepare("SELECT ItemID, ItemName, Category, SalesUnit FROM Inventory WHERE ItemID IN ($place)");
+                    $lookup = $pdo->prepare("SELECT ItemID, ItemName, Category, SalesUnit FROM inventory WHERE ItemID IN ($place)");
                     $lookup->execute($purchaseIds);
                     foreach ($lookup->fetchAll() as $inventoryRow) {
                         $purchaseIdMap[(string) $inventoryRow['ItemID']] = $inventoryRow;
@@ -1168,7 +1168,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($section, ALLOWED_SECTIONS
 
                 // Reuse catalog units and the latest received pack configuration.
                 foreach ($oldPurchase['ItemName'] as $i => $itemName) {
-                    $unitStmt = $pdo->prepare('SELECT i.SalesUnit,i.Category,p.PurchaseUnit,p.ConversionFactor FROM Inventory i LEFT JOIN Purchases p ON p.PurchaseID=(SELECT p2.PurchaseID FROM Purchases p2 WHERE LOWER(TRIM(p2.ItemName))=LOWER(TRIM(i.ItemName)) ORDER BY p2.PurchaseDate DESC,p2.PurchaseID DESC LIMIT 1) WHERE LOWER(TRIM(i.ItemName))=LOWER(TRIM(?)) LIMIT 1');
+                    $unitStmt = $pdo->prepare('SELECT i.SalesUnit,i.Category,p.PurchaseUnit,p.ConversionFactor FROM inventory i LEFT JOIN purchases p ON p.PurchaseID=(SELECT p2.PurchaseID FROM purchases p2 WHERE LOWER(TRIM(p2.ItemName))=LOWER(TRIM(i.ItemName)) ORDER BY p2.PurchaseDate DESC,p2.PurchaseID DESC LIMIT 1) WHERE LOWER(TRIM(i.ItemName))=LOWER(TRIM(?)) LIMIT 1');
                     $unitStmt->execute([(string)$itemName]);
                     $unitDefaults = $unitStmt->fetch() ?: [];
                     foreach (['SalesUnit','Category','PurchaseUnit','ConversionFactor'] as $field) {
@@ -1244,7 +1244,7 @@ $viewSaleLines      = [];
 
 if ($section === 'pos') {
     $inventoryForCombo = $pdo->query(
-        'SELECT ItemID, ItemName, SellingPrice, QuantityInStock, SalesUnit FROM Inventory
+        'SELECT ItemID, ItemName, SellingPrice, QuantityInStock, SalesUnit FROM inventory
          WHERE QuantityInStock > 0 ORDER BY ItemName ASC LIMIT 500'
     )->fetchAll();
 
@@ -1260,7 +1260,7 @@ if ($section === 'pos') {
                 MIN(CustomerPhone) AS CustomerPhone, COUNT(*) AS LineCount,
                 MIN(TotalAmount) AS TotalAmount, MIN(AmountPaid) AS AmountPaid,
                 MIN(DueBalance) AS DueBalance, MIN(PaymentStatus) AS PaymentStatus, MIN(SaleDate) AS SaleDate
-         FROM PharmacySales {$where}
+         FROM pharmacysales {$where}
          GROUP BY SaleRef ORDER BY SaleDate DESC LIMIT 200"
     );
     $stmt->execute($params);
@@ -1269,7 +1269,7 @@ if ($section === 'pos') {
     if (empty($errors)) {
         if (isset($_GET['view'])) {
             $viewSaleRef = preg_replace('/[^A-Za-z0-9]/', '', (string) $_GET['view']);
-            $stmt = $pdo->prepare('SELECT * FROM PharmacySales WHERE SaleID LIKE :pattern ORDER BY SaleID ASC');
+            $stmt = $pdo->prepare('SELECT * FROM pharmacysales WHERE SaleID LIKE :pattern ORDER BY SaleID ASC');
             $stmt->execute(['pattern' => $viewSaleRef . '-%']);
             $viewSaleLines = $stmt->fetchAll();
             if (empty($viewSaleLines)) {
@@ -1283,7 +1283,7 @@ if ($section === 'pos') {
 
 $pendingPrescriptions=[];
 if($section==='prescriptions'){
-    $pendingPrescriptions=$pdo->query("SELECT SUBSTRING_INDEX(pr.PrescriptionID,'-',1) PrescriptionReference,MIN(pr.PatientName) PatientName,MIN(pr.PatientPhone) PatientPhone,MIN(d.DoctorName) DoctorName,COUNT(*) ItemCount,MIN(pr.PrescriptionDate) PrescriptionDate FROM Prescriptions pr JOIN Doctors d ON d.DoctorID=pr.DoctorID WHERE pr.Status='Pending' GROUP BY PrescriptionReference ORDER BY PrescriptionDate")->fetchAll();
+    $pendingPrescriptions=$pdo->query("SELECT SUBSTRING_INDEX(pr.PrescriptionID,'-',1) PrescriptionReference,MIN(pr.PatientName) PatientName,MIN(pr.PatientPhone) PatientPhone,MIN(d.DoctorName) DoctorName,COUNT(*) ItemCount,MIN(pr.PrescriptionDate) PrescriptionDate FROM prescriptions pr JOIN doctors d ON d.DoctorID=pr.DoctorID WHERE pr.Status='Pending' GROUP BY PrescriptionReference ORDER BY PrescriptionDate")->fetchAll();
 }
 
 // --- 10B. Purchases -----------------------------------------------------
@@ -1294,12 +1294,12 @@ $viewPORef            = '';
 $viewPOLines          = [];
 
 if ($section === 'purchases') {
-    $purchaseUnitOptions = $pdo->query('SELECT ItemID, ItemName, Category, SalesUnit, SellingPrice, QuantityInStock, DefaultPurchaseUnit, UnitsPerPackage FROM Inventory ORDER BY ItemName')->fetchAll();
+    $purchaseUnitOptions = $pdo->query('SELECT ItemID, ItemName, Category, SalesUnit, SellingPrice, QuantityInStock, DefaultPurchaseUnit, UnitsPerPackage FROM inventory ORDER BY ItemName')->fetchAll();
     foreach ($purchaseUnitOptions as $key => $row) {
         $purchaseUnitOptions[$key]['SalesUnit']          = tdc_norm_unit($row['SalesUnit'] ?? null);
         $purchaseUnitOptions[$key]['DefaultPurchaseUnit'] = tdc_norm_unit($row['DefaultPurchaseUnit'] ?? null);
     }
-    $itemNamesForDatalist = $pdo->query('SELECT DISTINCT ItemName FROM Inventory ORDER BY ItemName ASC LIMIT 500')
+    $itemNamesForDatalist = $pdo->query('SELECT DISTINCT ItemName FROM inventory ORDER BY ItemName ASC LIMIT 500')
         ->fetchAll(PDO::FETCH_COLUMN);
 
     $purchaseSearch = trim((string) ($_GET['q'] ?? ''));
@@ -1351,13 +1351,13 @@ if ($section === 'purchases') {
                 MIN(SupplierPhone) AS SupplierPhone, MIN(ReferenceNumber) AS ReferenceNumber, COUNT(*) AS LineCount,
                 MIN(TotalAmount) AS TotalAmount, MIN(AmountPaid) AS AmountPaid,
                 MIN(DueBalance) AS DueBalance, MIN(PurchaseDate) AS PurchaseDate
-         FROM Purchases {$where}
+         FROM purchases {$where}
          GROUP BY PORef";
 
     if (!$canViewPurchaseCost) {
         $purchaseSelectSql = "SELECT SUBSTRING_INDEX(PurchaseID, '-', 1) AS PORef, MIN(SupplierName) AS SupplierName,
             MIN(SupplierPhone) AS SupplierPhone, MIN(ReferenceNumber) AS ReferenceNumber, COUNT(*) AS LineCount,
-            MIN(PurchaseDate) AS PurchaseDate FROM Purchases {$where} GROUP BY PORef";
+            MIN(PurchaseDate) AS PurchaseDate FROM purchases {$where} GROUP BY PORef";
     }
     if (($_GET['export'] ?? '') === 'csv' && empty($purchaseDateError)) {
         if (!$canViewPurchaseCost) {
@@ -1386,7 +1386,7 @@ if ($section === 'purchases') {
         tdc_csv_download('purchase-orders-' . date('Y-m-d') . '.csv', ['PO Ref', 'Reference', 'Supplier', 'Phone', 'Items', 'Total', 'Paid', 'Due', 'Status', 'Purchase Date'], $exportRows);
     }
 
-    $countStmt = $pdo->prepare('SELECT COUNT(*) FROM (SELECT SUBSTRING_INDEX(PurchaseID, \'-\', 1) AS PORef FROM Purchases ' . $where . ' GROUP BY PORef) AS grouped');
+    $countStmt = $pdo->prepare('SELECT COUNT(*) FROM (SELECT SUBSTRING_INDEX(PurchaseID, \'-\', 1) AS PORef FROM purchases ' . $where . ' GROUP BY PORef) AS grouped');
     $countStmt->execute($params);
     $purchaseTotal = (int) $countStmt->fetchColumn();
 
@@ -1398,7 +1398,7 @@ if ($section === 'purchases') {
     if (empty($errors)) {
         if (isset($_GET['view'])) {
             $viewPORef = preg_replace('/[^A-Za-z0-9]/', '', (string) $_GET['view']);
-            $stmt = $pdo->prepare('SELECT ' . ($canViewPurchaseCost ? '*' : 'PurchaseID,SupplierName,SupplierPhone,ReferenceNumber,ItemName,Category,Quantity,PurchaseUnit,SalesUnit,SellingPrice,PurchaseDate') . ' FROM Purchases WHERE PurchaseID LIKE :pattern ORDER BY PurchaseID ASC');
+            $stmt = $pdo->prepare('SELECT ' . ($canViewPurchaseCost ? '*' : 'PurchaseID,SupplierName,SupplierPhone,ReferenceNumber,ItemName,Category,Quantity,PurchaseUnit,SalesUnit,SellingPrice,PurchaseDate') . ' FROM purchases WHERE PurchaseID LIKE :pattern ORDER BY PurchaseID ASC');
             $stmt->execute(['pattern' => $viewPORef . '-%']);
             $viewPOLines = $stmt->fetchAll();
             if (empty($viewPOLines)) {
@@ -1430,7 +1430,7 @@ if ($section === 'inventory') {
     }
     $where = $conditions !== [] ? 'WHERE ' . implode(' AND ', $conditions) : '';
 
-    $stmt = $pdo->prepare("SELECT * FROM Inventory {$where} ORDER BY ItemName ASC LIMIT 500");
+    $stmt = $pdo->prepare("SELECT * FROM inventory {$where} ORDER BY ItemName ASC LIMIT 500");
     $stmt->execute($params);
     $inventoryItems = $stmt->fetchAll();
     foreach ($inventoryItems as $key => $item) {
@@ -1444,10 +1444,10 @@ $hubTodaySales    = 0;
 $hubOpenPOCount   = 0;
 
 if ($section === null) {
-    $hubTodaySales    = (int) tdc_scalar($pdo, "SELECT COUNT(DISTINCT SUBSTRING_INDEX(SaleID, '-', 1)) FROM PharmacySales WHERE DATE(SaleDate) = CURDATE()");
+    $hubTodaySales    = (int) tdc_scalar($pdo, "SELECT COUNT(DISTINCT SUBSTRING_INDEX(SaleID, '-', 1)) FROM pharmacysales WHERE DATE(SaleDate) = CURDATE()");
     if (tdc_can('pharmacy.inventory.view')) {
-        $hubLowStockCount = (int) tdc_scalar($pdo, 'SELECT COUNT(*) FROM Inventory WHERE QuantityInStock <= ReorderLevel');
-        $hubOpenPOCount = $canViewPurchaseCost ? (int) tdc_scalar($pdo, "SELECT COUNT(DISTINCT SUBSTRING_INDEX(PurchaseID, '-', 1)) FROM Purchases WHERE DueBalance > 0") : 0;
+        $hubLowStockCount = (int) tdc_scalar($pdo, 'SELECT COUNT(*) FROM inventory WHERE QuantityInStock <= ReorderLevel');
+        $hubOpenPOCount = $canViewPurchaseCost ? (int) tdc_scalar($pdo, "SELECT COUNT(DISTINCT SUBSTRING_INDEX(PurchaseID, '-', 1)) FROM purchases WHERE DueBalance > 0") : 0;
     }
 }
 

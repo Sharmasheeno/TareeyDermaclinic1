@@ -40,11 +40,11 @@ $pdo->exec('ALTER TABLE users MODIFY role VARCHAR(100) NOT NULL');
 
 add_column($pdo, 'Doctors', 'UserID', 'INT NULL AFTER DoctorID');
 if (!index_exists($pdo, 'Doctors', 'uq_doctors_user')) {
-    $pdo->exec('ALTER TABLE Doctors ADD UNIQUE KEY uq_doctors_user (UserID)');
+    $pdo->exec('ALTER TABLE doctors ADD UNIQUE KEY uq_doctors_user (UserID)');
 }
 
 $pdo->exec(
-    "CREATE TABLE IF NOT EXISTS LabServices (
+    "CREATE TABLE IF NOT EXISTS labservices (
         ServiceID INT NOT NULL AUTO_INCREMENT,
         ServiceName VARCHAR(150) NOT NULL,
         Category VARCHAR(100) NULL,
@@ -63,7 +63,7 @@ add_column($pdo, 'LabServices', 'Description', 'VARCHAR(500) NULL AFTER Category
 add_column($pdo, 'LabServices', 'IsAvailable', 'TINYINT(1) NOT NULL DEFAULT 1 AFTER Price');
 
 $pdo->exec(
-    "CREATE TABLE IF NOT EXISTS Visits (
+    "CREATE TABLE IF NOT EXISTS visits (
         VisitID INT NOT NULL AUTO_INCREMENT,
         VisitReference VARCHAR(50) NOT NULL,
         PatientID INT NOT NULL,
@@ -93,7 +93,7 @@ $pdo->exec(
 );
 
 $pdo->exec(
-    "CREATE TABLE IF NOT EXISTS Payments (
+    "CREATE TABLE IF NOT EXISTS payments (
         PaymentID BIGINT NOT NULL AUTO_INCREMENT,
         PaymentReference VARCHAR(50) NOT NULL,
         PatientID INT NOT NULL,
@@ -122,10 +122,10 @@ add_column($pdo, 'Prescriptions', 'DispensedAt', 'DATETIME NULL AFTER Status');
 add_column($pdo, 'Prescriptions', 'DispensedBy', 'INT NULL AFTER DispensedAt');
 add_column($pdo, 'Prescriptions', 'PharmacySaleReference', 'VARCHAR(50) NULL AFTER DispensedBy');
 if (!index_exists($pdo, 'Prescriptions', 'idx_prescriptions_visit')) {
-    $pdo->exec('ALTER TABLE Prescriptions ADD KEY idx_prescriptions_visit (VisitID)');
+    $pdo->exec('ALTER TABLE prescriptions ADD KEY idx_prescriptions_visit (VisitID)');
 }
 if (!index_exists($pdo, 'Prescriptions', 'idx_prescriptions_status')) {
-    $pdo->exec('ALTER TABLE Prescriptions ADD KEY idx_prescriptions_status (Status, PrescriptionDate)');
+    $pdo->exec('ALTER TABLE prescriptions ADD KEY idx_prescriptions_status (Status, PrescriptionDate)');
 }
 
 add_column($pdo, 'Laboratory', 'VisitID', 'INT NULL AFTER PatientID');
@@ -136,11 +136,11 @@ add_column($pdo, 'Laboratory', 'WorkflowStatus', "ENUM('Requested','Awaiting Pay
 add_column($pdo, 'Laboratory', 'ClinicalResult', 'TEXT NULL AFTER Result');
 add_column($pdo, 'Laboratory', 'ReviewedAt', 'DATETIME NULL AFTER ResultDate');
 if (!index_exists($pdo, 'Laboratory', 'idx_laboratory_visit')) {
-    $pdo->exec('ALTER TABLE Laboratory ADD KEY idx_laboratory_visit (VisitID)');
+    $pdo->exec('ALTER TABLE laboratory ADD KEY idx_laboratory_visit (VisitID)');
 }
 
 $pdo->exec(
-    "CREATE TABLE IF NOT EXISTS LabOrderItems (
+    "CREATE TABLE IF NOT EXISTS laborderitems (
         LabOrderItemID BIGINT NOT NULL AUTO_INCREMENT,
         LaboratoryID VARCHAR(50) NOT NULL,
         ServiceID INT NOT NULL,
@@ -156,11 +156,11 @@ $pdo->exec(
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
 );
 if (!index_exists($pdo, 'Laboratory', 'idx_laboratory_workflow')) {
-    $pdo->exec('ALTER TABLE Laboratory ADD KEY idx_laboratory_workflow (WorkflowStatus, PaymentStatus, OrderDate)');
+    $pdo->exec('ALTER TABLE laboratory ADD KEY idx_laboratory_workflow (WorkflowStatus, PaymentStatus, OrderDate)');
 }
 
 $pdo->exec(
-    "CREATE TABLE IF NOT EXISTS Notifications (
+    "CREATE TABLE IF NOT EXISTS notifications (
         NotificationID BIGINT NOT NULL AUTO_INCREMENT,
         UserID INT NULL,
         RoleTarget ENUM('superuser','receptionuser','doctoruser','pharmacyuser','labuser') NULL,
@@ -176,8 +176,8 @@ $pdo->exec(
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
 );
 
-$pdo->exec("UPDATE Laboratory SET WorkflowStatus='Completed' WHERE Result <> 'Pending' AND WorkflowStatus NOT IN ('Completed','Cancelled')");
-$pdo->exec("UPDATE Laboratory SET WorkflowStatus='Ready' WHERE Result='Pending' AND PaymentStatus='Paid' AND WorkflowStatus IN ('Requested','Awaiting Payment')");
-$pdo->exec("UPDATE Laboratory SET WorkflowStatus='Awaiting Payment' WHERE Result='Pending' AND PaymentStatus <> 'Paid' AND WorkflowStatus='Requested'");
+$pdo->exec("UPDATE laboratory SET WorkflowStatus='Completed' WHERE Result <> 'Pending' AND WorkflowStatus NOT IN ('Completed','Cancelled')");
+$pdo->exec("UPDATE laboratory SET WorkflowStatus='Ready' WHERE Result='Pending' AND PaymentStatus='Paid' AND WorkflowStatus IN ('Requested','Awaiting Payment')");
+$pdo->exec("UPDATE laboratory SET WorkflowStatus='Awaiting Payment' WHERE Result='Pending' AND PaymentStatus <> 'Paid' AND WorkflowStatus='Requested'");
 
 echo "Connected clinic workflow schema is ready.\n";

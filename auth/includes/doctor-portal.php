@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
 
-$stmt = $pdo->prepare('SELECT * FROM Doctors WHERE UserID=?');
+$stmt = $pdo->prepare('SELECT * FROM doctors WHERE UserID=?');
 $stmt->execute([$_SESSION['user_id']]);
 $doctorProfile = $stmt->fetch();
 // SuperAdmin accounts have no linked Doctors row by design. Let a SuperAdmin
@@ -13,15 +13,15 @@ if (tdc_is_root_superadmin()) {
     $requestedDoctorId = ctype_digit((string) ($_GET['doctor'] ?? '')) ? (int) $_GET['doctor'] : 0;
     $requestedVisit = $_POST['VisitID'] ?? $_GET['visit'] ?? '';
     if (ctype_digit((string) $requestedVisit)) {
-        $doctorLookup = $pdo->prepare('SELECT DoctorID FROM Visits WHERE VisitID=?');
+        $doctorLookup = $pdo->prepare('SELECT DoctorID FROM visits WHERE VisitID=?');
         $doctorLookup->execute([(int) $requestedVisit]);
         $requestedDoctorId = (int) $doctorLookup->fetchColumn();
     }
     if ($requestedDoctorId <= 0) {
-        $requestedDoctorId = (int) $pdo->query('SELECT DoctorID FROM Doctors ORDER BY DoctorID LIMIT 1')->fetchColumn();
+        $requestedDoctorId = (int) $pdo->query('SELECT DoctorID FROM doctors ORDER BY DoctorID LIMIT 1')->fetchColumn();
     }
     if ($requestedDoctorId > 0) {
-        $stmt = $pdo->prepare('SELECT * FROM Doctors WHERE DoctorID=?');
+        $stmt = $pdo->prepare('SELECT * FROM doctors WHERE DoctorID=?');
         $stmt->execute([$requestedDoctorId]);
         $doctorProfile = $stmt->fetch();
     }
@@ -30,11 +30,11 @@ $medicineOptions = [];
 $medicineByName = [];
 $labServices = [];
 if ($doctorProfile) {
-    $medicineOptions = $pdo->query("SELECT ItemID,ItemName,QuantityInStock,SalesUnit,SellingPrice FROM Inventory WHERE QuantityInStock > 0 ORDER BY ItemName")->fetchAll();
+    $medicineOptions = $pdo->query("SELECT ItemID,ItemName,QuantityInStock,SalesUnit,SellingPrice FROM inventory WHERE QuantityInStock > 0 ORDER BY ItemName")->fetchAll();
     foreach ($medicineOptions as $medicineOption) {
         $medicineByName[mb_strtolower(trim((string)$medicineOption['ItemName']))] = $medicineOption;
     }
-    $labServices = $pdo->query('SELECT ServiceID,ServiceName,Category,Description,Price FROM LabServices WHERE IsActive=1 AND IsAvailable=1 ORDER BY Category,ServiceName')->fetchAll();
+    $labServices = $pdo->query('SELECT ServiceID,ServiceName,Category,Description,Price FROM labservices WHERE IsActive=1 AND IsAvailable=1 ORDER BY Category,ServiceName')->fetchAll();
 }
 
 if ($doctorProfile && $_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -42,7 +42,7 @@ if ($doctorProfile && $_SERVER['REQUEST_METHOD'] === 'POST') {
         $portalErrors[] = 'Your session has expired. Please refresh and try again.';
     } else {
         $visitId = ctype_digit((string)($_POST['VisitID'] ?? '')) ? (int)$_POST['VisitID'] : 0;
-        $stmt = $pdo->prepare('SELECT v.*,p.* FROM Visits v JOIN Patients p ON p.PatientID=v.PatientID WHERE v.VisitID=? AND v.DoctorID=?');
+        $stmt = $pdo->prepare('SELECT v.*,p.* FROM visits v JOIN patients p ON p.PatientID=v.PatientID WHERE v.VisitID=? AND v.DoctorID=?');
         $stmt->execute([$visitId,$doctorProfile['DoctorID']]);
         $visit = $stmt->fetch();
         if (!$visit) $portalErrors[] = 'This consultation is not assigned to your account.';
@@ -54,11 +54,11 @@ if ($doctorProfile && $_SERVER['REQUEST_METHOD'] === 'POST') {
             $portalErrors[] = 'Reception must record full consultation payment before clinical work can begin.';
         }
         if (!$portalErrors && $action === 'start') {
-            $stmt = $pdo->prepare("UPDATE Visits SET QueueStatus='In Consultation' WHERE VisitID=? AND QueueStatus='Waiting'");
+            $stmt = $pdo->prepare("UPDATE visits SET QueueStatus='In Consultation' WHERE VisitID=? AND QueueStatus='Waiting'");
             $stmt->execute([$visitId]);
         } elseif (!$portalErrors && $action === 'save_notes') {
             $complete = isset($_POST['complete']);
-            $stmt = $pdo->prepare("UPDATE Visits SET ClinicalNotes=?,Diagnosis=?,TreatmentPlan=?,FollowUpPlan=?,FollowUpDate=?,QueueStatus=?,CompletedAt=? WHERE VisitID=? AND DoctorID=?");
+            $stmt = $pdo->prepare("UPDATE visits SET ClinicalNotes=?,Diagnosis=?,TreatmentPlan=?,FollowUpPlan=?,FollowUpDate=?,QueueStatus=?,CompletedAt=? WHERE VisitID=? AND DoctorID=?");
             $stmt->execute([trim((string)($_POST['ClinicalNotes'] ?? '')),trim((string)($_POST['Diagnosis'] ?? '')),trim((string)($_POST['TreatmentPlan'] ?? '')),trim((string)($_POST['FollowUpPlan'] ?? '')),($_POST['FollowUpDate'] ?? '') ?: null,$complete?'Completed':'In Consultation',$complete?date('Y-m-d H:i:s'):null,$visitId,$doctorProfile['DoctorID']]);
         } elseif (!$portalErrors && $action === 'prescribe') {
             $medications = is_array($_POST['MedicationName'] ?? null) ? $_POST['MedicationName'] : [$_POST['MedicationName'] ?? ''];
@@ -83,8 +83,8 @@ if ($doctorProfile && $_SERVER['REQUEST_METHOD'] === 'POST') {
             }
             if (!$prescriptionLines && !$portalErrors) $portalErrors[] = 'Add at least one medication.';
             if (!$portalErrors) {
-                $base = tdc_workflow_next_reference($pdo,'Prescriptions','PrescriptionID','RX');
-                $stmt = $pdo->prepare('INSERT INTO Prescriptions (PrescriptionID,PatientID,VisitID,PatientName,PatientPhone,PatientAddress,Gender,Age,VisitNumber,DoctorID,MedicationName,Quantity,Dosage,Frequency,Duration,Instructions,Status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,\'Pending\')');
+                $base = tdc_workflow_next_reference($pdo,'prescriptions','PrescriptionID','RX');
+                $stmt = $pdo->prepare('INSERT INTO prescriptions (PrescriptionID,PatientID,VisitID,PatientName,PatientPhone,PatientAddress,Gender,Age,VisitNumber,DoctorID,MedicationName,Quantity,Dosage,Frequency,Duration,Instructions,Status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,\'Pending\')');
                 $pdo->beginTransaction();
                 try {
                     foreach ($prescriptionLines as $index => $line) {
@@ -104,27 +104,27 @@ if ($doctorProfile && $_SERVER['REQUEST_METHOD'] === 'POST') {
             $services = [];
             if ($serviceIds) {
                 $placeholders=implode(',',array_fill(0,count($serviceIds),'?'));
-                $stmt=$pdo->prepare("SELECT ServiceID,ServiceName,Price FROM LabServices WHERE IsActive=1 AND IsAvailable=1 AND ServiceID IN ($placeholders) ORDER BY ServiceID");
+                $stmt=$pdo->prepare("SELECT ServiceID,ServiceName,Price FROM labservices WHERE IsActive=1 AND IsAvailable=1 AND ServiceID IN ($placeholders) ORDER BY ServiceID");
                 $stmt->execute($serviceIds);$services=$stmt->fetchAll();
             }
             if (!$services || count($services)!==count($serviceIds)) $portalErrors[] = 'Select one or more active laboratory services.';
             if (!$portalErrors) {
                 $test = implode(', ',array_column($services,'ServiceName'));
                 $price = round(array_sum(array_map(static fn($service)=>(float)$service['Price'],$services)),2);
-                $labRef = tdc_workflow_next_reference($pdo,'Laboratory','LaboratoryID','LAB');
-                $testId = (int)$pdo->query('SELECT COALESCE(MAX(TestID),0)+1 FROM Laboratory')->fetchColumn();
-                $stmt = $pdo->prepare("INSERT INTO Laboratory (LaboratoryID,PatientID,VisitID,DoctorID,RequestedByUserID,ServiceID,TestID,TestName,Description,TotalAmount,DueBalance,PaymentStatus,WorkflowStatus,Result) VALUES (?,?,?,?,?,?,?,?,?,?,?,'Unpaid','Awaiting Payment','Pending')");
+                $labRef = tdc_workflow_next_reference($pdo,'laboratory','LaboratoryID','LAB');
+                $testId = (int)$pdo->query('SELECT COALESCE(MAX(TestID),0)+1 FROM laboratory')->fetchColumn();
+                $stmt = $pdo->prepare("INSERT INTO laboratory (LaboratoryID,PatientID,VisitID,DoctorID,RequestedByUserID,ServiceID,TestID,TestName,Description,TotalAmount,DueBalance,PaymentStatus,WorkflowStatus,Result) VALUES (?,?,?,?,?,?,?,?,?,?,?,'Unpaid','Awaiting Payment','Pending')");
                 $pdo->beginTransaction();
                 try {
                     $stmt->execute([$labRef,$visit['PatientID'],$visitId,$doctorProfile['DoctorID'],$_SESSION['user_id'],count($services)===1?(int)$services[0]['ServiceID']:null,$testId,$test,trim((string)($_POST['Description'] ?? '')),$price,$price]);
-                    $itemStmt=$pdo->prepare('INSERT INTO LabOrderItems (LaboratoryID,ServiceID,TestName,UnitPrice) VALUES (?,?,?,?)');
+                    $itemStmt=$pdo->prepare('INSERT INTO laborderitems (LaboratoryID,ServiceID,TestName,UnitPrice) VALUES (?,?,?,?)');
                     foreach($services as $service)$itemStmt->execute([$labRef,(int)$service['ServiceID'],$service['ServiceName'],round((float)$service['Price'],2)]);
                     tdc_workflow_notify($pdo,null,'receptionuser','lab_payment_due','Laboratory payment required',$labRef.' for '.$visit['PatientName'],'reception.php?section=laboratory');
                     $pdo->commit();
                 } catch(Throwable $e){if($pdo->inTransaction())$pdo->rollBack();throw $e;}
             }
         } elseif (!$portalErrors && $action === 'review_result') {
-            $stmt = $pdo->prepare('UPDATE Laboratory SET ReviewedAt=NOW() WHERE LaboratoryID=? AND DoctorID=? AND VisitID=? AND WorkflowStatus=\'Completed\'');
+            $stmt = $pdo->prepare('UPDATE laboratory SET ReviewedAt=NOW() WHERE LaboratoryID=? AND DoctorID=? AND VisitID=? AND WorkflowStatus=\'Completed\'');
             $stmt->execute([trim((string)($_POST['LaboratoryID'] ?? '')),$doctorProfile['DoctorID'],$visitId]);
         }
         if (!$portalErrors) {
@@ -139,12 +139,12 @@ $selectedVisit = null;
 $prescriptions = [];
 $labOrders = [];
 if ($doctorProfile && ctype_digit((string)($_GET['visit'] ?? ''))) {
-    $stmt = $pdo->prepare('SELECT v.*,p.PatientName,p.PatientPhone,p.Gender,p.Age,p.PatientAddress FROM Visits v JOIN Patients p ON p.PatientID=v.PatientID WHERE v.VisitID=? AND v.DoctorID=?');
+    $stmt = $pdo->prepare('SELECT v.*,p.PatientName,p.PatientPhone,p.Gender,p.Age,p.PatientAddress FROM visits v JOIN patients p ON p.PatientID=v.PatientID WHERE v.VisitID=? AND v.DoctorID=?');
     $stmt->execute([(int)$_GET['visit'],$doctorProfile['DoctorID']]);
     $selectedVisit = $stmt->fetch();
     if ($selectedVisit) {
-        $stmt=$pdo->prepare('SELECT * FROM Prescriptions WHERE VisitID=? ORDER BY PrescriptionDate DESC');$stmt->execute([$selectedVisit['VisitID']]);$prescriptions=$stmt->fetchAll();
-        $stmt=$pdo->prepare('SELECT * FROM Laboratory WHERE VisitID=? ORDER BY OrderDate DESC');$stmt->execute([$selectedVisit['VisitID']]);$labOrders=$stmt->fetchAll();
+        $stmt=$pdo->prepare('SELECT * FROM prescriptions WHERE VisitID=? ORDER BY PrescriptionDate DESC');$stmt->execute([$selectedVisit['VisitID']]);$prescriptions=$stmt->fetchAll();
+        $stmt=$pdo->prepare('SELECT * FROM laboratory WHERE VisitID=? ORDER BY OrderDate DESC');$stmt->execute([$selectedVisit['VisitID']]);$labOrders=$stmt->fetchAll();
     }
 }
 [$waitingFrom, $waitingTo, $waitingDateError] = tdc_date_range_resolve();
@@ -169,9 +169,9 @@ if ($doctorProfile) {
         $queueWhere[] = '(v.VisitReference LIKE ? OR p.PatientName LIKE ? OR p.PatientPhone LIKE ?)';
         array_push($queueParams, '%'.$waitingSearch.'%', '%'.$waitingSearch.'%', '%'.$waitingSearch.'%');
     }
-    $stmt=$pdo->prepare("SELECT v.*,p.PatientName,p.PatientPhone,p.Gender,p.Age,d.DoctorName FROM Visits v JOIN Patients p ON p.PatientID=v.PatientID JOIN Doctors d ON d.DoctorID=v.DoctorID WHERE ".implode(' AND ', $queueWhere)." ORDER BY v.VisitDate DESC,v.VisitID DESC");
+    $stmt=$pdo->prepare("SELECT v.*,p.PatientName,p.PatientPhone,p.Gender,p.Age,d.DoctorName FROM visits v JOIN patients p ON p.PatientID=v.PatientID JOIN doctors d ON d.DoctorID=v.DoctorID WHERE ".implode(' AND ', $queueWhere)." ORDER BY v.VisitDate DESC,v.VisitID DESC");
     $stmt->execute($queueParams);$queue=$stmt->fetchAll();
-    $stmt=$pdo->prepare("SELECT l.LaboratoryID,l.VisitID,l.TestName,l.ResultDate,p.PatientName FROM Laboratory l JOIN Patients p ON p.PatientID=l.PatientID WHERE l.DoctorID=? AND l.WorkflowStatus='Completed' AND l.ReviewedAt IS NULL ORDER BY l.ResultDate DESC,l.OrderDate DESC");
+    $stmt=$pdo->prepare("SELECT l.LaboratoryID,l.VisitID,l.TestName,l.ResultDate,p.PatientName FROM laboratory l JOIN patients p ON p.PatientID=l.PatientID WHERE l.DoctorID=? AND l.WorkflowStatus='Completed' AND l.ReviewedAt IS NULL ORDER BY l.ResultDate DESC,l.OrderDate DESC");
     $stmt->execute([$doctorProfile['DoctorID']]);$readyResults=$stmt->fetchAll();
 }
 if (($_GET['export'] ?? '') === 'csv' && !$waitingDateError) {

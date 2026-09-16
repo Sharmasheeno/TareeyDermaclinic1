@@ -24,7 +24,7 @@ function tdc_record_lab_result(PDO $pdo, array $input): array
     }
     $pdo->beginTransaction();
     try {
-        $stmt = $pdo->prepare('SELECT PaymentStatus,WorkflowStatus,DoctorID,VisitID,PatientID FROM Laboratory WHERE LaboratoryID = ? FOR UPDATE');
+        $stmt = $pdo->prepare('SELECT PaymentStatus,WorkflowStatus,DoctorID,VisitID,PatientID FROM laboratory WHERE LaboratoryID = ? FOR UPDATE');
         $stmt->execute([$id]);
         $order = $stmt->fetch();
         if (!$order || $order['PaymentStatus'] !== 'Paid') {
@@ -35,7 +35,7 @@ function tdc_record_lab_result(PDO $pdo, array $input): array
             $pdo->rollBack();
             return ['Start this paid laboratory order before entering results.'];
         }
-        $itemsStmt = $pdo->prepare('SELECT LabOrderItemID,TestName FROM LabOrderItems WHERE LaboratoryID=? ORDER BY LabOrderItemID FOR UPDATE');
+        $itemsStmt = $pdo->prepare('SELECT LabOrderItemID,TestName FROM laborderitems WHERE LaboratoryID=? ORDER BY LabOrderItemID FOR UPDATE');
         $itemsStmt->execute([$id]);
         $storedItems = $itemsStmt->fetchAll();
         if ($storedItems !== []) {
@@ -48,7 +48,7 @@ function tdc_record_lab_result(PDO $pdo, array $input): array
             $completed = true;
             $hasPositive = false;
             $summary = [];
-            $updateItem = $pdo->prepare('UPDATE LabOrderItems SET Result=?,ClinicalResult=?,ResultDate=? WHERE LabOrderItemID=? AND LaboratoryID=?');
+            $updateItem = $pdo->prepare('UPDATE laborderitems SET Result=?,ClinicalResult=?,ResultDate=? WHERE LabOrderItemID=? AND LaboratoryID=?');
             foreach ($itemIds as $index => $itemId) {
                 $itemResult = $itemResults[$index] ?? '';
                 $note = $itemNotes[$index] ?? '';
@@ -72,7 +72,7 @@ function tdc_record_lab_result(PDO $pdo, array $input): array
         } else {
             $workflow = $result === 'Pending' ? 'In Progress' : 'Completed';
         }
-        $stmt = $pdo->prepare('UPDATE Laboratory SET Result = ?, ResultDate = ?, ClinicalResult = ?, IsAvailable = ?, WorkflowStatus = ? WHERE LaboratoryID = ?');
+        $stmt = $pdo->prepare('UPDATE laboratory SET Result = ?, ResultDate = ?, ClinicalResult = ?, IsAvailable = ?, WorkflowStatus = ? WHERE LaboratoryID = ?');
         $stmt->execute([
             $result,
             $result === 'Pending' ? null : ($date !== '' ? str_replace('T', ' ', $date) : date('Y-m-d H:i:s')),
@@ -82,7 +82,7 @@ function tdc_record_lab_result(PDO $pdo, array $input): array
             $id,
         ]);
         if ($workflow === 'Completed') {
-            $stmt = $pdo->prepare('SELECT UserID FROM Doctors WHERE DoctorID=?');
+            $stmt = $pdo->prepare('SELECT UserID FROM doctors WHERE DoctorID=?');
             $stmt->execute([(int)$order['DoctorID']]);
             tdc_workflow_notify($pdo,(int)$stmt->fetchColumn(),'doctoruser','lab_result_ready','Laboratory result ready',$id.' has a completed result','doctors.php?visit='.(int)$order['VisitID']);
         }
@@ -100,7 +100,7 @@ function tdc_start_lab_order(PDO $pdo, string $id): array
     if ($id === '') return ['Select a laboratory order to start.'];
     $pdo->beginTransaction();
     try {
-        $stmt = $pdo->prepare('SELECT PaymentStatus,WorkflowStatus FROM Laboratory WHERE LaboratoryID=? FOR UPDATE');
+        $stmt = $pdo->prepare('SELECT PaymentStatus,WorkflowStatus FROM laboratory WHERE LaboratoryID=? FOR UPDATE');
         $stmt->execute([$id]);
         $order = $stmt->fetch();
         if (!$order) {
@@ -115,7 +115,7 @@ function tdc_start_lab_order(PDO $pdo, string $id): array
             $pdo->rollBack();
             return ['Only an order that is Ready can be started.'];
         }
-        $stmt = $pdo->prepare("UPDATE Laboratory SET WorkflowStatus='In Progress' WHERE LaboratoryID=? AND WorkflowStatus='Ready'");
+        $stmt = $pdo->prepare("UPDATE laboratory SET WorkflowStatus='In Progress' WHERE LaboratoryID=? AND WorkflowStatus='Ready'");
         $stmt->execute([$id]);
         $pdo->commit();
         return [];

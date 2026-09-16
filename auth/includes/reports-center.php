@@ -262,7 +262,7 @@ if (!function_exists('tdc_rc_money_union')) {
         $branches[] = "SELECT 'Consultation' AS Service, v.VisitReference AS Ref, p.PatientName AS Party,"
             . " v.VisitDate AS Dt, v.ConsultationFee AS Total, v.AmountPaid AS Paid, v.DueBalance AS Due,"
             . " v.PaymentStatus AS Status"
-            . " FROM Visits v LEFT JOIN Patients p ON p.PatientID = v.PatientID"
+            . " FROM visits v LEFT JOIN patients p ON p.PatientID = v.PatientID"
             . ($where ? ' WHERE ' . implode(' AND ', $where) : '');
 
         $where = tdc_rc_date('l.OrderDate', $from, $to, $params, 'ml');
@@ -274,7 +274,7 @@ if (!function_exists('tdc_rc_money_union')) {
         $branches[] = "SELECT 'Laboratory' AS Service, l.LaboratoryID AS Ref, p.PatientName AS Party,"
             . " l.OrderDate AS Dt, l.TotalAmount AS Total, l.AmountPaid AS Paid, l.DueBalance AS Due,"
             . " l.PaymentStatus AS Status"
-            . " FROM Laboratory l LEFT JOIN Patients p ON p.PatientID = l.PatientID"
+            . " FROM laboratory l LEFT JOIN patients p ON p.PatientID = l.PatientID"
             . ($where ? ' WHERE ' . implode(' AND ', $where) : '');
 
         $where = tdc_rc_date('ps.SaleDate', $from, $to, $params, 'mp');
@@ -288,7 +288,7 @@ if (!function_exists('tdc_rc_money_union')) {
             . " FROM (SELECT SUBSTRING_INDEX(SaleID,'-',1) AS SaleRef, MIN(CustomerName) AS CustomerName,"
             . " MIN(SaleDate) AS SaleDate, SUM(LineTotal) AS Total, MIN(AmountPaid) AS Paid,"
             . " MIN(DueBalance) AS Due, MIN(PaymentStatus) AS Status"
-            . " FROM PharmacySales GROUP BY SUBSTRING_INDEX(SaleID,'-',1)) ps"
+            . " FROM pharmacysales GROUP BY SUBSTRING_INDEX(SaleID,'-',1)) ps"
             . ($where ? ' WHERE ' . implode(' AND ', $where) : '');
 
         return ['sql' => implode(' UNION ALL ', $branches), 'params' => $params];
@@ -332,8 +332,8 @@ if (!function_exists('tdc_rc_build')) {
                     "SELECT p.PatientID AS id, p.PatientName AS name, p.Gender AS gender, p.Age AS age,"
                     . " p.PatientPhone AS phone, p.PatientType AS ptype, p.RegisteredAt AS registered,"
                     . " p.DueBalance AS due,"
-                    . " (SELECT COUNT(*) FROM Visits v WHERE v.PatientID = p.PatientID) AS visits"
-                    . " FROM Patients p"
+                    . " (SELECT COUNT(*) FROM visits v WHERE v.PatientID = p.PatientID) AS visits"
+                    . " FROM patients p"
                     . ($where ? ' WHERE ' . implode(' AND ', $where) : '')
                     . " ORDER BY p.RegisteredAt DESC LIMIT 500",
                     $params
@@ -355,9 +355,9 @@ if (!function_exists('tdc_rc_build')) {
                     "SELECT v.VisitReference AS ref, p.PatientName AS patient, d.DoctorName AS doctor,"
                     . " v.VisitDate AS dt, v.ConsultationFee AS fee, v.AmountPaid AS paid,"
                     . " v.DueBalance AS due, v.PaymentStatus AS payment, v.QueueStatus AS queue"
-                    . " FROM Visits v"
-                    . " LEFT JOIN Patients p ON p.PatientID = v.PatientID"
-                    . " LEFT JOIN Doctors d ON d.DoctorID = v.DoctorID"
+                    . " FROM visits v"
+                    . " LEFT JOIN patients p ON p.PatientID = v.PatientID"
+                    . " LEFT JOIN doctors d ON d.DoctorID = v.DoctorID"
                     . ($where ? ' WHERE ' . implode(' AND ', $where) : '')
                     . " ORDER BY v.VisitDate DESC LIMIT 500",
                     $params
@@ -378,8 +378,8 @@ if (!function_exists('tdc_rc_build')) {
                     . " COALESCE(SUM(v.ConsultationFee),0) AS billed,"
                     . " COALESCE(SUM(v.AmountPaid),0) AS collected,"
                     . " COALESCE(SUM(v.DueBalance),0) AS due"
-                    . " FROM Doctors d"
-                    . " LEFT JOIN Visits v ON v.DoctorID = d.DoctorID"
+                    . " FROM doctors d"
+                    . " LEFT JOIN visits v ON v.DoctorID = d.DoctorID"
                     . ($on ? ' AND ' . implode(' AND ', $on) : '')
                     . ($where ? ' WHERE ' . implode(' AND ', $where) : '')
                     . " GROUP BY d.DoctorID, d.DoctorName, d.Specialty"
@@ -435,7 +435,7 @@ if (!function_exists('tdc_rc_build')) {
                     . " MIN(SaleDate) AS dt, COUNT(*) AS items, SUM(LineTotal) AS total,"
                     . " MIN(AmountPaid) AS paid, MIN(DueBalance) AS due,"
                     . " MIN(PaymentStatus) AS status"
-                    . " FROM PharmacySales"
+                    . " FROM pharmacysales"
                     . ($where ? ' WHERE ' . implode(' AND ', $where) : '')
                     . " GROUP BY SUBSTRING_INDEX(SaleID,'-',1)"
                     . " ORDER BY dt DESC LIMIT 500",
@@ -458,7 +458,7 @@ if (!function_exists('tdc_rc_build')) {
                     . " MIN(PurchaseDate) AS dt, COUNT(*) AS items, SUM(TotalAmount) AS total,"
                     . " MIN(Discount) AS discount, MIN(VATAmount) AS vat,"
                     . " MIN(AmountPaid) AS paid, MIN(DueBalance) AS due"
-                    . " FROM Purchases"
+                    . " FROM purchases"
                     . ($where ? ' WHERE ' . implode(' AND ', $where) : '')
                     . " GROUP BY SUBSTRING_INDEX(PurchaseID,'-',1)"
                     . " ORDER BY dt DESC LIMIT 500",
@@ -492,7 +492,7 @@ if (!function_exists('tdc_rc_build')) {
                     . " (ReorderLevel - QuantityInStock) AS shortfall,"
                     . " SellingPrice AS price, (QuantityInStock * SellingPrice) AS value,"
                     . " ExpiryDate AS expiry"
-                    . " FROM Inventory"
+                    . " FROM inventory"
                     . ($where ? ' WHERE ' . implode(' AND ', $where) : '')
                     . " ORDER BY " . ($low ? 'shortfall DESC' : 'ItemName ASC')
                     . " LIMIT 500",
@@ -514,7 +514,7 @@ if (!function_exists('tdc_rc_build')) {
                     . " SalesUnit AS unit, ExpiryDate AS expiry,"
                     . " DATEDIFF(ExpiryDate, CURDATE()) AS days,"
                     . " (QuantityInStock * SellingPrice) AS value"
-                    . " FROM Inventory WHERE " . implode(' AND ', $where)
+                    . " FROM inventory WHERE " . implode(' AND ', $where)
                     . " ORDER BY ExpiryDate ASC LIMIT 500",
                     $params
                 );
@@ -539,8 +539,8 @@ if (!function_exists('tdc_rc_build')) {
                     "SELECT l.LaboratoryID AS ref, p.PatientName AS patient, l.TestName AS test,"
                     . " l.OrderDate AS dt, l.TotalAmount AS total, l.AmountPaid AS paid,"
                     . " l.DueBalance AS due, l.PaymentStatus AS payment, l.WorkflowStatus AS workflow"
-                    . " FROM Laboratory l"
-                    . " LEFT JOIN Patients p ON p.PatientID = l.PatientID"
+                    . " FROM laboratory l"
+                    . " LEFT JOIN patients p ON p.PatientID = l.PatientID"
                     . ($where ? ' WHERE ' . implode(' AND ', $where) : '')
                     . " ORDER BY l.OrderDate DESC LIMIT 500",
                     $params
@@ -560,7 +560,7 @@ if (!function_exists('tdc_rc_build')) {
                     . " COALESCE(SUM(l.TotalAmount),0) AS billed,"
                     . " COALESCE(SUM(l.AmountPaid),0) AS collected,"
                     . " COALESCE(SUM(l.DueBalance),0) AS due"
-                    . " FROM Laboratory l"
+                    . " FROM laboratory l"
                     . ($where ? ' WHERE ' . implode(' AND ', $where) : '')
                     . " GROUP BY l.TestName ORDER BY billed DESC LIMIT 500",
                     $params
@@ -580,7 +580,7 @@ if (!function_exists('tdc_rc_build')) {
                 $rows = $run(
                     "SELECT a.AccountName AS account, COUNT(*) AS entries,"
                     . " COALESCE(SUM(" . ($isExpense ? 'a.Debit - a.Credit' : 'a.Credit - a.Debit') . "),0) AS amount"
-                    . " FROM Accounting a WHERE " . implode(' AND ', $where)
+                    . " FROM accounting a WHERE " . implode(' AND ', $where)
                     . " GROUP BY a.AccountID, a.AccountName ORDER BY amount DESC LIMIT 500",
                     $params
                 );
@@ -600,7 +600,7 @@ if (!function_exists('tdc_rc_build')) {
                     "SELECT a.TransactionDate AS dt, a.EntryID AS entry, a.AccountName AS account,"
                     . " a.AccountType AS atype, a.BookType AS book, a.ReferenceID AS ref,"
                     . " a.Debit AS debit, a.Credit AS credit"
-                    . " FROM Accounting a"
+                    . " FROM accounting a"
                     . ($where ? ' WHERE ' . implode(' AND ', $where) : '')
                     . " ORDER BY a.TransactionDate DESC LIMIT 500",
                     $params

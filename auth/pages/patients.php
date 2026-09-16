@@ -273,7 +273,7 @@ function tdc_save_patient(PDO $pdo, array $input, bool $isEdit, int $editId): vo
     if ($isEdit) {
         $params['id'] = $editId;
         $stmt = $pdo->prepare(
-            'UPDATE Patients SET PatientName = :PatientName, PatientPhone = :PatientPhone,
+            'UPDATE patients SET PatientName = :PatientName, PatientPhone = :PatientPhone,
                 PatientAddress = :PatientAddress, Gender = :Gender, Age = :Age,
                 DateOfBirth = :DateOfBirth, PatientType = :PatientType,
                 AllocatedDoctor = :AllocatedDoctor, Remark = :Remark
@@ -284,7 +284,7 @@ function tdc_save_patient(PDO $pdo, array $input, bool $isEdit, int $editId): vo
     }
 
     $stmt = $pdo->prepare(
-        'INSERT INTO Patients (PatientName, PatientPhone, PatientAddress, Gender, Age,
+        'INSERT INTO patients (PatientName, PatientPhone, PatientAddress, Gender, Age,
             DateOfBirth, PatientType, AllocatedDoctor, Remark, VisitNumber, DueBalance)
          VALUES (:PatientName, :PatientPhone, :PatientAddress, :Gender, :Age,
             :DateOfBirth, :PatientType, :AllocatedDoctor, :Remark, 1, 0.00)'
@@ -300,16 +300,16 @@ function tdc_save_patient(PDO $pdo, array $input, bool $isEdit, int $editId): vo
  */
 function tdc_delete_patient(PDO $pdo, int $id): array
 {
-    $labCount = (int) tdc_scalar($pdo, 'SELECT COUNT(*) FROM Laboratory WHERE PatientID = :id', ['id' => $id]);
-    $rxCount  = (int) tdc_scalar($pdo, 'SELECT COUNT(*) FROM Prescriptions WHERE PatientID = :id', ['id' => $id]);
-    $visitCount = (int) tdc_scalar($pdo, 'SELECT COUNT(*) FROM Visits WHERE PatientID = :id', ['id' => $id]);
-    $paymentCount = (int) tdc_scalar($pdo, 'SELECT COUNT(*) FROM Payments WHERE PatientID = :id', ['id' => $id]);
+    $labCount = (int) tdc_scalar($pdo, 'SELECT COUNT(*) FROM laboratory WHERE PatientID = :id', ['id' => $id]);
+    $rxCount  = (int) tdc_scalar($pdo, 'SELECT COUNT(*) FROM prescriptions WHERE PatientID = :id', ['id' => $id]);
+    $visitCount = (int) tdc_scalar($pdo, 'SELECT COUNT(*) FROM visits WHERE PatientID = :id', ['id' => $id]);
+    $paymentCount = (int) tdc_scalar($pdo, 'SELECT COUNT(*) FROM payments WHERE PatientID = :id', ['id' => $id]);
 
     if ($labCount > 0 || $rxCount > 0 || $visitCount > 0 || $paymentCount > 0) {
         return ['This patient has clinical or financial history and cannot be deleted.'];
     }
 
-    $stmt = $pdo->prepare('DELETE FROM Patients WHERE PatientID = :id');
+    $stmt = $pdo->prepare('DELETE FROM patients WHERE PatientID = :id');
     $stmt->execute(['id' => $id]);
     return [];
 }
@@ -348,7 +348,7 @@ if (($_GET['download'] ?? '') === 'patient-template') {
 }
 if (($_GET['download'] ?? '') === 'patients') {
     tdc_require_permission('patients.export');
-    $rows=[];foreach($pdo->query('SELECT PatientID,PatientName,PatientPhone,PatientAddress,Gender,DateOfBirth,PatientType,AllocatedDoctor,VisitNumber,DueBalance,RegisteredAt FROM Patients ORDER BY PatientID')->fetchAll() as $row)$rows[]=array_values($row);
+    $rows=[];foreach($pdo->query('SELECT PatientID,PatientName,PatientPhone,PatientAddress,Gender,DateOfBirth,PatientType,AllocatedDoctor,VisitNumber,DueBalance,RegisteredAt FROM patients ORDER BY PatientID')->fetchAll() as $row)$rows[]=array_values($row);
     tdc_csv_download('patients-'.date('Y-m-d').'.csv',['patient_id','patient_name','phone','address','gender','date_of_birth','patient_type','doctor_id','visit_count','due_balance','registered_at'],$rows);
 }
 
@@ -385,7 +385,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $rows=tdc_csv_upload_rows($_FILES['csv_file']??[],['patient_name','phone','gender','date_of_birth','patient_type']);
                 if(!$rows)throw new RuntimeException('The CSV file contains no patient rows.');
                 $pdo->beginTransaction();$imported=0;
-                foreach($rows as $index=>$row){$dob=trim((string)($row['date_of_birth']??''));$patient=['PatientID'=>'','PatientName'=>trim((string)($row['patient_name']??'')),'PatientPhone'=>trim((string)($row['phone']??'')),'PatientAddress'=>trim((string)($row['address']??'')),'Gender'=>trim((string)($row['gender']??'')),'Age'=>$dob!==''&&tdc_is_valid_date($dob)?(string)tdc_age_from_birth_date($dob):'','DateOfBirth'=>$dob,'PatientType'=>trim((string)($row['patient_type']??'')),'AllocatedDoctor'=>trim((string)($row['doctor_id']??'')),'Remark'=>trim((string)($row['remark']??''))];$rowErrors=tdc_validate_patient_form($patient);if($patient['PatientPhone']!==''){$stmt=$pdo->prepare("SELECT COUNT(*) FROM Patients WHERE REPLACE(REPLACE(REPLACE(PatientPhone,' ',''),'-',''),'+','')=REPLACE(REPLACE(REPLACE(?,' ',''),'-',''),'+','')");$stmt->execute([$patient['PatientPhone']]);if((int)$stmt->fetchColumn())$rowErrors[]='phone already exists';}if($rowErrors)throw new RuntimeException('Row '.($index+2).': '.implode(' ',$rowErrors));tdc_save_patient($pdo,$patient,false,0);$imported++;}
+                foreach($rows as $index=>$row){$dob=trim((string)($row['date_of_birth']??''));$patient=['PatientID'=>'','PatientName'=>trim((string)($row['patient_name']??'')),'PatientPhone'=>trim((string)($row['phone']??'')),'PatientAddress'=>trim((string)($row['address']??'')),'Gender'=>trim((string)($row['gender']??'')),'Age'=>$dob!==''&&tdc_is_valid_date($dob)?(string)tdc_age_from_birth_date($dob):'','DateOfBirth'=>$dob,'PatientType'=>trim((string)($row['patient_type']??'')),'AllocatedDoctor'=>trim((string)($row['doctor_id']??'')),'Remark'=>trim((string)($row['remark']??''))];$rowErrors=tdc_validate_patient_form($patient);if($patient['PatientPhone']!==''){$stmt=$pdo->prepare("SELECT COUNT(*) FROM patients WHERE REPLACE(REPLACE(REPLACE(PatientPhone,' ',''),'-',''),'+','')=REPLACE(REPLACE(REPLACE(?,' ',''),'-',''),'+','')");$stmt->execute([$patient['PatientPhone']]);if((int)$stmt->fetchColumn())$rowErrors[]='phone already exists';}if($rowErrors)throw new RuntimeException('Row '.($index+2).': '.implode(' ',$rowErrors));tdc_save_patient($pdo,$patient,false,0);$imported++;}
                 tdc_audit($pdo,'patients.imported','Patients',null,"Imported $imported patient records.");$pdo->commit();tdc_redirect('imported');
             } catch(RuntimeException $e){if($pdo->inTransaction())$pdo->rollBack();$errors[]=$e->getMessage();}
         } elseif ($formAction === 'delete') {
@@ -417,7 +417,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             tdc_require_permission($isEdit ? 'patients.edit' : 'patients.create');
             $errors = tdc_validate_patient_form($old);
             if (!$isEdit && $old['PatientPhone'] !== '') {
-                $stmt = $pdo->prepare('SELECT PatientID,PatientName FROM Patients WHERE REPLACE(REPLACE(REPLACE(PatientPhone,\' \',\'\'),\'-\',\'\'),\'+\',\'\') = REPLACE(REPLACE(REPLACE(?,\' \',\'\'),\'-\',\'\'),\'+\',\'\') LIMIT 1');
+                $stmt = $pdo->prepare('SELECT PatientID,PatientName FROM patients WHERE REPLACE(REPLACE(REPLACE(PatientPhone,\' \',\'\'),\'-\',\'\'),\'+\',\'\') = REPLACE(REPLACE(REPLACE(?,\' \',\'\'),\'-\',\'\'),\'+\',\'\') LIMIT 1');
                 $stmt->execute([$old['PatientPhone']]);
                 if ($duplicate = $stmt->fetch()) {
                     $errors[] = 'Possible existing patient found: '.$duplicate['PatientName'].' (#'.$duplicate['PatientID'].'). Open the existing record and create a new visit instead.';
@@ -445,7 +445,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 // =======================================================================
 
 // --- 10A. Doctors (used by the Add/Edit dropdown and the detail view) --
-$doctors = $pdo->query('SELECT DoctorID, DoctorName, Specialty FROM Doctors ORDER BY DoctorName ASC')->fetchAll();
+$doctors = $pdo->query('SELECT DoctorID, DoctorName, Specialty FROM doctors ORDER BY DoctorName ASC')->fetchAll();
 $doctorNameById = array_column($doctors, 'DoctorName', 'DoctorID');
 
 // --- 10B. Detail view (?view=<PatientID>) -------------------------------
@@ -458,17 +458,17 @@ $viewPayments      = [];
 
 if ($viewId > 0) {
     $stmt = $pdo->prepare(
-        'SELECT p.*, d.DoctorName FROM Patients p LEFT JOIN Doctors d ON d.DoctorID = p.AllocatedDoctor
+        'SELECT p.*, d.DoctorName FROM patients p LEFT JOIN doctors d ON d.DoctorID = p.AllocatedDoctor
          WHERE p.PatientID = :id'
     );
     $stmt->execute(['id' => $viewId]);
     $viewPatient = $stmt->fetch() ?: null;
 
     if ($viewPatient !== null) {
-        $stmt = $pdo->prepare('SELECT v.*,d.DoctorName FROM Visits v JOIN Doctors d ON d.DoctorID=v.DoctorID WHERE v.PatientID=:id ORDER BY v.VisitDate DESC');
+        $stmt = $pdo->prepare('SELECT v.*,d.DoctorName FROM visits v JOIN doctors d ON d.DoctorID=v.DoctorID WHERE v.PatientID=:id ORDER BY v.VisitDate DESC');
         $stmt->execute(['id'=>$viewId]);
         $viewVisits = $stmt->fetchAll();
-        $stmt = $pdo->prepare('SELECT * FROM Laboratory WHERE PatientID = :id ORDER BY OrderDate DESC');
+        $stmt = $pdo->prepare('SELECT * FROM laboratory WHERE PatientID = :id ORDER BY OrderDate DESC');
         $stmt->execute(['id' => $viewId]);
         $viewLabBills = $stmt->fetchAll();
 
@@ -476,13 +476,13 @@ if ($viewId > 0) {
             "SELECT SUBSTRING_INDEX(PrescriptionID, '-', 1) AS BillRef, MIN(DoctorID) AS DoctorID,
                     COUNT(*) AS LineCount, MIN(TotalAmount) AS TotalAmount, MIN(AmountPaid) AS AmountPaid,
                     MIN(DueBalance) AS DueBalance, MIN(PrescriptionDate) AS PrescriptionDate
-             FROM Prescriptions WHERE PatientID = :id
+             FROM prescriptions WHERE PatientID = :id
              GROUP BY BillRef ORDER BY PrescriptionDate DESC"
         );
         $stmt->execute(['id' => $viewId]);
         $viewPharmacyBills = $stmt->fetchAll();
 
-        $stmt = $pdo->prepare('SELECT PaymentReference,PaymentType,Amount,PaymentMethod,PaymentStatus,PaidAt FROM Payments WHERE PatientID=:id ORDER BY PaidAt DESC');
+        $stmt = $pdo->prepare('SELECT PaymentReference,PaymentType,Amount,PaymentMethod,PaymentStatus,PaidAt FROM payments WHERE PatientID=:id ORDER BY PaidAt DESC');
         $stmt->execute(['id' => $viewId]);
         $viewPayments = $stmt->fetchAll();
     } else {
@@ -527,7 +527,7 @@ if ($viewId === 0) {
 
     $where = $conditions !== [] ? 'WHERE ' . implode(' AND ', $conditions) : '';
     $stmt  = $pdo->prepare(
-        "SELECT p.*, d.DoctorName FROM Patients p LEFT JOIN Doctors d ON d.DoctorID = p.AllocatedDoctor
+        "SELECT p.*, d.DoctorName FROM patients p LEFT JOIN doctors d ON d.DoctorID = p.AllocatedDoctor
          {$where} ORDER BY p.RegisteredAt DESC LIMIT 200"
     );
     $stmt->execute($params);

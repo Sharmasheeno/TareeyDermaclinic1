@@ -238,7 +238,7 @@ function tdc_scalar(PDO $pdo, string $sql, array $params = [])
 
 /**
  * Generates the next zero-padded reference for a VARCHAR primary key,
- * e.g. tdc_next_ref($pdo, 'Laboratory', 'LaboratoryID', 'LAB') -> "LAB000042".
+ * e.g. tdc_next_ref($pdo, 'laboratory', 'LaboratoryID', 'LAB') -> "LAB000042".
  * Table/column are always hardcoded call-site literals — never user input.
  */
 function tdc_next_ref(PDO $pdo, string $table, string $column, string $prefix, int $pad = 6): string
@@ -264,7 +264,7 @@ function tdc_next_prescription_base(PDO $pdo): string
 {
     $last = tdc_scalar(
         $pdo,
-        "SELECT PrescriptionID FROM Prescriptions WHERE PrescriptionID LIKE 'RX%' ORDER BY LENGTH(PrescriptionID) DESC, PrescriptionID DESC LIMIT 1"
+        "SELECT PrescriptionID FROM prescriptions WHERE PrescriptionID LIKE 'RX%' ORDER BY LENGTH(PrescriptionID) DESC, PrescriptionID DESC LIMIT 1"
     );
 
     $next = 1;
@@ -424,7 +424,7 @@ function tdc_save_patient(PDO $pdo, array $input, bool $isEdit, int $editId): vo
     if ($isEdit) {
         $params['id'] = $editId;
         $stmt = $pdo->prepare(
-            'UPDATE Patients SET PatientName = :PatientName, PatientPhone = :PatientPhone,
+            'UPDATE patients SET PatientName = :PatientName, PatientPhone = :PatientPhone,
                 PatientAddress = :PatientAddress, Gender = :Gender, Age = :Age,
                 DateOfBirth = :DateOfBirth, PatientType = :PatientType,
                 AllocatedDoctor = :AllocatedDoctor, Remark = :Remark
@@ -435,7 +435,7 @@ function tdc_save_patient(PDO $pdo, array $input, bool $isEdit, int $editId): vo
     }
 
     $stmt = $pdo->prepare(
-        'INSERT INTO Patients (PatientName, PatientPhone, PatientAddress, Gender, Age,
+        'INSERT INTO patients (PatientName, PatientPhone, PatientAddress, Gender, Age,
             DateOfBirth, PatientType, AllocatedDoctor, Remark, VisitNumber, DueBalance)
          VALUES (:PatientName, :PatientPhone, :PatientAddress, :Gender, :Age,
             :DateOfBirth, :PatientType, :AllocatedDoctor, :Remark, 1, 0.00)'
@@ -448,16 +448,16 @@ function tdc_delete_patient(PDO $pdo, int $id): array
 {
     // App-level referential guard: the schema has no FK constraints,
     // so we check dependents ourselves before allowing a delete.
-    $labCount = (int) tdc_scalar($pdo, 'SELECT COUNT(*) FROM Laboratory WHERE PatientID = :id', ['id' => $id]);
-    $rxCount  = (int) tdc_scalar($pdo, 'SELECT COUNT(*) FROM Prescriptions WHERE PatientID = :id', ['id' => $id]);
-    $visitCount = (int) tdc_scalar($pdo, 'SELECT COUNT(*) FROM Visits WHERE PatientID = :id', ['id' => $id]);
-    $paymentCount = (int) tdc_scalar($pdo, 'SELECT COUNT(*) FROM Payments WHERE PatientID = :id', ['id' => $id]);
+    $labCount = (int) tdc_scalar($pdo, 'SELECT COUNT(*) FROM laboratory WHERE PatientID = :id', ['id' => $id]);
+    $rxCount  = (int) tdc_scalar($pdo, 'SELECT COUNT(*) FROM prescriptions WHERE PatientID = :id', ['id' => $id]);
+    $visitCount = (int) tdc_scalar($pdo, 'SELECT COUNT(*) FROM visits WHERE PatientID = :id', ['id' => $id]);
+    $paymentCount = (int) tdc_scalar($pdo, 'SELECT COUNT(*) FROM payments WHERE PatientID = :id', ['id' => $id]);
 
     if ($labCount > 0 || $rxCount > 0 || $visitCount > 0 || $paymentCount > 0) {
         return ['This patient has clinical or financial history and cannot be deleted.'];
     }
 
-    $stmt = $pdo->prepare('DELETE FROM Patients WHERE PatientID = :id');
+    $stmt = $pdo->prepare('DELETE FROM patients WHERE PatientID = :id');
     $stmt->execute(['id' => $id]);
     return [];
 }
@@ -473,10 +473,10 @@ function tdc_save_lab(PDO $pdo, array $input, bool $isEdit, string $editId): voi
     $workflow = $input['PaymentStatus'] === 'Paid' ? 'Ready' : 'Awaiting Payment';
 
     if (in_array($_SESSION['role'], ['receptionuser', 'superuser'], true) && $isEdit) {
-        $stmt = $pdo->prepare('SELECT PatientID,PaymentStatus,AmountPaid,TotalAmount FROM Laboratory WHERE LaboratoryID=?');
+        $stmt = $pdo->prepare('SELECT PatientID,PaymentStatus,AmountPaid,TotalAmount FROM laboratory WHERE LaboratoryID=?');
         $stmt->execute([$editId]);
         $before = $stmt->fetch();
-        $stmt = $pdo->prepare('UPDATE Laboratory SET PatientID=?,TestName=?,TotalAmount=?,AmountPaid=?,DueBalance=?,PaymentStatus=?,WorkflowStatus=? WHERE LaboratoryID=?');
+        $stmt = $pdo->prepare('UPDATE laboratory SET PatientID=?,TestName=?,TotalAmount=?,AmountPaid=?,DueBalance=?,PaymentStatus=?,WorkflowStatus=? WHERE LaboratoryID=?');
         $stmt->execute([(int)$input['PatientID'],$input['TestName'],$total,$paid,max(0,$total-$paid),$input['PaymentStatus'],$workflow,$editId]);
         $newCollection = max(0, $paid - (float) ($before['AmountPaid'] ?? 0));
         if ($newCollection > 0) {
@@ -510,7 +510,7 @@ function tdc_save_lab(PDO $pdo, array $input, bool $isEdit, string $editId): voi
     if ($isEdit) {
         $params['id'] = $editId;
         $stmt = $pdo->prepare(
-            'UPDATE Laboratory SET PatientID = :PatientID, TestName = :TestName,
+            'UPDATE laboratory SET PatientID = :PatientID, TestName = :TestName,
                 Description = :Description, TotalAmount = :Price, IsAvailable = :IsAvailable,
                 Result = :Result, ResultDate = :ResultDate, PaymentStatus = :PaymentStatus
              WHERE LaboratoryID = :id'
@@ -521,11 +521,11 @@ function tdc_save_lab(PDO $pdo, array $input, bool $isEdit, string $editId): voi
 
     // TestID has no catalog table in this codebase (see file header note),
     // so it is a simple running integer, unique enough for display purposes.
-    $params['LaboratoryID'] = tdc_next_ref($pdo, 'Laboratory', 'LaboratoryID', 'LAB');
-    $params['TestID']       = (int) tdc_scalar($pdo, 'SELECT COALESCE(MAX(TestID), 0) + 1 FROM Laboratory') ?: 1;
+    $params['LaboratoryID'] = tdc_next_ref($pdo, 'laboratory', 'LaboratoryID', 'LAB');
+    $params['TestID']       = (int) tdc_scalar($pdo, 'SELECT COALESCE(MAX(TestID), 0) + 1 FROM laboratory') ?: 1;
 
     $stmt = $pdo->prepare(
-        'INSERT INTO Laboratory (LaboratoryID, PatientID, TestID, TestName, Description,
+        'INSERT INTO laboratory (LaboratoryID, PatientID, TestID, TestName, Description,
             TotalAmount, AmountPaid, DueBalance, IsAvailable, Result, ResultDate, PaymentStatus, WorkflowStatus)
          VALUES (:LaboratoryID, :PatientID, :TestID, :TestName, :Description,
             :Price, :AmountPaid, :DueBalance, :IsAvailable, :Result, :ResultDate, :PaymentStatus, :WorkflowStatus)'
@@ -542,7 +542,7 @@ function tdc_save_lab(PDO $pdo, array $input, bool $isEdit, string $editId): voi
 
 function tdc_delete_lab(PDO $pdo, string $id): void
 {
-    $stmt = $pdo->prepare('DELETE FROM Laboratory WHERE LaboratoryID = :id');
+    $stmt = $pdo->prepare('DELETE FROM laboratory WHERE LaboratoryID = :id');
     $stmt->execute(['id' => $id]);
 }
 
@@ -557,7 +557,7 @@ function tdc_delete_lab(PDO $pdo, string $id): void
 /** @throws RuntimeException if the patient no longer exists */
 function tdc_fetch_patient_snapshot(PDO $pdo, int $patientId): array
 {
-    $stmt = $pdo->prepare('SELECT PatientID, PatientName, PatientPhone, PatientAddress, Gender, Age, VisitNumber FROM Patients WHERE PatientID = :id');
+    $stmt = $pdo->prepare('SELECT PatientID, PatientName, PatientPhone, PatientAddress, Gender, Age, VisitNumber FROM patients WHERE PatientID = :id');
     $stmt->execute(['id' => $patientId]);
     $row = $stmt->fetch();
     if ($row === false) {
@@ -576,10 +576,10 @@ function tdc_save_pharmacy(PDO $pdo, array $input, bool $isEdit, string $editBas
 
     $base = $isEdit ? $editBase : tdc_next_prescription_base($pdo);
 
-    // Optional migration (see chat reply): ALTER TABLE Prescriptions
+    // Optional migration (see chat reply): ALTER TABLE prescriptions
     // ADD COLUMN Quantity INT DEFAULT 1, ADD COLUMN Route VARCHAR(50) NULL.
-    $supportsQty   = tdc_table_has_column($pdo, 'Prescriptions', 'Quantity');
-    $supportsRoute = tdc_table_has_column($pdo, 'Prescriptions', 'Route');
+    $supportsQty   = tdc_table_has_column($pdo, 'prescriptions', 'Quantity');
+    $supportsRoute = tdc_table_has_column($pdo, 'prescriptions', 'Route');
 
     $columns = ['PrescriptionID', 'PatientID', 'PatientName', 'PatientPhone', 'PatientAddress',
         'Gender', 'Age', 'VisitNumber', 'DoctorID', 'MedicationName', 'Dosage',
@@ -591,12 +591,12 @@ function tdc_save_pharmacy(PDO $pdo, array $input, bool $isEdit, string $editBas
         $columns[] = 'Route';
     }
     $placeholders = array_map(static fn (string $c) => ':' . $c, $columns);
-    $insertSql    = 'INSERT INTO Prescriptions (' . implode(', ', $columns) . ') VALUES (' . implode(', ', $placeholders) . ')';
+    $insertSql    = 'INSERT INTO prescriptions (' . implode(', ', $columns) . ') VALUES (' . implode(', ', $placeholders) . ')';
 
     $pdo->beginTransaction();
     try {
         if ($isEdit) {
-            $del = $pdo->prepare('DELETE FROM Prescriptions WHERE PrescriptionID LIKE :pattern');
+            $del = $pdo->prepare('DELETE FROM prescriptions WHERE PrescriptionID LIKE :pattern');
             $del->execute(['pattern' => $base . '-%']);
         }
 
@@ -649,7 +649,7 @@ function tdc_save_pharmacy(PDO $pdo, array $input, bool $isEdit, string $editBas
 
 function tdc_delete_pharmacy_bill(PDO $pdo, string $base): void
 {
-    $stmt = $pdo->prepare('DELETE FROM Prescriptions WHERE PrescriptionID LIKE :pattern');
+    $stmt = $pdo->prepare('DELETE FROM prescriptions WHERE PrescriptionID LIKE :pattern');
     $stmt->execute(['pattern' => $base . '-%']);
 }
 
@@ -746,7 +746,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($section, ALLOWED_SECTIONS
                 if (!$errors) {
                     $pdo->beginTransaction();
                     try {
-                        $stmt = $pdo->prepare('SELECT v.*,d.UserID FROM Visits v JOIN Doctors d ON d.DoctorID=v.DoctorID WHERE v.VisitID=? FOR UPDATE');
+                        $stmt = $pdo->prepare('SELECT v.*,d.UserID FROM visits v JOIN doctors d ON d.DoctorID=v.DoctorID WHERE v.VisitID=? FOR UPDATE');
                         $stmt->execute([$visitId]);
                         $visit = $stmt->fetch();
                         if (!$visit || $visit['QueueStatus'] !== 'Pending Payment' || (float) $visit['DueBalance'] <= 0) throw new RuntimeException('This consultation has no collectible balance.');
@@ -755,9 +755,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($section, ALLOWED_SECTIONS
                         $newDue = max(0, round((float) $visit['ConsultationFee'] - $newPaid, 2));
                         $paymentStatus = tdc_workflow_payment_status((float) $visit['ConsultationFee'], $newPaid);
                         $queueStatus = $paymentStatus === 'Paid' ? 'Waiting' : 'Pending Payment';
-                        $stmt = $pdo->prepare('UPDATE Visits SET AmountPaid=?,DueBalance=?,PaymentStatus=?,QueueStatus=? WHERE VisitID=?');
+                        $stmt = $pdo->prepare('UPDATE visits SET AmountPaid=?,DueBalance=?,PaymentStatus=?,QueueStatus=? WHERE VisitID=?');
                         $stmt->execute([$newPaid,$newDue,$paymentStatus,$queueStatus,$visitId]);
-                        $stmt = $pdo->prepare('UPDATE Patients SET DueBalance=GREATEST(0,DueBalance-?) WHERE PatientID=?');
+                        $stmt = $pdo->prepare('UPDATE patients SET DueBalance=GREATEST(0,DueBalance-?) WHERE PatientID=?');
                         $stmt->execute([$collection,(int)$visit['PatientID']]);
                         $paymentRef = tdc_workflow_record_payment($pdo,(int)$visit['PatientID'],'Consultation',$collection,(int)$_SESSION['user_id'],['VisitID'=>$visitId,'PaymentMethod'=>$paymentMethod]);
                         if ($paymentRef) tdc_workflow_post_revenue($pdo,'REV-CONSULT','Consultation Revenue',$paymentRef,'Consultation payment for '.$visit['VisitReference'],$collection);
@@ -779,10 +779,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($section, ALLOWED_SECTIONS
             $doctorId = ctype_digit($oldVisit['DoctorID']) ? (int) $oldVisit['DoctorID'] : 0;
             $amountPaid = is_numeric($oldVisit['AmountPaid']) ? round((float) $oldVisit['AmountPaid'], 2) : -1;
             $visitDate = DateTime::createFromFormat('Y-m-d\TH:i', $oldVisit['VisitDate']);
-            $stmt = $pdo->prepare('SELECT ConsultationFee,UserID FROM Doctors WHERE DoctorID=?');
+            $stmt = $pdo->prepare('SELECT ConsultationFee,UserID FROM doctors WHERE DoctorID=?');
             $stmt->execute([$doctorId]);
             $doctor = $stmt->fetch();
-            if ($patientId < 1 || !(int) tdc_scalar($pdo, 'SELECT COUNT(*) FROM Patients WHERE PatientID=:id', ['id'=>$patientId])) $errors[] = 'Please select a valid patient.';
+            if ($patientId < 1 || !(int) tdc_scalar($pdo, 'SELECT COUNT(*) FROM patients WHERE PatientID=:id', ['id'=>$patientId])) $errors[] = 'Please select a valid patient.';
             if (!$doctor) $errors[] = 'Please select a valid doctor.';
             elseif (empty($doctor['UserID'])) $errors[] = 'The selected doctor profile must be linked to a Doctor user account before booking.';
             if (!$visitDate || $visitDate->format('Y-m-d\TH:i') !== $oldVisit['VisitDate']) $errors[] = 'Please select a valid consultation date and time.';
@@ -792,13 +792,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($section, ALLOWED_SECTIONS
             if (!$errors) {
                 $paymentStatus = tdc_workflow_payment_status($fee, $amountPaid);
                 $queueStatus = $paymentStatus === 'Paid' ? 'Waiting' : 'Pending Payment';
-                $reference = tdc_workflow_next_reference($pdo, 'Visits', 'VisitReference', 'VIS');
+                $reference = tdc_workflow_next_reference($pdo, 'visits', 'VisitReference', 'VIS');
                 $pdo->beginTransaction();
                 try {
-                    $stmt = $pdo->prepare('INSERT INTO Visits (VisitReference,PatientID,DoctorID,ReceptionistUserID,VisitDate,ConsultationFee,AmountPaid,DueBalance,PaymentStatus,QueueStatus,ChiefComplaint) VALUES (?,?,?,?,?,?,?,?,?,?,?)');
+                    $stmt = $pdo->prepare('INSERT INTO visits (VisitReference,PatientID,DoctorID,ReceptionistUserID,VisitDate,ConsultationFee,AmountPaid,DueBalance,PaymentStatus,QueueStatus,ChiefComplaint) VALUES (?,?,?,?,?,?,?,?,?,?,?)');
                     $stmt->execute([$reference,$patientId,$doctorId,$_SESSION['user_id'],$visitDate->format('Y-m-d H:i:s'),$fee,$amountPaid,max(0,$fee-$amountPaid),$paymentStatus,$queueStatus,$oldVisit['ChiefComplaint'] ?: null]);
                     $visitId = (int) $pdo->lastInsertId();
-                    $stmt = $pdo->prepare('UPDATE Patients SET AllocatedDoctor=?, VisitNumber=VisitNumber+1, DueBalance=DueBalance+? WHERE PatientID=?');
+                    $stmt = $pdo->prepare('UPDATE patients SET AllocatedDoctor=?, VisitNumber=VisitNumber+1, DueBalance=DueBalance+? WHERE PatientID=?');
                     $stmt->execute([$doctorId,max(0,$fee-$amountPaid),$patientId]);
                     $paymentRef = tdc_workflow_record_payment($pdo,$patientId,'Consultation',$amountPaid,(int)$_SESSION['user_id'],['VisitID'=>$visitId,'PaymentMethod'=>$oldVisit['PaymentMethod'] ?: 'Cash']);
                     if ($paymentRef) tdc_workflow_post_revenue($pdo,'REV-CONSULT','Consultation Revenue',$paymentRef,'Consultation payment for '.$reference,$amountPaid);
@@ -844,7 +844,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($section, ALLOWED_SECTIONS
                 tdc_require_permission($isEdit ? 'patients.edit' : 'patients.create');
                 $errors = tdc_validate_patient_form($oldPatient);
                 if (!$isEdit && $oldPatient['PatientPhone'] !== '') {
-                    $stmt = $pdo->prepare('SELECT PatientID,PatientName FROM Patients WHERE REPLACE(REPLACE(REPLACE(PatientPhone,\' \',\'\'),\'-\',\'\'),\'+\',\'\') = REPLACE(REPLACE(REPLACE(?,\' \',\'\'),\'-\',\'\'),\'+\',\'\') LIMIT 1');
+                    $stmt = $pdo->prepare('SELECT PatientID,PatientName FROM patients WHERE REPLACE(REPLACE(REPLACE(PatientPhone,\' \',\'\'),\'-\',\'\'),\'+\',\'\') = REPLACE(REPLACE(REPLACE(?,\' \',\'\'),\'-\',\'\'),\'+\',\'\') LIMIT 1');
                     $stmt->execute([$oldPatient['PatientPhone']]);
                     if ($duplicate = $stmt->fetch()) {
                         $errors[] = 'Possible existing patient found: '.$duplicate['PatientName'].' (#'.$duplicate['PatientID'].'). Open the existing record and create a new visit instead.';
@@ -875,11 +875,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($section, ALLOWED_SECTIONS
             if (!$errors) {
                 $pdo->beginTransaction();
                 try {
-                    $stmt=$pdo->prepare('SELECT * FROM Laboratory WHERE LaboratoryID=? FOR UPDATE');$stmt->execute([$labId]);$lab=$stmt->fetch();
+                    $stmt=$pdo->prepare('SELECT * FROM laboratory WHERE LaboratoryID=? FOR UPDATE');$stmt->execute([$labId]);$lab=$stmt->fetch();
                     if(!$lab || !in_array($lab['WorkflowStatus'],['Awaiting Payment','Requested'],true)) throw new RuntimeException('This laboratory order is not awaiting payment.');
                     if($collection>(float)$lab['DueBalance']) throw new RuntimeException('Payment cannot exceed the outstanding laboratory balance.');
                     $newPaid=round((float)$lab['AmountPaid']+$collection,2);$due=max(0,round((float)$lab['TotalAmount']-$newPaid,2));$status=tdc_workflow_payment_status((float)$lab['TotalAmount'],$newPaid);$workflow=$status==='Paid'?'Ready':'Awaiting Payment';
-                    $stmt=$pdo->prepare('UPDATE Laboratory SET AmountPaid=?,DueBalance=?,PaymentStatus=?,WorkflowStatus=? WHERE LaboratoryID=?');$stmt->execute([$newPaid,$due,$status,$workflow,$labId]);
+                    $stmt=$pdo->prepare('UPDATE laboratory SET AmountPaid=?,DueBalance=?,PaymentStatus=?,WorkflowStatus=? WHERE LaboratoryID=?');$stmt->execute([$newPaid,$due,$status,$workflow,$labId]);
                     $payRef=tdc_workflow_record_payment($pdo,(int)$lab['PatientID'],'Laboratory',$collection,(int)$_SESSION['user_id'],['LaboratoryID'=>$labId,'VisitID'=>$lab['VisitID'],'PaymentMethod'=>$paymentMethod]);
                     if($payRef)tdc_workflow_post_revenue($pdo,'REV-LAB','Laboratory Revenue',$payRef,'Laboratory payment for '.$labId,$collection);
                     if($status==='Paid')tdc_workflow_notify($pdo,null,'labuser','lab_ready','Paid laboratory request ready',$labId.' is cleared for processing','laboratory.php?result=Pending&payment=Paid');
@@ -943,12 +943,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($section, ALLOWED_SECTIONS
 // =======================================================================
 // SECTION 10 — GET data loading for display
 // =======================================================================
-$doctors = $pdo->query('SELECT DoctorID, DoctorName, Specialty, ConsultationFee, UserID FROM Doctors ORDER BY DoctorName ASC')->fetchAll();
+$doctors = $pdo->query('SELECT DoctorID, DoctorName, Specialty, ConsultationFee, UserID FROM doctors ORDER BY DoctorName ASC')->fetchAll();
 $doctorNameById = array_column($doctors, 'DoctorName', 'DoctorID');
 
 $patientOptions = [];
 if (in_array($section, ['consultations', 'laboratory', 'pharmacy'], true)) {
-    $stmt = $pdo->query('SELECT PatientID, PatientName, PatientPhone FROM Patients ORDER BY PatientName ASC LIMIT 500');
+    $stmt = $pdo->query('SELECT PatientID, PatientName, PatientPhone FROM patients ORDER BY PatientName ASC LIMIT 500');
     foreach ($stmt->fetchAll() as $p) {
         $patientOptions[] = [
             'id'    => (int) $p['PatientID'],
@@ -991,7 +991,7 @@ if ($section === 'patients') {
 
     $where = $conditions !== [] ? 'WHERE ' . implode(' AND ', $conditions) : '';
     $stmt = $pdo->prepare(
-        "SELECT p.*, d.DoctorName FROM Patients p LEFT JOIN Doctors d ON d.DoctorID = p.AllocatedDoctor
+        "SELECT p.*, d.DoctorName FROM patients p LEFT JOIN doctors d ON d.DoctorID = p.AllocatedDoctor
          {$where} ORDER BY p.RegisteredAt DESC LIMIT 200"
     );
     $stmt->execute($params);
@@ -1036,10 +1036,10 @@ if ($section === 'consultations') {
     $scopeSql = $scopeWhere ? ' WHERE ' . implode(' AND ', $scopeWhere) : '';
     $consultationSql = $consultationWhere ? ' WHERE ' . implode(' AND ', $consultationWhere) : '';
 
-    $countStmt = $pdo->prepare('SELECT COUNT(*) FROM Visits v JOIN Patients p ON p.PatientID=v.PatientID' . $scopeSql);
+    $countStmt = $pdo->prepare('SELECT COUNT(*) FROM visits v JOIN patients p ON p.PatientID=v.PatientID' . $scopeSql);
     $countStmt->execute($scopeParams);
     $consultationCounts['total'] = (int) $countStmt->fetchColumn();
-    $breakdown = $pdo->prepare('SELECT v.QueueStatus, COUNT(*) AS Total FROM Visits v JOIN Patients p ON p.PatientID=v.PatientID' . $scopeSql . ' GROUP BY v.QueueStatus');
+    $breakdown = $pdo->prepare('SELECT v.QueueStatus, COUNT(*) AS Total FROM visits v JOIN patients p ON p.PatientID=v.PatientID' . $scopeSql . ' GROUP BY v.QueueStatus');
     $breakdown->execute($scopeParams);
     foreach ($breakdown->fetchAll() as $row) {
         if ($row['QueueStatus'] === 'Waiting') $consultationCounts['waiting'] = (int) $row['Total'];
@@ -1052,7 +1052,7 @@ if ($section === 'consultations') {
         $exportStmt = $pdo->prepare(
             'SELECT v.VisitReference, p.PatientName, p.Gender, p.Age, p.PatientPhone, d.DoctorName,
                     v.VisitDate, v.QueueStatus, v.PaymentStatus, v.ConsultationFee, v.AmountPaid, v.DueBalance
-             FROM Visits v JOIN Patients p ON p.PatientID=v.PatientID JOIN Doctors d ON d.DoctorID=v.DoctorID'
+             FROM visits v JOIN patients p ON p.PatientID=v.PatientID JOIN doctors d ON d.DoctorID=v.DoctorID'
             . $consultationSql . ' ORDER BY v.VisitDate DESC LIMIT 5000'
         );
         $exportStmt->execute($consultationParams);
@@ -1069,7 +1069,7 @@ if ($section === 'consultations') {
         tdc_csv_download('doctor-waiting-' . date('Y-m-d') . '.csv', ['Appointment', 'Patient', 'Gender', 'Age', 'Phone', 'Doctor', 'Visit Date', 'Queue Status', 'Payment Status', 'Fee', 'Paid', 'Balance'], $exportRows);
     }
 
-    $totalStmt = $pdo->prepare('SELECT COUNT(*) FROM Visits v JOIN Patients p ON p.PatientID=v.PatientID' . $consultationSql);
+    $totalStmt = $pdo->prepare('SELECT COUNT(*) FROM visits v JOIN patients p ON p.PatientID=v.PatientID' . $consultationSql);
     $totalStmt->execute($consultationParams);
     $consultationTotal = (int) $totalStmt->fetchColumn();
     $totalPages = max(1, (int) ceil($consultationTotal / $consultationPerPage));
@@ -1078,7 +1078,7 @@ if ($section === 'consultations') {
 
     $listStmt = $pdo->prepare(
         'SELECT v.*, p.PatientName, p.PatientPhone, p.Gender, p.Age, d.DoctorName
-         FROM Visits v JOIN Patients p ON p.PatientID=v.PatientID JOIN Doctors d ON d.DoctorID=v.DoctorID'
+         FROM visits v JOIN patients p ON p.PatientID=v.PatientID JOIN doctors d ON d.DoctorID=v.DoctorID'
         . $consultationSql
         . " ORDER BY FIELD(v.QueueStatus,'In Consultation','Waiting','Pending Payment','Completed','Cancelled'), v.VisitDate DESC LIMIT $consultationPerPage OFFSET $offset"
     );
@@ -1094,10 +1094,10 @@ if ($section === 'consultations') {
 $labBills = [];
 if ($section === 'laboratory') {
     $stmt = $pdo->query(
-        'SELECT l.*, p.PatientName, p.PatientPhone, v.VisitReference, d.DoctorName FROM Laboratory l
-         JOIN Patients p ON p.PatientID = l.PatientID
-         LEFT JOIN Visits v ON v.VisitID = l.VisitID
-         LEFT JOIN Doctors d ON d.DoctorID = l.DoctorID
+        'SELECT l.*, p.PatientName, p.PatientPhone, v.VisitReference, d.DoctorName FROM laboratory l
+         JOIN patients p ON p.PatientID = l.PatientID
+         LEFT JOIN visits v ON v.VisitID = l.VisitID
+         LEFT JOIN doctors d ON d.DoctorID = l.DoctorID
          ORDER BY l.OrderDate DESC LIMIT 200'
     );
     $labBills = $stmt->fetchAll();
@@ -1111,7 +1111,7 @@ if ($section === 'pharmacy') {
                 MIN(DoctorID) AS DoctorID, COUNT(*) AS LineCount,
                 MIN(TotalAmount) AS TotalAmount, MIN(AmountPaid) AS AmountPaid,
                 MIN(DueBalance) AS DueBalance, MIN(PrescriptionDate) AS PrescriptionDate
-         FROM Prescriptions
+         FROM prescriptions
          GROUP BY BillRef
          ORDER BY PrescriptionDate DESC
          LIMIT 200"
@@ -1125,7 +1125,7 @@ if ($section === 'pharmacy') {
             $pharmacyShowForm = true;
         } elseif (isset($_GET['edit'])) {
             $editRef = preg_replace('/[^A-Za-z0-9]/', '', (string) $_GET['edit']);
-            $stmt = $pdo->prepare('SELECT * FROM Prescriptions WHERE PrescriptionID LIKE :pattern ORDER BY PrescriptionID ASC');
+            $stmt = $pdo->prepare('SELECT * FROM prescriptions WHERE PrescriptionID LIKE :pattern ORDER BY PrescriptionID ASC');
             $stmt->execute(['pattern' => $editRef . '-%']);
             $rows = $stmt->fetchAll();
 

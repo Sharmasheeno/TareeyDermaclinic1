@@ -25,7 +25,7 @@ const DEFAULT_SUPERADMIN_PASSWORD = 'SuperAdmin@123';
 $resetPassword = in_array('--reset-password', $argv, true);
 
 try {
-    $roleId = (int) $pdo->query("SELECT RoleID FROM Roles WHERE RoleKey='superuser' LIMIT 1")->fetchColumn();
+    $roleId = (int) $pdo->query("SELECT RoleID FROM roles WHERE RoleKey='superuser' LIMIT 1")->fetchColumn();
     if ($roleId < 1) {
         throw new RuntimeException('Run scripts/migrate_setup_rbac.php before creating the root SuperAdmin.');
     }

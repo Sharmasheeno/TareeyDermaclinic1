@@ -85,15 +85,15 @@ $cases = [];
 
 // 1. Normal replenishment: existing medicine, stock += quantity, no duplicate.
 $cases[] = baseCase('normal purchase replenishes existing medicine', 'superuser', savePost([]), 302, [
-    ["SELECT QuantityInStock FROM Inventory WHERE ItemID='ITM000001'", '150'],
-    ["SELECT COUNT(*) FROM Inventory WHERE ItemID='ITM000001'", '1'],
-    ["SELECT COUNT(*) FROM Inventory WHERE LOWER(TRIM(ItemName))=LOWER(TRIM('Paracetamol'))", '1'],
-    ["SELECT ItemName FROM Purchases LIMIT 1", 'Paracetamol'],
-    ["SELECT Quantity FROM Purchases LIMIT 1", '100'],
-    ["SELECT PurchaseUnit FROM Purchases LIMIT 1", ''],
-    ["SELECT ConversionFactor FROM Purchases LIMIT 1", '1.00'],
-    ["SELECT Category FROM Inventory WHERE ItemID='ITM000001'", 'Analgesic'],
-    ["SELECT SalesUnit FROM Inventory WHERE ItemID='ITM000001'", 'Tablet'],
+    ["SELECT QuantityInStock FROM inventory WHERE ItemID='ITM000001'", '150'],
+    ["SELECT COUNT(*) FROM inventory WHERE ItemID='ITM000001'", '1'],
+    ["SELECT COUNT(*) FROM inventory WHERE LOWER(TRIM(ItemName))=LOWER(TRIM('Paracetamol'))", '1'],
+    ["SELECT ItemName FROM purchases LIMIT 1", 'Paracetamol'],
+    ["SELECT Quantity FROM purchases LIMIT 1", '100'],
+    ["SELECT PurchaseUnit FROM purchases LIMIT 1", ''],
+    ["SELECT ConversionFactor FROM purchases LIMIT 1", '1.00'],
+    ["SELECT Category FROM inventory WHERE ItemID='ITM000001'", 'Analgesic'],
+    ["SELECT SalesUnit FROM inventory WHERE ItemID='ITM000001'", 'Tablet'],
 ]);
 
 // 2. Optional package conversion: 2 boxes x 100 tablets = 200 units, exactly once.
@@ -104,12 +104,12 @@ $cases[] = baseCase('package purchase converts once into inventory units', 'supe
     'ConversionFactor' => ['100'],
     'AmountPaid' => '5.00',
 ]), 302, [
-    ["SELECT QuantityInStock FROM Inventory WHERE ItemID='ITM000001'", '250'],
-    ["SELECT COUNT(*) FROM Inventory WHERE ItemID='ITM000001'", '1'],
-    ["SELECT PurchaseUnit FROM Purchases LIMIT 1", 'Box'],
-    ["SELECT ConversionFactor FROM Purchases LIMIT 1", '100.00'],
-    ["SELECT Quantity FROM Purchases LIMIT 1", '2'],
-    ["SELECT UnitPrice FROM Purchases LIMIT 1", '2.50'],
+    ["SELECT QuantityInStock FROM inventory WHERE ItemID='ITM000001'", '250'],
+    ["SELECT COUNT(*) FROM inventory WHERE ItemID='ITM000001'", '1'],
+    ["SELECT PurchaseUnit FROM purchases LIMIT 1", 'Box'],
+    ["SELECT ConversionFactor FROM purchases LIMIT 1", '100.00'],
+    ["SELECT Quantity FROM purchases LIMIT 1", '2'],
+    ["SELECT UnitPrice FROM purchases LIMIT 1", '2.50'],
 ]);
 
 // 3. Unknown medicine id is rejected; nothing is created or incremented.
@@ -122,10 +122,10 @@ $cases[] = baseCase('purchase rejects unknown medicine id', 'superuser', savePos
     'ExpiryDate' => [''],
     'AmountPaid' => '',
 ]), 200, [
-    ["SELECT COUNT(*) FROM Inventory WHERE ItemID='ITM000001'", '1'],
-    ["SELECT COUNT(*) FROM Purchases", '0'],
-    ["SELECT QuantityInStock FROM Inventory WHERE ItemID='ITM000001'", '50'],
-    ["SELECT COUNT(*) FROM Inventory WHERE LOWER(TRIM(ItemName))=LOWER(TRIM('Brand New Medicine'))", '0'],
+    ["SELECT COUNT(*) FROM inventory WHERE ItemID='ITM000001'", '1'],
+    ["SELECT COUNT(*) FROM purchases", '0'],
+    ["SELECT QuantityInStock FROM inventory WHERE ItemID='ITM000001'", '50'],
+    ["SELECT COUNT(*) FROM inventory WHERE LOWER(TRIM(ItemName))=LOWER(TRIM('Brand New Medicine'))", '0'],
 ], ['contains' => ['select an existing medicine']]);
 
 // 3b. Two medicines in one purchase: each row saves independently.
@@ -144,14 +144,14 @@ $cases[] = baseCase('two medicine rows save independently', 'superuser', savePos
     'VATAmount' => '',
     'AmountPaid' => '5.05',
 ]), 302, [
-    ["SELECT QuantityInStock FROM Inventory WHERE ItemID='ITM000001'", '60'],
-    ["SELECT QuantityInStock FROM Inventory WHERE ItemID='ITM000002'", '350'],
-    ["SELECT COUNT(*) FROM Inventory", '2'],
-    ["SELECT COUNT(*) FROM Purchases", '2'],
-    ["SELECT ConversionFactor FROM Purchases WHERE ItemName='Ibuprofen'", '100.00'],
-    ["SELECT PurchaseUnit FROM Purchases WHERE ItemName='Ibuprofen'", 'Box'],
-    ["SELECT ConversionFactor FROM Purchases WHERE ItemName='Paracetamol'", '1.00'],
-    ["SELECT PurchaseUnit FROM Purchases WHERE ItemName='Paracetamol'", ''],
+    ["SELECT QuantityInStock FROM inventory WHERE ItemID='ITM000001'", '60'],
+    ["SELECT QuantityInStock FROM inventory WHERE ItemID='ITM000002'", '350'],
+    ["SELECT COUNT(*) FROM inventory", '2'],
+    ["SELECT COUNT(*) FROM purchases", '2'],
+    ["SELECT ConversionFactor FROM purchases WHERE ItemName='Ibuprofen'", '100.00'],
+    ["SELECT PurchaseUnit FROM purchases WHERE ItemName='Ibuprofen'", 'Box'],
+    ["SELECT ConversionFactor FROM purchases WHERE ItemName='Paracetamol'", '1.00'],
+    ["SELECT PurchaseUnit FROM purchases WHERE ItemName='Paracetamol'", ''],
 ]);
 // 4. Non-superuser never reaches the purchase-cost surface.
 $cases[] = [
@@ -185,11 +185,11 @@ foreach ($cases as $case) {
         }
         require_once __DIR__ . '/../auth/includes/operational-role-defaults.php';
         tdc_apply_operational_role_defaults($test);
-        $ins = $test->prepare('INSERT INTO users (userlegalname,role,role_id,username,password,is_active,is_root) SELECT ?,r.RoleKey,r.RoleID,?,?,1,? FROM Roles r WHERE r.RoleKey=?');
+        $ins = $test->prepare('INSERT INTO users (userlegalname,role,role_id,username,password,is_active,is_root) SELECT ?,r.RoleKey,r.RoleID,?,?,1,? FROM roles r WHERE r.RoleKey=?');
         foreach (['superuser','pharmacyuser'] as $role) {
             $ins->execute(['Test ' . $role, $role, password_hash('Test-only-123!', PASSWORD_DEFAULT), $role === 'superuser' ? 1 : 0, $role]);
         }
-        $test->exec("INSERT INTO Inventory (ItemID,Category,ItemName,QuantityInStock,SalesUnit,SellingPrice,ReorderLevel) VALUES ('ITM000001','Analgesic','Paracetamol',50,'Tablet',5.00,10), ('ITM000002','Analgesic','Ibuprofen',50,'Tablet',7.00,10)");
+        $test->exec("INSERT INTO inventory (ItemID,Category,ItemName,QuantityInStock,SalesUnit,SellingPrice,ReorderLevel) VALUES ('ITM000001','Analgesic','Paracetamol',50,'Tablet',5.00,10), ('ITM000002','Analgesic','Ibuprofen',50,'Tablet',7.00,10)");
 
         $payload = base64_encode(json_encode($case, JSON_THROW_ON_ERROR));
         $cmd = escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg(__FILE__) . ' worker ' . escapeshellarg($testDb) . ' ' . escapeshellarg($payload);

@@ -233,7 +233,7 @@ function tdc_scalar(PDO $pdo, string $sql, array $params = [])
 
 /**
  * Generates the next zero-padded reference for a VARCHAR primary key,
- * e.g. tdc_next_ref($pdo, 'Laboratory', 'LaboratoryID', 'LAB') -> "LAB000042".
+ * e.g. tdc_next_ref($pdo, 'laboratory', 'LaboratoryID', 'LAB') -> "LAB000042".
  * Table/column are always hardcoded call-site literals — never user input.
  */
 function tdc_next_ref(PDO $pdo, string $table, string $column, string $prefix, int $pad = 6): string
@@ -260,7 +260,7 @@ function tdc_validate_lab_form(PDO $pdo, array $input): array
 
     if ($input['PatientID'] === '' || !ctype_digit($input['PatientID'])) {
         $errors[] = 'Please select a valid patient.';
-    } elseif ((int) tdc_scalar($pdo, 'SELECT COUNT(*) FROM Patients WHERE PatientID = :id', ['id' => (int) $input['PatientID']]) === 0) {
+    } elseif ((int) tdc_scalar($pdo, 'SELECT COUNT(*) FROM patients WHERE PatientID = :id', ['id' => (int) $input['PatientID']]) === 0) {
         // App-level referential guard: the schema has no FK constraints,
         // so a stale or tampered PatientID is caught here rather than
         // at INSERT time.
@@ -309,7 +309,7 @@ function tdc_save_lab(PDO $pdo, array $input, bool $isEdit, string $editId): voi
     $previousStatus = 'Unpaid';
     $previousWorkflow = '';
     if ($isEdit) {
-        $stmt = $pdo->prepare('SELECT AmountPaid,PaymentStatus,WorkflowStatus FROM Laboratory WHERE LaboratoryID=?');
+        $stmt = $pdo->prepare('SELECT AmountPaid,PaymentStatus,WorkflowStatus FROM laboratory WHERE LaboratoryID=?');
         $stmt->execute([$editId]);
         $before = $stmt->fetch();
         if (!$before) throw new RuntimeException('Laboratory order no longer exists.');
@@ -338,7 +338,7 @@ function tdc_save_lab(PDO $pdo, array $input, bool $isEdit, string $editId): voi
     if ($isEdit) {
         $params['id'] = $editId;
         $stmt = $pdo->prepare(
-            'UPDATE Laboratory SET PatientID = :PatientID, TestName = :TestName,
+            'UPDATE laboratory SET PatientID = :PatientID, TestName = :TestName,
                 Description = :Description, TotalAmount = :Price, AmountPaid = :AmountPaid,
                 DueBalance = :DueBalance, IsAvailable = :IsAvailable, Result = :Result,
                 ResultDate = :ResultDate, PaymentStatus = :PaymentStatus, WorkflowStatus = :WorkflowStatus
@@ -346,11 +346,11 @@ function tdc_save_lab(PDO $pdo, array $input, bool $isEdit, string $editId): voi
         );
         $stmt->execute($params);
     } else {
-        $params['LaboratoryID'] = tdc_next_ref($pdo, 'Laboratory', 'LaboratoryID', 'LAB');
-        $params['TestID']       = (int) tdc_scalar($pdo, 'SELECT COALESCE(MAX(TestID), 0) + 1 FROM Laboratory') ?: 1;
+        $params['LaboratoryID'] = tdc_next_ref($pdo, 'laboratory', 'LaboratoryID', 'LAB');
+        $params['TestID']       = (int) tdc_scalar($pdo, 'SELECT COALESCE(MAX(TestID), 0) + 1 FROM laboratory') ?: 1;
 
         $stmt = $pdo->prepare(
-            'INSERT INTO Laboratory (LaboratoryID, PatientID, TestID, TestName, Description,
+            'INSERT INTO laboratory (LaboratoryID, PatientID, TestID, TestName, Description,
                 TotalAmount, AmountPaid, DueBalance, IsAvailable, Result, ResultDate, PaymentStatus, WorkflowStatus)
              VALUES (:LaboratoryID, :PatientID, :TestID, :TestName, :Description,
                 :Price, :AmountPaid, :DueBalance, :IsAvailable, :Result, :ResultDate, :PaymentStatus, :WorkflowStatus)'
@@ -372,7 +372,7 @@ function tdc_delete_lab(PDO $pdo, string $id): void
 {
     // Nothing else in the schema references LaboratoryID, so unlike
     // Patients/Doctors this delete needs no dependent-record guard.
-    $stmt = $pdo->prepare('DELETE FROM Laboratory WHERE LaboratoryID = :id');
+    $stmt = $pdo->prepare('DELETE FROM laboratory WHERE LaboratoryID = :id');
     $stmt->execute(['id' => $id]);
 }
 
@@ -444,10 +444,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if (!$errors) {
                 try {
                     if ($serviceId) {
-                        $stmt=$pdo->prepare('UPDATE LabServices SET ServiceName=?,Category=?,Description=?,Price=?,IsAvailable=?,IsActive=? WHERE ServiceID=?');
+                        $stmt=$pdo->prepare('UPDATE labservices SET ServiceName=?,Category=?,Description=?,Price=?,IsAvailable=?,IsActive=? WHERE ServiceID=?');
                         $stmt->execute([$serviceName,$category?:null,$serviceDescription?:null,round((float)$price,2),isset($_POST['IsAvailable'])?1:0,isset($_POST['IsActive'])?1:0,$serviceId]);
                     } else {
-                        $stmt=$pdo->prepare('INSERT INTO LabServices (ServiceName,Category,Description,Price,IsAvailable,IsActive) VALUES (?,?,?,?,1,1)');
+                        $stmt=$pdo->prepare('INSERT INTO labservices (ServiceName,Category,Description,Price,IsAvailable,IsActive) VALUES (?,?,?,?,1,1)');
                         $stmt->execute([$serviceName,$category?:null,$serviceDescription?:null,round((float)$price,2)]);
                     }
                     header('Location: laboratory.php?service_saved=1'); exit;
@@ -477,7 +477,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 // =======================================================================
 
 // --- 10A. Patient options for the search combobox (Add/Edit modal) -----
-$stmt = $pdo->query('SELECT PatientID, PatientName, PatientPhone FROM Patients ORDER BY PatientName ASC LIMIT 500');
+$stmt = $pdo->query('SELECT PatientID, PatientName, PatientPhone FROM patients ORDER BY PatientName ASC LIMIT 500');
 $patientOptions = [];
 foreach ($stmt->fetchAll() as $p) {
     $patientOptions[] = [
@@ -515,8 +515,8 @@ if ($paymentFilter !== '') {
 
 $where = $conditions !== [] ? 'WHERE ' . implode(' AND ', $conditions) : '';
 $stmt  = $pdo->prepare(
-    "SELECT l.*, p.PatientName, p.PatientPhone FROM Laboratory l
-     JOIN Patients p ON p.PatientID = l.PatientID
+    "SELECT l.*, p.PatientName, p.PatientPhone FROM laboratory l
+     JOIN patients p ON p.PatientID = l.PatientID
      {$where}
      ORDER BY l.OrderDate DESC
      LIMIT 200"
@@ -527,7 +527,7 @@ $labItemsByOrder = [];
 if ($labBills !== []) {
     $orderIds = array_column($labBills, 'LaboratoryID');
     $placeholders = implode(',', array_fill(0, count($orderIds), '?'));
-    $itemsStmt = $pdo->prepare("SELECT LabOrderItemID,LaboratoryID,TestName,UnitPrice,Result,ClinicalResult FROM LabOrderItems WHERE LaboratoryID IN ($placeholders) ORDER BY LabOrderItemID");
+    $itemsStmt = $pdo->prepare("SELECT LabOrderItemID,LaboratoryID,TestName,UnitPrice,Result,ClinicalResult FROM laborderitems WHERE LaboratoryID IN ($placeholders) ORDER BY LabOrderItemID");
     $itemsStmt->execute($orderIds);
     foreach ($itemsStmt->fetchAll() as $item) $labItemsByOrder[$item['LaboratoryID']][] = $item;
 }

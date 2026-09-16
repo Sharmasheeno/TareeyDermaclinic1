@@ -23,8 +23,8 @@ function tdc_pkg_add_column(PDO $pdo, string $table, string $column, string $def
     }
 }
 
-tdc_pkg_add_column($pdo, 'Inventory', 'DefaultPurchaseUnit', 'VARCHAR(50) NULL DEFAULT NULL');
-tdc_pkg_add_column($pdo, 'Inventory', 'UnitsPerPackage', 'INT NULL DEFAULT NULL');
+tdc_pkg_add_column($pdo, 'inventory', 'DefaultPurchaseUnit', 'VARCHAR(50) NULL DEFAULT NULL');
+tdc_pkg_add_column($pdo, 'inventory', 'UnitsPerPackage', 'INT NULL DEFAULT NULL');
 
 echo 'migration complete' . PHP_EOL;
 

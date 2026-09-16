@@ -236,7 +236,7 @@ function tdc_save_doctor(PDO $pdo, array $input, bool $isEdit, int $editId): voi
     if ($isEdit) {
         $params['id'] = $editId;
         $stmt = $pdo->prepare(
-            'UPDATE Doctors SET DoctorName = :DoctorName, ConsultationFee = :ConsultationFee,
+            'UPDATE doctors SET DoctorName = :DoctorName, ConsultationFee = :ConsultationFee,
                 Specialty = :Specialty, JoinedDate = :JoinedDate
              WHERE DoctorID = :id'
         );
@@ -245,7 +245,7 @@ function tdc_save_doctor(PDO $pdo, array $input, bool $isEdit, int $editId): voi
     }
 
     $stmt = $pdo->prepare(
-        'INSERT INTO Doctors (DoctorName, ConsultationFee, Specialty, JoinedDate)
+        'INSERT INTO doctors (DoctorName, ConsultationFee, Specialty, JoinedDate)
          VALUES (:DoctorName, :ConsultationFee, :Specialty, :JoinedDate)'
     );
     $stmt->execute($params);
@@ -260,16 +260,16 @@ function tdc_save_doctor(PDO $pdo, array $input, bool $isEdit, int $editId): voi
  */
 function tdc_delete_doctor(PDO $pdo, int $id): array
 {
-    $patientCount = (int) tdc_scalar($pdo, 'SELECT COUNT(*) FROM Patients WHERE AllocatedDoctor = :id', ['id' => $id]);
-    $rxCount      = (int) tdc_scalar($pdo, 'SELECT COUNT(*) FROM Prescriptions WHERE DoctorID = :id', ['id' => $id]);
-    $visitCount   = (int) tdc_scalar($pdo, 'SELECT COUNT(*) FROM Visits WHERE DoctorID = :id', ['id' => $id]);
-    $labCount     = (int) tdc_scalar($pdo, 'SELECT COUNT(*) FROM Laboratory WHERE DoctorID = :id', ['id' => $id]);
+    $patientCount = (int) tdc_scalar($pdo, 'SELECT COUNT(*) FROM patients WHERE AllocatedDoctor = :id', ['id' => $id]);
+    $rxCount      = (int) tdc_scalar($pdo, 'SELECT COUNT(*) FROM prescriptions WHERE DoctorID = :id', ['id' => $id]);
+    $visitCount   = (int) tdc_scalar($pdo, 'SELECT COUNT(*) FROM visits WHERE DoctorID = :id', ['id' => $id]);
+    $labCount     = (int) tdc_scalar($pdo, 'SELECT COUNT(*) FROM laboratory WHERE DoctorID = :id', ['id' => $id]);
 
     if ($patientCount > 0 || $rxCount > 0 || $visitCount > 0 || $labCount > 0) {
         return ['This doctor has linked patient, consultation, prescription, or laboratory history and cannot be deleted.'];
     }
 
-    $stmt = $pdo->prepare('DELETE FROM Doctors WHERE DoctorID = :id');
+    $stmt = $pdo->prepare('DELETE FROM doctors WHERE DoctorID = :id');
     $stmt->execute(['id' => $id]);
     return [];
 }
@@ -312,7 +312,7 @@ if (($_GET['download'] ?? '') === 'doctor-template') {
     tdc_csv_download('doctor-import-example.csv',['doctor_name','specialization','consultation_fee','joined_date'],[['Example Doctor','Dermatology','25.00',date('Y-m-d')]]);
 }
 if (($_GET['download'] ?? '') === 'doctors') {
-    tdc_require_permission('doctors.export');$rows=[];foreach($pdo->query('SELECT d.DoctorID,d.DoctorName,d.Specialty,d.ConsultationFee,d.JoinedDate,u.username FROM Doctors d LEFT JOIN users u ON u.id=d.UserID ORDER BY d.DoctorID')->fetchAll() as $row)$rows[]=array_values($row);tdc_csv_download('doctors-'.date('Y-m-d').'.csv',['doctor_id','doctor_name','specialization','consultation_fee','joined_date','linked_username'],$rows);
+    tdc_require_permission('doctors.export');$rows=[];foreach($pdo->query('SELECT d.DoctorID,d.DoctorName,d.Specialty,d.ConsultationFee,d.JoinedDate,u.username FROM doctors d LEFT JOIN users u ON u.id=d.UserID ORDER BY d.DoctorID')->fetchAll() as $row)$rows[]=array_values($row);tdc_csv_download('doctors-'.date('Y-m-d').'.csv',['doctor_id','doctor_name','specialization','consultation_fee','joined_date','linked_username'],$rows);
 }
 
 // =======================================================================
@@ -346,7 +346,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         if ($formAction === 'import_csv') {
             tdc_require_permission('doctors.import');
-            try{$rows=tdc_csv_upload_rows($_FILES['csv_file']??[],['doctor_name','consultation_fee']);if(!$rows)throw new RuntimeException('The CSV file contains no doctor rows.');$pdo->beginTransaction();$imported=0;foreach($rows as $index=>$row){$input=['DoctorName'=>trim((string)($row['doctor_name']??'')),'Specialty'=>trim((string)($row['specialization']??'')),'ConsultationFee'=>trim((string)($row['consultation_fee']??'')),'JoinedDate'=>trim((string)($row['joined_date']??''))];$rowErrors=tdc_validate_doctor_form($input);$stmt=$pdo->prepare('SELECT COUNT(*) FROM Doctors WHERE LOWER(TRIM(DoctorName))=LOWER(TRIM(?))');$stmt->execute([$input['DoctorName']]);if((int)$stmt->fetchColumn())$rowErrors[]='doctor name already exists';if($rowErrors)throw new RuntimeException('Row '.($index+2).': '.implode(' ',$rowErrors));tdc_save_doctor($pdo,$input,false,0);$imported++;}tdc_audit($pdo,'doctors.imported','Doctors',null,"Imported $imported doctor records.");$pdo->commit();tdc_redirect('imported');}catch(RuntimeException $e){if($pdo->inTransaction())$pdo->rollBack();$errors[]=$e->getMessage();}
+            try{$rows=tdc_csv_upload_rows($_FILES['csv_file']??[],['doctor_name','consultation_fee']);if(!$rows)throw new RuntimeException('The CSV file contains no doctor rows.');$pdo->beginTransaction();$imported=0;foreach($rows as $index=>$row){$input=['DoctorName'=>trim((string)($row['doctor_name']??'')),'Specialty'=>trim((string)($row['specialization']??'')),'ConsultationFee'=>trim((string)($row['consultation_fee']??'')),'JoinedDate'=>trim((string)($row['joined_date']??''))];$rowErrors=tdc_validate_doctor_form($input);$stmt=$pdo->prepare('SELECT COUNT(*) FROM doctors WHERE LOWER(TRIM(DoctorName))=LOWER(TRIM(?))');$stmt->execute([$input['DoctorName']]);if((int)$stmt->fetchColumn())$rowErrors[]='doctor name already exists';if($rowErrors)throw new RuntimeException('Row '.($index+2).': '.implode(' ',$rowErrors));tdc_save_doctor($pdo,$input,false,0);$imported++;}tdc_audit($pdo,'doctors.imported','Doctors',null,"Imported $imported doctor records.");$pdo->commit();tdc_redirect('imported');}catch(RuntimeException $e){if($pdo->inTransaction())$pdo->rollBack();$errors[]=$e->getMessage();}
         } elseif ($formAction === 'delete') {
             tdc_require_permission('doctors.manage');
             $deleteId = (int) ($_POST['DoctorID'] ?? 0);
@@ -388,11 +388,11 @@ $search = trim((string) ($_GET['q'] ?? ''));
 
 if ($search !== '') {
     $stmt = $pdo->prepare(
-        'SELECT * FROM Doctors WHERE DoctorName LIKE :q1 OR Specialty LIKE :q2 ORDER BY DoctorName ASC'
+        'SELECT * FROM doctors WHERE DoctorName LIKE :q1 OR Specialty LIKE :q2 ORDER BY DoctorName ASC'
     );
     $stmt->execute(['q1' => '%' . $search . '%', 'q2' => '%' . $search . '%']);
 } else {
-    $stmt = $pdo->query('SELECT * FROM Doctors ORDER BY DoctorName ASC');
+    $stmt = $pdo->query('SELECT * FROM doctors ORDER BY DoctorName ASC');
 }
 $doctors = $stmt->fetchAll();
 

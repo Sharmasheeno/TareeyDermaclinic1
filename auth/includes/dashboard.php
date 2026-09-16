@@ -29,10 +29,10 @@ try {
     if ($dashboardRole === 'superuser' || tdc_can('reception.view')) {
         $patientUrl = $dashboardRole === 'superuser' ? 'patients.php' : 'reception.php?section=patients';
         $metrics = [
-            ['Registered today', $dashboardScalar('SELECT COUNT(*) FROM Patients WHERE DATE(RegisteredAt) = CURDATE()'), $patientUrl, 'Patient registrations', 'user-plus', 'blue'],
-            ['Total patients', $dashboardScalar('SELECT COUNT(*) FROM Patients'), $patientUrl, 'Registered patients', 'patients', 'green'],
-            ['Awaiting lab payment', $dashboardScalar("SELECT COUNT(*) FROM Laboratory WHERE PaymentStatus <> 'Paid'"), 'reception.php?section=laboratory', 'Unpaid or partially paid', 'receipt', 'orange'],
-            ['Ready for laboratory', $dashboardScalar("SELECT COUNT(*) FROM Laboratory WHERE PaymentStatus = 'Paid' AND Result = 'Pending'"), $dashboardRole === 'superuser' ? 'laboratory.php?result=Pending&payment=Paid' : 'reception.php?section=laboratory', 'Paid, awaiting results', 'lab', 'purple'],
+            ['Registered today', $dashboardScalar('SELECT COUNT(*) FROM patients WHERE DATE(RegisteredAt) = CURDATE()'), $patientUrl, 'Patient registrations', 'user-plus', 'blue'],
+            ['Total patients', $dashboardScalar('SELECT COUNT(*) FROM patients'), $patientUrl, 'Registered patients', 'patients', 'green'],
+            ['Awaiting lab payment', $dashboardScalar("SELECT COUNT(*) FROM laboratory WHERE PaymentStatus <> 'Paid'"), 'reception.php?section=laboratory', 'Unpaid or partially paid', 'receipt', 'orange'],
+            ['Ready for laboratory', $dashboardScalar("SELECT COUNT(*) FROM laboratory WHERE PaymentStatus = 'Paid' AND Result = 'Pending'"), $dashboardRole === 'superuser' ? 'laboratory.php?result=Pending&payment=Paid' : 'reception.php?section=laboratory', 'Paid, awaiting results', 'lab', 'purple'],
         ];
         $workLinks = [
             ['Patient Registration', 'Register new patient', 'reception.php?section=patients', 'user-plus', 'blue'],
@@ -41,19 +41,19 @@ try {
         ];
         $dashboardTitle = 'Recent registrations';
         $dashboardColumns = ['Patient', 'Phone', 'Registered', 'Visits'];
-        foreach ($pdo->query('SELECT PatientName, PatientPhone, RegisteredAt, VisitNumber FROM Patients ORDER BY RegisteredAt DESC LIMIT 8')->fetchAll() as $row) {
+        foreach ($pdo->query('SELECT PatientName, PatientPhone, RegisteredAt, VisitNumber FROM patients ORDER BY RegisteredAt DESC LIMIT 8')->fetchAll() as $row) {
             $dashboardRows[] = [$row['PatientName'], $row['PatientPhone'], date('d M Y', strtotime($row['RegisteredAt'])), $row['VisitNumber']];
         }
         if ($dashboardRole === 'superuser') {
-            $metrics[] = ['Sales today', $dashboardScalar("SELECT COUNT(DISTINCT SUBSTRING_INDEX(SaleID, '-', 1)) FROM PharmacySales WHERE DATE(SaleDate) = CURDATE()"), 'pharmacy.php?section=pos', 'Pharmacy transactions', 'cart', 'rose'];
-            $metrics[] = ['Low stock', $dashboardScalar('SELECT COUNT(*) FROM Inventory WHERE QuantityInStock <= ReorderLevel'), 'pharmacy.php?section=inventory&low=1', 'At or below reorder level', 'package', 'orange'];
+            $metrics[] = ['Sales today', $dashboardScalar("SELECT COUNT(DISTINCT SUBSTRING_INDEX(SaleID, '-', 1)) FROM pharmacysales WHERE DATE(SaleDate) = CURDATE()"), 'pharmacy.php?section=pos', 'Pharmacy transactions', 'cart', 'rose'];
+            $metrics[] = ['Low stock', $dashboardScalar('SELECT COUNT(*) FROM inventory WHERE QuantityInStock <= ReorderLevel'), 'pharmacy.php?section=inventory&low=1', 'At or below reorder level', 'package', 'orange'];
             $metrics[] = ['Users', $dashboardScalar('SELECT COUNT(*) FROM users'), 'setup.php?section=users', 'System accounts', 'users', 'teal'];
-            $metrics[] = ['Net income this month', number_format((float) $dashboardScalar("SELECT COALESCE(SUM(Credit-Debit), 0) FROM Accounting WHERE AccountType IN ('Revenue','Expense') AND TransactionDate >= DATE_FORMAT(CURDATE(), '%Y-%m-01') AND TransactionDate < CURDATE() + INTERVAL 1 DAY"), 2), 'reports.php?section=income-statement', 'Posted revenue less expenses', 'chart', 'purple'];
+            $metrics[] = ['Net income this month', number_format((float) $dashboardScalar("SELECT COALESCE(SUM(Credit-Debit), 0) FROM accounting WHERE AccountType IN ('Revenue','Expense') AND TransactionDate >= DATE_FORMAT(CURDATE(), '%Y-%m-01') AND TransactionDate < CURDATE() + INTERVAL 1 DAY"), 2), 'reports.php?section=income-statement', 'Posted revenue less expenses', 'chart', 'purple'];
             $workLinks[] = ['Point of Sale', 'Sell pharmacy products', 'pharmacy.php?section=pos', 'cart', 'green'];
             $workLinks[] = ['Manage Users', 'Maintain staff accounts', 'setup.php?section=users', 'users', 'blue'];
             $workLinks[] = ['Financial Reports', 'Review financial statements', 'reports.php', 'chart', 'teal'];
             $activityMap = [];
-            foreach ($pdo->query("SELECT DATE(RegisteredAt) day, COUNT(*) total FROM Patients WHERE RegisteredAt >= CURDATE() - INTERVAL 29 DAY GROUP BY DATE(RegisteredAt)")->fetchAll() as $row) {
+            foreach ($pdo->query("SELECT DATE(RegisteredAt) day, COUNT(*) total FROM patients WHERE RegisteredAt >= CURDATE() - INTERVAL 29 DAY GROUP BY DATE(RegisteredAt)")->fetchAll() as $row) {
                 $activityMap[$row['day']] = (int) $row['total'];
             }
             for ($daysAgo = 29; $daysAgo >= 0; $daysAgo--) {
@@ -61,18 +61,18 @@ try {
                 $activityLabels[] = date('M j', strtotime($day));
                 $activityValues[] = $activityMap[$day] ?? 0;
             }
-            $revenueRows = $pdo->query("SELECT AccountName label, SUM(Credit-Debit) total FROM Accounting WHERE AccountType='Revenue' AND TransactionDate >= DATE_FORMAT(CURDATE(), '%Y-%m-01') AND TransactionDate < CURDATE() + INTERVAL 1 DAY GROUP BY AccountName HAVING total > 0 ORDER BY total DESC LIMIT 5")->fetchAll();
+            $revenueRows = $pdo->query("SELECT AccountName label, SUM(Credit-Debit) total FROM accounting WHERE AccountType='Revenue' AND TransactionDate >= DATE_FORMAT(CURDATE(), '%Y-%m-01') AND TransactionDate < CURDATE() + INTERVAL 1 DAY GROUP BY AccountName HAVING total > 0 ORDER BY total DESC LIMIT 5")->fetchAll();
         }
     } elseif (tdc_can('doctor.workspace')) {
-        $doctorStmt = $pdo->prepare('SELECT DoctorID FROM Doctors WHERE UserID = ?');
+        $doctorStmt = $pdo->prepare('SELECT DoctorID FROM doctors WHERE UserID = ?');
         $doctorStmt->execute([$_SESSION['user_id']]);
         $doctorId = (int) $doctorStmt->fetchColumn();
         $doctorFilter = $doctorId > 0 ? ' AND DoctorID = ' . $doctorId : ' AND 1 = 0';
         $metrics = [
-            ['Waiting today', $dashboardScalar("SELECT COUNT(*) FROM Visits WHERE DATE(VisitDate)=CURDATE() AND QueueStatus='Waiting'{$doctorFilter}"), 'doctors.php?queue=waiting', 'Patients ready for consultation', 'patients', 'blue'],
-            ['In consultation', $dashboardScalar("SELECT COUNT(*) FROM Visits WHERE QueueStatus='In Consultation'{$doctorFilter}"), 'doctors.php?queue=active', 'Open consultation records', 'user-plus', 'purple'],
-            ['Completed today', $dashboardScalar("SELECT COUNT(*) FROM Visits WHERE DATE(CompletedAt)=CURDATE() AND QueueStatus='Completed'{$doctorFilter}"), 'doctors.php?queue=completed', 'Consultations completed', 'chart', 'green'],
-            ['Lab results ready', $dashboardScalar("SELECT COUNT(*) FROM Laboratory WHERE WorkflowStatus='Completed' AND ReviewedAt IS NULL{$doctorFilter}"), 'doctors.php?queue=results', 'Results awaiting review', 'lab', 'orange'],
+            ['Waiting today', $dashboardScalar("SELECT COUNT(*) FROM visits WHERE DATE(VisitDate)=CURDATE() AND QueueStatus='Waiting'{$doctorFilter}"), 'doctors.php?queue=waiting', 'Patients ready for consultation', 'patients', 'blue'],
+            ['In consultation', $dashboardScalar("SELECT COUNT(*) FROM visits WHERE QueueStatus='In Consultation'{$doctorFilter}"), 'doctors.php?queue=active', 'Open consultation records', 'user-plus', 'purple'],
+            ['Completed today', $dashboardScalar("SELECT COUNT(*) FROM visits WHERE DATE(CompletedAt)=CURDATE() AND QueueStatus='Completed'{$doctorFilter}"), 'doctors.php?queue=completed', 'Consultations completed', 'chart', 'green'],
+            ['Lab results ready', $dashboardScalar("SELECT COUNT(*) FROM laboratory WHERE WorkflowStatus='Completed' AND ReviewedAt IS NULL{$doctorFilter}"), 'doctors.php?queue=results', 'Results awaiting review', 'lab', 'orange'],
         ];
         $workLinks = [
             ['Today\'s Bookings', 'Open consultation queue', 'doctors.php', 'patients', 'blue'],
@@ -81,37 +81,37 @@ try {
         $dashboardTitle = 'Today\'s consultation queue';
         $dashboardColumns = ['Visit', 'Patient', 'Time', 'Status'];
         if ($doctorId > 0) {
-            $stmt = $pdo->prepare("SELECT v.VisitReference,p.PatientName,v.VisitDate,v.QueueStatus FROM Visits v JOIN Patients p ON p.PatientID=v.PatientID WHERE v.DoctorID=? AND DATE(v.VisitDate)=CURDATE() ORDER BY v.VisitDate");
+            $stmt = $pdo->prepare("SELECT v.VisitReference,p.PatientName,v.VisitDate,v.QueueStatus FROM visits v JOIN patients p ON p.PatientID=v.PatientID WHERE v.DoctorID=? AND DATE(v.VisitDate)=CURDATE() ORDER BY v.VisitDate");
             $stmt->execute([$doctorId]);
             foreach ($stmt->fetchAll() as $row) $dashboardRows[] = [$row['VisitReference'],$row['PatientName'],date('H:i',strtotime($row['VisitDate'])),$row['QueueStatus']];
         }
     } elseif (tdc_can('pharmacy.view')) {
-        $sales = "SELECT MIN(TotalAmount) total, MIN(AmountPaid) paid, MIN(DueBalance) due, MIN(SaleDate) sold FROM PharmacySales GROUP BY SUBSTRING_INDEX(SaleID, '-', 1)";
+        $sales = "SELECT MIN(TotalAmount) total, MIN(AmountPaid) paid, MIN(DueBalance) due, MIN(SaleDate) sold FROM pharmacysales GROUP BY SUBSTRING_INDEX(SaleID, '-', 1)";
         $metrics = [
             ['Sales today', $dashboardScalar("SELECT COUNT(*) FROM ($sales) s WHERE DATE(sold) = CURDATE()"), 'pharmacy.php?section=pos', 'Pharmacy transactions', 'cart', 'blue'],
             ['Sales value today', number_format((float) $dashboardScalar("SELECT COALESCE(SUM(total),0) FROM ($sales) s WHERE DATE(sold) = CURDATE()"), 2), 'pharmacy.php?section=pos', 'Total sales value', 'chart', 'green'],
             ['Collected today', number_format((float) $dashboardScalar("SELECT COALESCE(SUM(paid),0) FROM ($sales) s WHERE DATE(sold) = CURDATE()"), 2), 'pharmacy.php?section=pos', 'Payments collected', 'receipt', 'teal'],
             ['Outstanding sales', $dashboardScalar("SELECT COUNT(*) FROM ($sales) s WHERE due > 0"), 'pharmacy.php?section=pos', 'Sales with a balance', 'receipt', 'orange'],
-            ['Pending prescriptions', $dashboardScalar("SELECT COUNT(DISTINCT SUBSTRING_INDEX(PrescriptionID, '-', 1)) FROM Prescriptions WHERE Status='Pending'"), 'pharmacy.php?section=prescriptions', 'Doctor prescriptions to dispense', 'pill', 'purple'],
-            ['Low stock', $dashboardScalar('SELECT COUNT(*) FROM Inventory WHERE QuantityInStock <= ReorderLevel'), 'pharmacy.php?section=inventory&low=1', 'Items requiring attention', 'package', 'orange'],
+            ['Pending prescriptions', $dashboardScalar("SELECT COUNT(DISTINCT SUBSTRING_INDEX(PrescriptionID, '-', 1)) FROM prescriptions WHERE Status='Pending'"), 'pharmacy.php?section=prescriptions', 'Doctor prescriptions to dispense', 'pill', 'purple'],
+            ['Low stock', $dashboardScalar('SELECT COUNT(*) FROM inventory WHERE QuantityInStock <= ReorderLevel'), 'pharmacy.php?section=inventory&low=1', 'Items requiring attention', 'package', 'orange'],
         ];
         $workLinks = [['Pending Prescriptions', 'Dispense doctor orders', 'pharmacy.php?section=prescriptions', 'pill', 'purple'], ['New Sale', 'Open point of sale', 'pharmacy.php?section=pos&new=1', 'cart', 'green'], ['Inventory', 'Manage medicine stock', 'pharmacy.php?section=inventory', 'package', 'orange'], ['Purchases', 'Receive supplier stock', 'pharmacy.php?section=purchases', 'receipt', 'blue']];
         $dashboardTitle = 'Recent sales';
         $dashboardColumns = ['Receipt', 'Customer', 'Total', 'Payment'];
-        foreach ($pdo->query("SELECT SUBSTRING_INDEX(SaleID, '-', 1) ref, MIN(CustomerName) customer, MIN(TotalAmount) total, MIN(PaymentStatus) payment FROM PharmacySales GROUP BY ref ORDER BY MIN(SaleDate) DESC LIMIT 8")->fetchAll() as $row) {
+        foreach ($pdo->query("SELECT SUBSTRING_INDEX(SaleID, '-', 1) ref, MIN(CustomerName) customer, MIN(TotalAmount) total, MIN(PaymentStatus) payment FROM pharmacysales GROUP BY ref ORDER BY MIN(SaleDate) DESC LIMIT 8")->fetchAll() as $row) {
             $dashboardRows[] = [$row['ref'], $row['customer'], number_format((float) $row['total'], 2), $row['payment']];
         }
     } elseif (tdc_can('laboratory.view')) {
         $metrics = [
-            ['Ready for testing', $dashboardScalar("SELECT COUNT(*) FROM Laboratory WHERE PaymentStatus = 'Paid' AND Result = 'Pending'"), 'laboratory.php?result=Pending', 'Paid orders awaiting results', 'lab', 'purple'],
-            ['Orders today', $dashboardScalar("SELECT COUNT(*) FROM Laboratory WHERE PaymentStatus = 'Paid' AND DATE(OrderDate) = CURDATE()"), 'laboratory.php', 'Paid orders placed today', 'receipt', 'blue'],
-            ['Completed today', $dashboardScalar("SELECT COUNT(*) FROM Laboratory WHERE PaymentStatus = 'Paid' AND Result <> 'Pending' AND DATE(ResultDate) = CURDATE()"), 'laboratory.php', 'Results recorded today', 'chart', 'green'],
-            ['Sent out', $dashboardScalar("SELECT COUNT(*) FROM Laboratory WHERE PaymentStatus = 'Paid' AND Result = 'Pending' AND IsAvailable = 0"), 'laboratory.php?result=Pending', 'Pending external tests', 'lab', 'orange'],
+            ['Ready for testing', $dashboardScalar("SELECT COUNT(*) FROM laboratory WHERE PaymentStatus = 'Paid' AND Result = 'Pending'"), 'laboratory.php?result=Pending', 'Paid orders awaiting results', 'lab', 'purple'],
+            ['Orders today', $dashboardScalar("SELECT COUNT(*) FROM laboratory WHERE PaymentStatus = 'Paid' AND DATE(OrderDate) = CURDATE()"), 'laboratory.php', 'Paid orders placed today', 'receipt', 'blue'],
+            ['Completed today', $dashboardScalar("SELECT COUNT(*) FROM laboratory WHERE PaymentStatus = 'Paid' AND Result <> 'Pending' AND DATE(ResultDate) = CURDATE()"), 'laboratory.php', 'Results recorded today', 'chart', 'green'],
+            ['Sent out', $dashboardScalar("SELECT COUNT(*) FROM laboratory WHERE PaymentStatus = 'Paid' AND Result = 'Pending' AND IsAvailable = 0"), 'laboratory.php?result=Pending', 'Pending external tests', 'lab', 'orange'],
         ];
         $workLinks = [['Receive Lab Patients', 'Open paid pending orders', 'laboratory.php?result=Pending', 'lab', 'purple'], ['Laboratory Records', 'Review all laboratory work', 'laboratory.php', 'receipt', 'blue']];
         $dashboardTitle = 'Patients awaiting results';
         $dashboardColumns = ['Order', 'Patient', 'Test', 'Ordered'];
-        foreach ($pdo->query("SELECT l.LaboratoryID, p.PatientName, l.TestName, l.OrderDate FROM Laboratory l JOIN Patients p ON p.PatientID = l.PatientID WHERE l.PaymentStatus = 'Paid' AND l.Result = 'Pending' ORDER BY l.OrderDate ASC LIMIT 8")->fetchAll() as $row) {
+        foreach ($pdo->query("SELECT l.LaboratoryID, p.PatientName, l.TestName, l.OrderDate FROM laboratory l JOIN patients p ON p.PatientID = l.PatientID WHERE l.PaymentStatus = 'Paid' AND l.Result = 'Pending' ORDER BY l.OrderDate ASC LIMIT 8")->fetchAll() as $row) {
             $dashboardRows[] = [$row['LaboratoryID'], $row['PatientName'], $row['TestName'], date('d M Y', strtotime($row['OrderDate']))];
         }
     } else {

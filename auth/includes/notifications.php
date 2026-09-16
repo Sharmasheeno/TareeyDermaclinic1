@@ -2,7 +2,7 @@
 $notificationEscape = static fn($value): string => htmlspecialchars((string)$value, ENT_QUOTES, 'UTF-8');
 $notificationRows = [];
 try {
-    $stmt = $pdo->prepare('SELECT NotificationID,Title,Message,Link,IsRead,CreatedAt FROM Notifications WHERE UserID=? OR (UserID IS NULL AND RoleTarget=?) ORDER BY IsRead ASC,CreatedAt DESC LIMIT 8');
+    $stmt = $pdo->prepare('SELECT NotificationID,Title,Message,Link,IsRead,CreatedAt FROM notifications WHERE UserID=? OR (UserID IS NULL AND RoleTarget=?) ORDER BY IsRead ASC,CreatedAt DESC LIMIT 8');
     $stmt->execute([$_SESSION['user_id'],$_SESSION['role']]);
     $notificationRows = $stmt->fetchAll();
 } catch (PDOException $exception) {

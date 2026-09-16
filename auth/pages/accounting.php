@@ -245,7 +245,7 @@ function tdc_scalar(PDO $pdo, string $sql, array $params = [])
 
 /**
  * Generates the next zero-padded reference for a VARCHAR primary key,
- * e.g. tdc_next_ref($pdo, 'Accounting', 'AccountID', 'ACC') -> "ACC000007".
+ * e.g. tdc_next_ref($pdo, 'accounting', 'AccountID', 'ACC') -> "ACC000007".
  * Repeats of the same id across many ledger lines are expected and are
  * harmless here — we only ever need the current maximum.
  * Table/column are always hardcoded call-site literals — never user input.
@@ -300,7 +300,7 @@ function tdc_next_bill_base(PDO $pdo, string $table, string $column, string $pre
 function tdc_find_or_create_account(PDO $pdo, string $accountName, string $submittedType): array
 {
     $stmt = $pdo->prepare(
-        'SELECT AccountID, AccountName, AccountType FROM Accounting
+        'SELECT AccountID, AccountName, AccountType FROM accounting
          WHERE LOWER(AccountName) = LOWER(:name) ORDER BY TransactionDate DESC LIMIT 1'
     );
     $stmt->execute(['name' => $accountName]);
@@ -316,7 +316,7 @@ function tdc_find_or_create_account(PDO $pdo, string $accountName, string $submi
     }
 
     return [
-        'id'    => tdc_next_ref($pdo, 'Accounting', 'AccountID', 'ACC'),
+        'id'    => tdc_next_ref($pdo, 'accounting', 'AccountID', 'ACC'),
         'name'  => $accountName,
         'type'  => $submittedType,
         'isNew' => true,
@@ -328,7 +328,7 @@ function tdc_account_raw_balance(PDO $pdo, string $accountId): float
 {
     return (float) tdc_scalar(
         $pdo,
-        'SELECT COALESCE(SUM(Debit) - SUM(Credit), 0) FROM Accounting WHERE AccountID = :id',
+        'SELECT COALESCE(SUM(Debit) - SUM(Credit), 0) FROM accounting WHERE AccountID = :id',
         ['id' => $accountId]
     );
 }
@@ -466,13 +466,13 @@ function tdc_validate_rename_form(array $input): array
  */
 function tdc_save_journal_entry(PDO $pdo, array $header, array $lines): string
 {
-    $base = tdc_next_bill_base($pdo, 'Accounting', 'EntryID', 'JE');
+    $base = tdc_next_bill_base($pdo, 'accounting', 'EntryID', 'JE');
     $date = $header['TransactionDate'] !== '' ? $header['TransactionDate'] : date('Y-m-d');
 
     $pdo->beginTransaction();
     try {
         $insert = $pdo->prepare(
-            'INSERT INTO Accounting (EntryID, AccountID, AccountName, AccountType, BookType,
+            'INSERT INTO accounting (EntryID, AccountID, AccountName, AccountType, BookType,
                 TransactionDate, ReferenceID, Description, Debit, Credit, Balance)
              VALUES (:EntryID, :AccountID, :AccountName, :AccountType, :BookType,
                 :TransactionDate, :ReferenceID, :Description, :Debit, :Credit, :Balance)'
@@ -526,7 +526,7 @@ function tdc_save_journal_entry(PDO $pdo, array $header, array $lines): string
  */
 function tdc_void_journal_entry(PDO $pdo, string $base): array
 {
-    $stmt = $pdo->prepare('SELECT * FROM Accounting WHERE EntryID LIKE :pattern ORDER BY EntryID ASC');
+    $stmt = $pdo->prepare('SELECT * FROM accounting WHERE EntryID LIKE :pattern ORDER BY EntryID ASC');
     $stmt->execute(['pattern' => $base . '-%']);
     $lines = $stmt->fetchAll();
 
@@ -536,7 +536,7 @@ function tdc_void_journal_entry(PDO $pdo, string $base): array
 
     $existingBase = tdc_scalar(
         $pdo,
-        "SELECT DISTINCT SUBSTRING_INDEX(EntryID, '-', 1) FROM Accounting WHERE SUBSTRING_INDEX(EntryID, '-', 1) = :ref LIMIT 1",
+        "SELECT DISTINCT SUBSTRING_INDEX(EntryID, '-', 1) FROM accounting WHERE SUBSTRING_INDEX(EntryID, '-', 1) = :ref LIMIT 1",
         ['ref' => (string) $lines[0]['ReferenceID']]
     );
     if ($existingBase !== false && $existingBase !== null) {
@@ -545,21 +545,21 @@ function tdc_void_journal_entry(PDO $pdo, string $base): array
 
     $alreadyReversed = (int) tdc_scalar(
         $pdo,
-        'SELECT COUNT(*) FROM Accounting WHERE ReferenceID = :base',
+        'SELECT COUNT(*) FROM accounting WHERE ReferenceID = :base',
         ['base' => $base]
     );
     if ($alreadyReversed > 0) {
         return ['This entry has already been reversed.'];
     }
 
-    $reversalBase = tdc_next_bill_base($pdo, 'Accounting', 'EntryID', 'JE');
+    $reversalBase = tdc_next_bill_base($pdo, 'accounting', 'EntryID', 'JE');
     $description  = 'Reversal of ' . $base . ': ' . $lines[0]['Description'];
     $now          = date('Y-m-d H:i:s');
 
     $pdo->beginTransaction();
     try {
         $insert = $pdo->prepare(
-            'INSERT INTO Accounting (EntryID, AccountID, AccountName, AccountType, BookType,
+            'INSERT INTO accounting (EntryID, AccountID, AccountName, AccountType, BookType,
                 TransactionDate, ReferenceID, Description, Debit, Credit, Balance)
              VALUES (:EntryID, :AccountID, :AccountName, :AccountType, :BookType,
                 :TransactionDate, :ReferenceID, :Description, :Debit, :Credit, :Balance)'
@@ -605,12 +605,12 @@ function tdc_void_journal_entry(PDO $pdo, string $base): array
 /** @return string[] error messages; empty on success */
 function tdc_rename_account(PDO $pdo, string $accountId, string $newName): array
 {
-    $exists = (int) tdc_scalar($pdo, 'SELECT COUNT(*) FROM Accounting WHERE AccountID = :id', ['id' => $accountId]);
+    $exists = (int) tdc_scalar($pdo, 'SELECT COUNT(*) FROM accounting WHERE AccountID = :id', ['id' => $accountId]);
     if ($exists === 0) {
         return ['Account not found.'];
     }
 
-    $stmt = $pdo->prepare('UPDATE Accounting SET AccountName = :name WHERE AccountID = :id');
+    $stmt = $pdo->prepare('UPDATE accounting SET AccountName = :name WHERE AccountID = :id');
     $stmt->execute(['name' => $newName, 'id' => $accountId]);
     return [];
 }
@@ -760,7 +760,7 @@ $viewReversalOfDescription = '';
 if ($section === 'ledger') {
     $existingAccountsStmt = $pdo->query(
         "SELECT AccountName, MAX(AccountType) AS AccountType, MAX(TransactionDate) AS LastUsed
-         FROM Accounting GROUP BY AccountName ORDER BY AccountName ASC LIMIT 500"
+         FROM accounting GROUP BY AccountName ORDER BY AccountName ASC LIMIT 500"
     );
     $existingAccountNames = $existingAccountsStmt->fetchAll();
 
@@ -803,7 +803,7 @@ if ($section === 'ledger') {
                 MIN(BookType) AS BookType, MIN(TransactionDate) AS TransactionDate,
                 MIN(ReferenceID) AS ReferenceID, SUM(Debit) AS TotalDebit, SUM(Credit) AS TotalCredit,
                 COUNT(*) AS LineCount
-         FROM Accounting {$where}
+         FROM accounting {$where}
          GROUP BY EntryRef ORDER BY TransactionDate DESC LIMIT 200"
     );
     $stmt->execute($params);
@@ -811,8 +811,8 @@ if ($section === 'ledger') {
 
     // Reversal-status flags computed in PHP (see tdc_void_journal_entry doc
     // comment for why this rides on ReferenceID rather than a schema change).
-    $allBases = $pdo->query("SELECT DISTINCT SUBSTRING_INDEX(EntryID, '-', 1) FROM Accounting")->fetchAll(PDO::FETCH_COLUMN);
-    $referencedBases = $pdo->query('SELECT DISTINCT ReferenceID FROM Accounting WHERE ReferenceID IS NOT NULL')->fetchAll(PDO::FETCH_COLUMN);
+    $allBases = $pdo->query("SELECT DISTINCT SUBSTRING_INDEX(EntryID, '-', 1) FROM accounting")->fetchAll(PDO::FETCH_COLUMN);
+    $referencedBases = $pdo->query('SELECT DISTINCT ReferenceID FROM accounting WHERE ReferenceID IS NOT NULL')->fetchAll(PDO::FETCH_COLUMN);
 
     foreach ($journalEntries as &$je) {
         $je['IsReversal'] = $je['ReferenceID'] !== null && in_array($je['ReferenceID'], $allBases, true);
@@ -823,7 +823,7 @@ if ($section === 'ledger') {
     if (empty($errors)) {
         if (isset($_GET['view'])) {
             $viewEntryRef = preg_replace('/[^A-Za-z0-9]/', '', (string) $_GET['view']);
-            $stmt = $pdo->prepare('SELECT * FROM Accounting WHERE EntryID LIKE :pattern ORDER BY EntryID ASC');
+            $stmt = $pdo->prepare('SELECT * FROM accounting WHERE EntryID LIKE :pattern ORDER BY EntryID ASC');
             $stmt->execute(['pattern' => $viewEntryRef . '-%']);
             $viewEntryLines = $stmt->fetchAll();
             if (empty($viewEntryLines)) {
@@ -835,7 +835,7 @@ if ($section === 'ledger') {
                 if ($viewIsReversal) {
                     $viewReversalOfDescription = (string) tdc_scalar(
                         $pdo,
-                        'SELECT Description FROM Accounting WHERE EntryID = :id',
+                        'SELECT Description FROM accounting WHERE EntryID = :id',
                         ['id' => $head['ReferenceID'] . '-01']
                     );
                 }
@@ -866,11 +866,11 @@ if ($section === 'accounts') {
 
     $stmt = $pdo->prepare(
         "SELECT a.AccountID,
-                (SELECT AccountName FROM Accounting WHERE AccountID = a.AccountID ORDER BY TransactionDate DESC, EntryID DESC LIMIT 1) AS AccountName,
-                (SELECT AccountType FROM Accounting WHERE AccountID = a.AccountID ORDER BY TransactionDate DESC, EntryID DESC LIMIT 1) AS AccountType,
+                (SELECT AccountName FROM accounting WHERE AccountID = a.AccountID ORDER BY TransactionDate DESC, EntryID DESC LIMIT 1) AS AccountName,
+                (SELECT AccountType FROM accounting WHERE AccountID = a.AccountID ORDER BY TransactionDate DESC, EntryID DESC LIMIT 1) AS AccountType,
                 SUM(a.Debit) AS TotalDebit, SUM(a.Credit) AS TotalCredit,
                 COUNT(*) AS EntryCount, MAX(a.TransactionDate) AS LastActivity
-         FROM Accounting a
+         FROM accounting a
          {$where}
          GROUP BY a.AccountID ORDER BY AccountName ASC LIMIT 500"
     );
@@ -886,10 +886,10 @@ if ($section === 'accounts') {
     if (empty($errors) && isset($_GET['view'])) {
         $viewAccountId = preg_replace('/[^A-Za-z0-9]/', '', (string) $_GET['view']);
         $stmt = $pdo->prepare(
-            "SELECT (SELECT AccountName FROM Accounting WHERE AccountID = :id1 ORDER BY TransactionDate DESC, EntryID DESC LIMIT 1) AS AccountName,
-                    (SELECT AccountType FROM Accounting WHERE AccountID = :id2 ORDER BY TransactionDate DESC, EntryID DESC LIMIT 1) AS AccountType,
+            "SELECT (SELECT AccountName FROM accounting WHERE AccountID = :id1 ORDER BY TransactionDate DESC, EntryID DESC LIMIT 1) AS AccountName,
+                    (SELECT AccountType FROM accounting WHERE AccountID = :id2 ORDER BY TransactionDate DESC, EntryID DESC LIMIT 1) AS AccountType,
                     SUM(Debit) AS TotalDebit, SUM(Credit) AS TotalCredit, COUNT(*) AS EntryCount
-             FROM Accounting WHERE AccountID = :id3"
+             FROM accounting WHERE AccountID = :id3"
         );
         $stmt->execute(['id1' => $viewAccountId, 'id2' => $viewAccountId, 'id3' => $viewAccountId]);
         $viewAccountHead = $stmt->fetch() ?: null;
@@ -903,7 +903,7 @@ if ($section === 'accounts') {
 
             $stmt = $pdo->prepare(
                 "SELECT SUBSTRING_INDEX(EntryID, '-', 1) AS EntryRef, EntryID, Description, TransactionDate, Debit, Credit, Balance
-                 FROM Accounting WHERE AccountID = :id ORDER BY TransactionDate DESC, EntryID DESC LIMIT 300"
+                 FROM accounting WHERE AccountID = :id ORDER BY TransactionDate DESC, EntryID DESC LIMIT 300"
             );
             $stmt->execute(['id' => $viewAccountId]);
             $viewAccountLines = $stmt->fetchAll();
@@ -924,26 +924,26 @@ if ($section === null) {
 
     $revenueMonth = (float) tdc_scalar(
         $pdo,
-        'SELECT COALESCE(SUM(Credit) - SUM(Debit), 0) FROM Accounting WHERE AccountType = :t AND TransactionDate >= :m',
+        'SELECT COALESCE(SUM(Credit) - SUM(Debit), 0) FROM accounting WHERE AccountType = :t AND TransactionDate >= :m',
         ['t' => 'Revenue', 'm' => $monthStart]
     );
     $expenseMonth = (float) tdc_scalar(
         $pdo,
-        'SELECT COALESCE(SUM(Debit) - SUM(Credit), 0) FROM Accounting WHERE AccountType = :t AND TransactionDate >= :m',
+        'SELECT COALESCE(SUM(Debit) - SUM(Credit), 0) FROM accounting WHERE AccountType = :t AND TransactionDate >= :m',
         ['t' => 'Expense', 'm' => $monthStart]
     );
     $hubNetIncomeMonth = $revenueMonth - $expenseMonth;
 
-    $hubCashBalance   = (float) tdc_scalar($pdo, "SELECT COALESCE(SUM(Debit) - SUM(Credit), 0) FROM Accounting WHERE BookType = 'Cash Book'");
-    $hubReceivableDue = (float) tdc_scalar($pdo, "SELECT COALESCE(SUM(Debit) - SUM(Credit), 0) FROM Accounting WHERE BookType = 'Accounts Receivable'");
-    $hubPayableDue    = (float) tdc_scalar($pdo, "SELECT COALESCE(SUM(Credit) - SUM(Debit), 0) FROM Accounting WHERE BookType = 'Accounts Payable'");
+    $hubCashBalance   = (float) tdc_scalar($pdo, "SELECT COALESCE(SUM(Debit) - SUM(Credit), 0) FROM accounting WHERE BookType = 'Cash Book'");
+    $hubReceivableDue = (float) tdc_scalar($pdo, "SELECT COALESCE(SUM(Debit) - SUM(Credit), 0) FROM accounting WHERE BookType = 'Accounts Receivable'");
+    $hubPayableDue    = (float) tdc_scalar($pdo, "SELECT COALESCE(SUM(Credit) - SUM(Debit), 0) FROM accounting WHERE BookType = 'Accounts Payable'");
 
     $hubEntryCountMonth = (int) tdc_scalar(
         $pdo,
-        "SELECT COUNT(DISTINCT SUBSTRING_INDEX(EntryID, '-', 1)) FROM Accounting WHERE TransactionDate >= :m",
+        "SELECT COUNT(DISTINCT SUBSTRING_INDEX(EntryID, '-', 1)) FROM accounting WHERE TransactionDate >= :m",
         ['m' => $monthStart]
     );
-    $hubAccountCount = (int) tdc_scalar($pdo, 'SELECT COUNT(DISTINCT AccountID) FROM Accounting');
+    $hubAccountCount = (int) tdc_scalar($pdo, 'SELECT COUNT(DISTINCT AccountID) FROM accounting');
 }
 
 // =======================================================================

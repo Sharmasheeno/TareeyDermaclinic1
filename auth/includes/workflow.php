@@ -4,9 +4,9 @@ declare(strict_types=1);
 function tdc_workflow_next_reference(PDO $pdo, string $table, string $column, string $prefix): string
 {
     $allowed = [
-        'Visits.VisitReference', 'Payments.PaymentReference',
-        'Prescriptions.PrescriptionID', 'Laboratory.LaboratoryID',
-        'PharmacySales.SaleID', 'Accounting.EntryID',
+        'visits.VisitReference', 'payments.PaymentReference',
+        'prescriptions.PrescriptionID', 'laboratory.LaboratoryID',
+        'pharmacysales.SaleID', 'accounting.EntryID',
     ];
     if (!in_array("{$table}.{$column}", $allowed, true)) {
         throw new InvalidArgumentException('Unsupported reference source.');
@@ -27,7 +27,7 @@ function tdc_workflow_payment_status(float $total, float $paid): string
 
 function tdc_workflow_notify(PDO $pdo, ?int $userId, ?string $role, string $event, string $title, string $message, string $link): void
 {
-    $stmt = $pdo->prepare('INSERT INTO Notifications (UserID,RoleTarget,EventType,Title,Message,Link) VALUES (?,?,?,?,?,?)');
+    $stmt = $pdo->prepare('INSERT INTO notifications (UserID,RoleTarget,EventType,Title,Message,Link) VALUES (?,?,?,?,?,?)');
     if ($userId) {
         $stmt->execute([$userId, null, $event, $title, $message, $link]);
         return;
@@ -47,8 +47,8 @@ function tdc_workflow_notify(PDO $pdo, ?int $userId, ?string $role, string $even
 function tdc_workflow_record_payment(PDO $pdo, int $patientId, string $type, float $amount, int $receivedBy, array $links = []): ?string
 {
     if ($amount <= 0) return null;
-    $ref = tdc_workflow_next_reference($pdo, 'Payments', 'PaymentReference', 'PAY');
-    $stmt = $pdo->prepare('INSERT INTO Payments (PaymentReference,PatientID,VisitID,LaboratoryID,PrescriptionReference,PaymentType,Amount,PaymentMethod,ReceivedBy) VALUES (?,?,?,?,?,?,?,?,?)');
+    $ref = tdc_workflow_next_reference($pdo, 'payments', 'PaymentReference', 'PAY');
+    $stmt = $pdo->prepare('INSERT INTO payments (PaymentReference,PatientID,VisitID,LaboratoryID,PrescriptionReference,PaymentType,Amount,PaymentMethod,ReceivedBy) VALUES (?,?,?,?,?,?,?,?,?)');
     $stmt->execute([$ref,$patientId,$links['VisitID'] ?? null,$links['LaboratoryID'] ?? null,$links['PrescriptionReference'] ?? null,$type,$amount,$links['PaymentMethod'] ?? 'Cash',$receivedBy]);
     return $ref;
 }
@@ -56,10 +56,10 @@ function tdc_workflow_record_payment(PDO $pdo, int $patientId, string $type, flo
 function tdc_workflow_post_revenue(PDO $pdo, string $accountId, string $accountName, string $reference, string $description, float $amount): void
 {
     if ($amount <= 0) return;
-    $check = $pdo->prepare('SELECT COUNT(*) FROM Accounting WHERE ReferenceID=? AND AccountID=?');
+    $check = $pdo->prepare('SELECT COUNT(*) FROM accounting WHERE ReferenceID=? AND AccountID=?');
     $check->execute([$reference,$accountId]);
     if ((int) $check->fetchColumn() > 0) return;
-    $entry = tdc_workflow_next_reference($pdo, 'Accounting', 'EntryID', 'JRN');
-    $stmt = $pdo->prepare("INSERT INTO Accounting (EntryID,AccountID,AccountName,AccountType,BookType,ReferenceID,Description,Debit,Credit,Balance) VALUES (?,?,?,'Revenue','Sales Book',?,?,0,?,?)");
+    $entry = tdc_workflow_next_reference($pdo, 'accounting', 'EntryID', 'JRN');
+    $stmt = $pdo->prepare("INSERT INTO accounting (EntryID,AccountID,AccountName,AccountType,BookType,ReferenceID,Description,Debit,Credit,Balance) VALUES (?,?,?,'Revenue','Sales Book',?,?,0,?,?)");
     $stmt->execute([$entry,$accountId,$accountName,$reference,$description,$amount,$amount]);
 }

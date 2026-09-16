@@ -16,7 +16,7 @@ function tdc_role_name(?string $roleKey = null): string
     if (isset(TDC_ROLES[$roleKey])) return TDC_ROLES[$roleKey];
     if (isset($pdo)) {
         try {
-            $stmt = $pdo->prepare('SELECT RoleName FROM Roles WHERE RoleKey=?');
+            $stmt = $pdo->prepare('SELECT RoleName FROM roles WHERE RoleKey=?');
             $stmt->execute([$roleKey]);
             $name = $stmt->fetchColumn();
             if ($name) return (string) $name;
@@ -48,9 +48,9 @@ function tdc_can(string $permissionKey): bool
         try {
             $stmt = $pdo->prepare(
                 'SELECT p.PermissionKey FROM users u
-                 JOIN Roles r ON r.RoleID=u.role_id AND r.IsActive=1
-                 JOIN RolePermissions rp ON rp.RoleID=r.RoleID
-                 JOIN Permissions p ON p.PermissionID=rp.PermissionID
+                 JOIN roles r ON r.RoleID=u.role_id AND r.IsActive=1
+                 JOIN rolepermissions rp ON rp.RoleID=r.RoleID
+                 JOIN permissions p ON p.PermissionID=rp.PermissionID
                  WHERE u.id=? AND u.is_active=1'
             );
             $stmt->execute([$userId]);
@@ -82,14 +82,14 @@ function tdc_require_permission(string $permissionKey): void
 
 function tdc_audit(PDO $pdo, string $eventType, string $entityType, ?string $entityId, string $summary, ?array $changes = null): void
 {
-    $stmt = $pdo->prepare('INSERT INTO AuditLog (ActorUserID,EventType,EntityType,EntityID,Summary,ChangesJson) VALUES (?,?,?,?,?,?)');
+    $stmt = $pdo->prepare('INSERT INTO auditlog (ActorUserID,EventType,EntityType,EntityID,Summary,ChangesJson) VALUES (?,?,?,?,?,?)');
     $stmt->execute([(int) ($_SESSION['user_id'] ?? 0) ?: null,$eventType,$entityType,$entityId,$summary,$changes ? json_encode($changes, JSON_UNESCAPED_SLASHES) : null]);
 }
 
 function tdc_payment_methods(PDO $pdo, bool $includeInactive = false): array
 {
     try {
-        $sql = 'SELECT PaymentMethodID,MethodName,Description,IsActive FROM PaymentMethods' . ($includeInactive ? '' : ' WHERE IsActive=1') . ' ORDER BY DisplayOrder,MethodName';
+        $sql = 'SELECT PaymentMethodID,MethodName,Description,IsActive FROM paymentmethods' . ($includeInactive ? '' : ' WHERE IsActive=1') . ' ORDER BY DisplayOrder,MethodName';
         return $pdo->query($sql)->fetchAll();
     } catch (PDOException) {
         return array_map(static fn(string $name): array => ['PaymentMethodID'=>0,'MethodName'=>$name,'Description'=>null,'IsActive'=>1], ['Cash','Card','Mobile Money','Bank','Other']);
@@ -163,7 +163,7 @@ function tdc_require_access(): void
     if ($notificationId !== '' && ctype_digit($notificationId)) {
         try {
             $stmt = $pdo->prepare(
-                'UPDATE Notifications SET IsRead=1
+                'UPDATE notifications SET IsRead=1
                  WHERE NotificationID=? AND (UserID=? OR (UserID IS NULL AND RoleTarget=?))'
             );
             $stmt->execute([(int) $notificationId, (int) $_SESSION['user_id'], (string) $_SESSION['role']]);
