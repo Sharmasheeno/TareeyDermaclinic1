@@ -367,6 +367,8 @@ tdc_require_permission('reports.view');
 
 require_once __DIR__ . '/../../db.php';
 require_once __DIR__ . '/../includes/ui.php';
+require_once __DIR__ . '/../includes/pharmacy-costing.php';
+require_once __DIR__ . '/../includes/finance.php';
 
 if (empty($_SESSION['csrf_token'])) {
     $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
@@ -425,9 +427,14 @@ if (!tdc_is_valid_date($bsAsOf)) {
 
 $incomeStatement = null;
 $balanceSheet    = null;
+$pharmacyCogs    = null;
+$canViewIncomeCosts = tdc_can('reports.income.cost.view');
 
 if ($section === 'income-statement') {
     $incomeStatement = tdc_income_statement($pdo, $isFrom . ' 00:00:00', $isTo . ' 23:59:59');
+    if ($canViewIncomeCosts) {
+        $pharmacyCogs = tdc_pharmacy_cogs($pdo, $isFrom . ' 00:00:00', $isTo . ' 23:59:59');
+    }
 } elseif ($section === 'balance-sheet') {
     $balanceSheet = tdc_balance_sheet($pdo, $bsAsOf . ' 23:59:59');
 }
@@ -470,7 +477,13 @@ if (($_GET['export'] ?? '') === 'csv' && $section !== null) {
         fputcsv($output, ['Period', $isFrom . ' to ' . $isTo]); fputcsv($output, ['Type','Account','Amount']);
         foreach ($incomeStatement['revenue'] as $line) fputcsv($output, ['Revenue',$line['AccountName'],$line['Amount']]);
         foreach ($incomeStatement['expense'] as $line) fputcsv($output, ['Expense',$line['AccountName'],$line['Amount']]);
-        fputcsv($output, ['Net Income','',$incomeStatement['netIncome']]);
+        if ($canViewIncomeCosts) {
+            $incomePharmacyRevenue = 0.0;
+            foreach ($incomeStatement['revenue'] as $line) if ((string) $line['AccountID'] === 'REV-PHARM') $incomePharmacyRevenue = (float) $line['Amount'];
+            fputcsv($output, ['Pharmacy Cost','Drug Cost',$pharmacyCogs['drugCost']]);
+            fputcsv($output, ['Pharmacy Gross Profit','',$pharmacyCogs['grossProfit']]);
+            if ($pharmacyCogs['complete']) fputcsv($output, ['Net Income','',$incomeStatement['netIncome'] - $incomePharmacyRevenue + (float) $pharmacyCogs['grossProfit']]);
+        }
     } elseif ($section === 'balance-sheet' && $balanceSheet) {
         fputcsv($output, ['As of', $bsAsOf]); fputcsv($output, ['Type','Account','Amount']);
         foreach (['assets'=>'Asset','liabilities'=>'Liability','equity'=>'Equity'] as $bucket=>$label) foreach ($balanceSheet[$bucket] as $line) fputcsv($output, [$label,$line['AccountName'],$line['Amount']]);
@@ -492,14 +505,14 @@ if ($section === null) {
     $hubBalance = tdc_balance_sheet($pdo, $today . ' 23:59:59');
     $hubBalanceSheetOk = $hubBalance['balances'];
     $summaryQueries = [
-        'Consultations' => "SELECT COUNT(*) FROM visits WHERE DATE(VisitDate)=CURDATE()",
-        'Consultation revenue' => "SELECT COALESCE(SUM(Credit-Debit),0) FROM accounting WHERE AccountID='REV-CONSULT' AND DATE(TransactionDate)=CURDATE()",
-        'Pharmacy revenue' => "SELECT COALESCE(SUM(Credit-Debit),0) FROM accounting WHERE AccountID='REV-PHARM' AND DATE(TransactionDate)=CURDATE()",
-        'Laboratory revenue' => "SELECT COALESCE(SUM(Credit-Debit),0) FROM accounting WHERE AccountID='REV-LAB' AND DATE(TransactionDate)=CURDATE()",
-        'Pending balances' => "SELECT COALESCE((SELECT SUM(DueBalance) FROM visits WHERE QueueStatus<>'Cancelled'),0)+COALESCE((SELECT SUM(DueBalance) FROM laboratory WHERE WorkflowStatus<>'Cancelled'),0)+COALESCE((SELECT SUM(s.DueBalance) FROM (SELECT MIN(DueBalance) DueBalance FROM pharmacysales GROUP BY SUBSTRING_INDEX(SaleID,'-',1)) s),0)",
-        'Prescriptions' => "SELECT COUNT(DISTINCT SUBSTRING_INDEX(PrescriptionID,'-',1)) FROM prescriptions",
-        'Lab tests' => "SELECT COUNT(*) FROM laboratory",
-        'Low stock' => "SELECT COUNT(*) FROM inventory WHERE QuantityInStock<=ReorderLevel",
+        'Consultations (Today)' => "SELECT COUNT(*) FROM visits WHERE DATE(VisitDate)=CURDATE()",
+        'Consultation revenue (Today)' => "SELECT COALESCE(SUM(Credit-Debit),0) FROM accounting WHERE AccountID='REV-CONSULT' AND DATE(TransactionDate)=CURDATE()",
+        'Pharmacy revenue (Today)' => "SELECT COALESCE(SUM(Credit-Debit),0) FROM accounting WHERE AccountID='REV-PHARM' AND DATE(TransactionDate)=CURDATE()",
+        'Laboratory revenue (Today)' => "SELECT COALESCE(SUM(Credit-Debit),0) FROM accounting WHERE AccountID='REV-LAB' AND DATE(TransactionDate)=CURDATE()",
+        'Pending balances (Current)' => "SELECT COALESCE((SELECT SUM(DueBalance) FROM visits WHERE QueueStatus<>'Cancelled'),0)+COALESCE((SELECT SUM(DueBalance) FROM laboratory WHERE WorkflowStatus<>'Cancelled'),0)+COALESCE((SELECT SUM(s.DueBalance) FROM (SELECT MIN(DueBalance) DueBalance FROM pharmacysales GROUP BY SUBSTRING_INDEX(SaleID,'-',1)) s),0)",
+        'Prescriptions (All time)' => "SELECT COUNT(DISTINCT SUBSTRING_INDEX(PrescriptionID,'-',1)) FROM prescriptions",
+        'Lab tests (All time)' => "SELECT COUNT(*) FROM laboratory",
+        'Low stock (Current)' => "SELECT COUNT(*) FROM inventory WHERE QuantityInStock<=ReorderLevel",
     ];
     foreach($summaryQueries as $label=>$query) $clinicSummary[$label]=$pdo->query($query)->fetchColumn();
 }
@@ -620,11 +633,54 @@ $currentPage   = basename((string) ($_SERVER['SCRIPT_NAME'] ?? 'reports.php'));
     .statement-grandtotal{ display:flex; justify-content:space-between; gap:12px; padding:12px 0; margin-top:14px; border-top:3px double var(--navy); border-bottom:3px double var(--navy); font-weight:700; font-size:15.5px; }
     .statement-empty{ text-align:center; color:var(--navy-55); font-size:13px; padding:16px 0; }
     .statement-footnote{ font-size:11.5px; color:var(--navy-55); margin-top:6px; font-style:italic; }
-    .balance-check{ margin-top:18px; padding:12px 16px; border:2px solid; font-size:13px; font-weight:600; display:flex; align-items:center; gap:8px; }
-    .balance-check.ok{ border-color:#1b7a3d; color:#1b7a3d; }
-    .balance-check.warn{ border-color:#c0392b; color:#c0392b; }
-    .balance-check svg{ width:16px; height:16px; flex-shrink:0; }
+    .balance-check{ display:none; margin-top:18px; padding:8px 0; border-top:1px solid #333; border-bottom:1px solid #333; font-size:12px; font-weight:600; text-align:center; color:#111; }
+    .balance-check.ok,.balance-check.warn{ border-color:#333; color:#111; }
+    .balance-check svg{ display:none; }
     .statement-actions{ display:flex; gap:10px; max-width:720px; margin-top:18px; }
+    .income-statement-preview .statement-header{ text-align:center; padding-bottom:10px; border-bottom:1px solid #333; }
+    .income-statement-preview .statement-header .company-name{ font-size:17px; font-weight:700; color:#111; text-transform:uppercase; }
+    .income-statement-preview .statement-header .statement-title{ margin-top:7px; font-size:19px; font-weight:700; color:#111; }
+    .income-statement-preview .statement-header .statement-period{ display:flex; justify-content:space-between; gap:20px; margin-top:8px; font-size:13px; color:#111; text-align:left; }
+    .income-statement-preview .statement-body{ width:70%; margin:14px auto 0; padding:0; font-size:13px; line-height:1.3; }
+    .income-statement-preview .statement-row{ display:grid; grid-template-columns:1fr 120px; gap:12px; padding:3px 0; }
+    .income-statement-preview .statement-row .amount,.income-statement-preview .statement-subtotal .amount,.income-statement-preview .statement-grandtotal .amount{ text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
+    .income-statement-preview .statement-subtotal{ display:grid; grid-template-columns:1fr 120px; gap:12px; padding:3px 0; margin-top:4px; border-top:1px solid #222; font-weight:700; }
+    .income-statement-preview .statement-grandtotal{ display:grid; grid-template-columns:1fr 120px; gap:12px; padding:8px 0; margin-top:14px; border-top:3px double #222; border-bottom:3px double #222; font-weight:700; font-size:14px; }
+    .income-statement-preview .statement-footnote{ margin-top:8px; font-size:11px; font-style:italic; }
+    .income-statement-preview{ width:210mm; min-height:270mm; margin:0 auto; padding:14mm 16mm; background:#fff; border:1px solid #222; box-shadow:0 8px 26px rgba(0,0,0,.08); color:#111; font-family:"Times New Roman", Times, Georgia, serif; }
+    .income-report-header{ text-align:center; padding-bottom:10px; border-bottom:1px solid #333; }
+    .income-report-logo{ display:block; width:70px; height:42px; object-fit:contain; margin:0 auto 3px; }
+    .income-report-clinic{ font-size:17px; font-weight:700; text-transform:uppercase; }
+    .income-report-header .company-meta{ font-size:12px; color:#111; margin-top:2px; }
+    .income-report-title{ margin-top:7px; font-size:19px; font-weight:700; }
+    .income-report-period{ display:flex; justify-content:space-between; gap:20px; margin-top:8px; font-size:13px; text-align:left; }
+    .income-report-content{ width:70%; margin:14px auto 0; font-size:13px; line-height:1.3; }
+    .income-report-section{ margin-top:18px; break-inside:avoid; page-break-inside:avoid; }
+    .income-report-section:first-child{ margin-top:0; }
+    .income-report-heading{ margin-bottom:6px; font-size:14px; font-weight:700; text-align:center; }
+    .income-report-row{ display:grid; grid-template-columns:1fr 120px; gap:12px; padding:3px 0; }
+    .income-report-amount{ text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
+    .income-report-rule{ border-top:1px solid #222; margin:4px 0 3px auto; width:120px; }
+    .income-report-total{ font-weight:700; }
+    .income-report-box{ display:inline-block; min-width:108px; padding:3px 8px; border:1px solid #222; text-align:right; }
+    .income-report-net{ margin-top:22px; padding-top:8px; border-top:3px double #222; border-bottom:3px double #222; font-size:14px; }
+    .income-report-note{ margin-top:8px; font-size:11px; font-style:italic; }
+    .income-statement-legacy{ display:none; }
+    @media screen and (max-width: 900px) {
+        .income-statement-preview { width:100%; max-width:210mm; min-width:0; padding:20px 16px; box-sizing:border-box; }
+        .income-statement-preview .income-report-content,
+        .income-statement-preview .statement-body { width:100%; }
+        .income-report-period,
+        .income-statement-preview .statement-header .statement-period { flex-wrap:wrap; gap:8px; }
+        .income-report-row,
+        .income-statement-preview .statement-row,
+        .income-statement-preview .statement-subtotal,
+        .income-statement-preview .statement-grandtotal { grid-template-columns:minmax(0,1fr) 120px; }
+    }
+    @media print{
+        .income-statement-preview{ width:100%; min-height:auto; margin:0; box-shadow:none; }
+        .income-report-section{ break-inside:avoid; page-break-inside:avoid; }
+    }
 
     .logout-fab{ position:fixed; bottom:20px; right:20px; width:40px; height:40px; border-radius:50%; display:flex; align-items:center; justify-content:center; background:var(--navy); border:2px solid var(--white); cursor:pointer; text-decoration:none; z-index:9999; box-shadow:0 2px 6px rgba(46,49,146,0.35); transition:transform 0.15s ease, background 0.15s ease, box-shadow 0.15s ease; }
     .logout-fab svg{ width:18px; height:18px; stroke:var(--white); fill:none; stroke-width:2; stroke-linecap:round; stroke-linejoin:round; transition:stroke 0.15s ease; }
@@ -637,6 +693,7 @@ $currentPage   = basename((string) ($_SERVER['SCRIPT_NAME'] ?? 'reports.php'));
     .report-head{ display:flex; align-items:flex-start; gap:12px; margin:14px 0 18px; }
     .report-head-icon{ display:grid; place-items:center; width:40px; height:40px; flex-shrink:0; background:var(--navy-10); color:var(--navy); }
     .report-toolbar{ display:flex; flex-wrap:wrap; align-items:flex-end; gap:12px; margin-bottom:16px; }
+    .report-context{ align-self:center; color:var(--navy-55); font-size:12px; font-weight:600; }
     .report-filters{ display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
     .report-summary{ display:flex; flex-wrap:wrap; gap:10px; margin-bottom:16px; }
     .report-summary-card{ display:flex; flex-direction:column; gap:2px; min-width:150px; padding:10px 14px; border:var(--border); background:var(--white); }
@@ -732,8 +789,8 @@ $currentPage   = basename((string) ($_SERVER['SCRIPT_NAME'] ?? 'reports.php'));
           // ============================================================ ?>
     <?php if ($section === 'income-statement'): ?>
 
-        <div class="welcome-title">Income Statement</div>
-        <div class="welcome-sub">Revenue and expenses for the selected period.</div>
+        <div class="welcome-title no-print">Income Statement</div>
+        <div class="welcome-sub no-print">Revenue and expenses for the selected period.</div>
 
         <div class="preset-links no-print">
             <?php foreach ($periodPresets as $label => [$pFrom, $pTo]): ?>
@@ -753,6 +810,65 @@ $currentPage   = basename((string) ($_SERVER['SCRIPT_NAME'] ?? 'reports.php'));
             </form>
         </div>
 
+        <?php
+        $pharmacyCogs = $pharmacyCogs ?? ['drugSold' => 0.0, 'drugCost' => null, 'grossProfit' => null, 'unknownRevenue' => 0.0, 'unknownSales' => 0, 'complete' => false];
+        $incomeRevenueById = [];
+        foreach ($incomeStatement['revenue'] as $incomeLine) $incomeRevenueById[(string) $incomeLine['AccountID']] = (float) $incomeLine['Amount'];
+        $pharmacySold = (float) $pharmacyCogs['drugSold'];
+        $pharmacyCost = $pharmacyCogs['drugCost'];
+        $pharmacyGrossProfit = $pharmacyCogs['grossProfit'];
+        $incomeReportRevenue = $incomeStatement['revenue'];
+        if ($canViewIncomeCosts && $pharmacyCogs['complete'] && array_key_exists('REV-PHARM', $incomeRevenueById)) {
+            $incomeReportRevenue = array_values(array_filter($incomeReportRevenue, static fn (array $line): bool => (string) $line['AccountID'] !== 'REV-PHARM'));
+            array_unshift($incomeReportRevenue, ['AccountID' => 'REV-PHARM-GP', 'AccountName' => 'Pharmacy Gross Profit', 'Amount' => (float) $pharmacyGrossProfit]);
+        }
+        $incomeReportTotalRevenue = (float) $incomeStatement['totalRevenue'];
+        if ($canViewIncomeCosts && $pharmacyCogs['complete'] && array_key_exists('REV-PHARM', $incomeRevenueById)) {
+            $incomeReportTotalRevenue = $incomeReportTotalRevenue - $incomeRevenueById['REV-PHARM'] + (float) $pharmacyGrossProfit;
+        }
+        $salaryExpense = 0.0;
+        foreach ($incomeStatement['expense'] as $incomeLine) {
+            if (stripos((string) $incomeLine['AccountID'], 'SALARY') !== false || stripos((string) $incomeLine['AccountName'], 'salary') !== false) $salaryExpense += (float) $incomeLine['Amount'];
+        }
+        $otherExpense = max(0.0, (float) $incomeStatement['totalExpense'] - $salaryExpense);
+        ?>
+        <article class="income-statement-preview" aria-label="Income Statement">
+            <header class="income-report-header">
+                <img class="income-report-logo" src="../uploads/tareydermacliniclogo.png" alt="Tarey Derma Clinic">
+                <div class="income-report-clinic"><?= tdc_e($companyName) ?></div>
+                <div class="income-report-title">Income Statement</div>
+                <div class="income-report-period"><span><strong>From:</strong> <?= tdc_e(date('d/m/Y', strtotime($isFrom))) ?></span><span><strong>To:</strong> <?= tdc_e(date('d/m/Y', strtotime($isTo))) ?></span></div>
+            </header>
+            <div class="income-report-content">
+                <?php if ($canViewIncomeCosts): ?><section class="income-report-section">
+                    <div class="income-report-heading">Pharmacy Gross Profit</div>
+                    <div class="income-report-row"><span>Drug Sold</span><span class="income-report-amount"><?= number_format($pharmacySold, 2) ?></span></div>
+                    <div class="income-report-row"><span>Drug Cost</span><span class="income-report-amount"><?= $pharmacyCost === null ? 'Incomplete' : number_format($pharmacyCost, 2) ?></span></div>
+                    <div class="income-report-rule"></div>
+                    <div class="income-report-row income-report-total"><span>Gross Profit</span><span class="income-report-amount"><span class="income-report-box"><?= $pharmacyGrossProfit === null ? '—' : number_format($pharmacyGrossProfit, 2) ?></span></span></div>
+                    <?php if ($pharmacyCost === null): ?><div class="income-report-note">COGS unavailable for <?= (int) $pharmacyCogs['unknownSales'] ?> legacy sale<?= (int) $pharmacyCogs['unknownSales'] === 1 ? '' : 's' ?> totaling <?= number_format((float) $pharmacyCogs['unknownRevenue'], 2) ?>.</div><?php endif; ?>
+                </section><?php endif; ?>
+                <section class="income-report-section">
+                    <div class="income-report-heading">Revenue</div>
+                    <?php foreach ($incomeReportRevenue as $line): ?><div class="income-report-row"><span><?= tdc_e((string) $line['AccountName']) ?></span><span class="income-report-amount"><?= number_format((float) $line['Amount'], 2) ?></span></div><?php endforeach; ?>
+                    <div class="income-report-rule"></div>
+                    <div class="income-report-row income-report-total"><span>Total</span><span class="income-report-amount"><span class="income-report-box"><?= number_format($incomeReportTotalRevenue, 2) ?></span></span></div>
+                </section>
+                <section class="income-report-section">
+                    <div class="income-report-heading">Expenses</div>
+                    <div class="income-report-row"><span>Salary</span><span class="income-report-amount"><?= number_format($salaryExpense, 2) ?></span></div>
+                    <div class="income-report-row"><span>Other Expenses</span><span class="income-report-amount"><?= number_format($otherExpense, 2) ?></span></div>
+                    <div class="income-report-rule"></div>
+                    <div class="income-report-row income-report-total"><span>Total</span><span class="income-report-amount"><span class="income-report-box"><?= number_format((float) $incomeStatement['totalExpense'], 2) ?></span></span></div>
+                </section>
+                <?php if ($canViewIncomeCosts): ?><section class="income-report-section income-report-net">
+                    <div class="income-report-row income-report-total"><span>Net Profit or Loss</span><span class="income-report-amount"><span class="income-report-box"><?= $pharmacyCost === null ? '—' : number_format($incomeReportTotalRevenue - (float) $incomeStatement['totalExpense'], 2) ?></span></span></div>
+                    <?php if ($pharmacyCost === null): ?><div class="income-report-note">Net profit unavailable because pharmacy COGS is incomplete.</div><?php endif; ?>
+                </section><?php endif; ?>
+            </div>
+        </article>
+
+        <?php if (false): ?><div class="income-statement-legacy">
         <div class="statement-wrap">
             <div class="statement-header">
                 <div class="company-name"><?= tdc_e($companyName) ?></div>
@@ -798,10 +914,11 @@ $currentPage   = basename((string) ($_SERVER['SCRIPT_NAME'] ?? 'reports.php'));
                 </div>
             </div>
         </div>
+        </div><?php endif; ?>
 
         <div class="statement-actions no-print">
-            <button type="button" class="btn-info  btn " onclick="window.print()"><?= tdc_icon('printer',16) ?><span>Print</span></button>
-            <?php if(tdc_can('reports.export')):?><a class="btn-info btn " href="reports.php?section=income-statement&amp;from=<?=urlencode($isFrom)?>&amp;to=<?=urlencode($isTo)?>&amp;export=csv"><?= tdc_icon('download',16) ?><span>Export CSV</span></a><?php endif;?>
+            <button type="button" class="btn-primary  btn " onclick="window.print()"><?= tdc_icon('printer',16) ?><span>Print</span></button>
+            <?php if(tdc_can('reports.export')):?><a class="btn-secondary btn " href="reports.php?section=income-statement&amp;from=<?=urlencode($isFrom)?>&amp;to=<?=urlencode($isTo)?>&amp;export=csv"><?= tdc_icon('download',16) ?><span>Export CSV</span></a><?php endif;?>
         </div>
 
     <?php // ============================================================
@@ -809,80 +926,89 @@ $currentPage   = basename((string) ($_SERVER['SCRIPT_NAME'] ?? 'reports.php'));
           // ============================================================ ?>
     <?php elseif ($section === 'balance-sheet'): ?>
 
-        <div class="welcome-title">Balance Sheet</div>
-        <div class="welcome-sub">Assets, liabilities, and equity as of a chosen date.</div>
+        <div class="welcome-title no-print">Balance Sheet</div>
+        <div class="welcome-sub no-print">Assets, liabilities, and equity as of a chosen date.</div>
 
         <div class="section-toolbar no-print">
             <form method="GET" action="reports.php" class="filter-box">
                 <input type="hidden" name="section" value="balance-sheet">
-                <label for="rf_AsOf">As of</label>
+                <label for="rf_AsOf">As of Date</label>
                 <input type="date" id="rf_AsOf" name="as_of" value="<?= tdc_e($bsAsOf) ?>">
                 <button type="submit" class="btn-primary btn "><?= tdc_icon('search',16) ?><span>Apply</span></button>
                 <a href="reports.php?section=balance-sheet" class="preset-link">Today</a>
             </form>
         </div>
 
-        <div class="statement-wrap">
-            <div class="statement-header">
-                <div class="company-name"><?= tdc_e($companyName) ?></div>
+        <div class="income-statement-preview" aria-label="Balance Sheet">
+            <header class="income-report-header">
+                <img class="income-report-logo" src="../uploads/tareydermacliniclogo.png" alt="Tarey Derma Clinic">
+                <div class="income-report-clinic"><?= tdc_e($companyName) ?></div>
                 <?php if ($companyAddress !== '' || $companyPhone !== ''): ?>
                 <div class="company-meta"><?= tdc_e(trim($companyAddress . ($companyAddress !== '' && $companyPhone !== '' ? ' · ' : '') . $companyPhone)) ?></div>
                 <?php endif; ?>
-                <div class="statement-title">Balance Sheet</div>
-                <div class="statement-period">As of <?= tdc_e(date('M j, Y', strtotime($bsAsOf))) ?></div>
-            </div>
-            <div class="statement-body">
+                <div class="income-report-title">Balance Sheet</div>
+                <div class="income-report-period"><span><strong>As of</strong> <?= tdc_e(date('j F Y', strtotime($bsAsOf))) ?></span></div>
+            </header>
+            <div class="income-report-content">
 
-                <div class="statement-section-title">Assets</div>
+                <section class="income-report-section">
+                <div class="income-report-heading">Assets</div>
                 <?php if (empty($balanceSheet['assets'])): ?>
-                <div class="statement-empty">No asset activity on record.</div>
+                <div class="income-report-note">No asset activity on record.</div>
                 <?php else: foreach ($balanceSheet['assets'] as $line): ?>
-                <div class="statement-row indent">
+                <div class="income-report-row">
                     <span><?= tdc_e($line['AccountName']) ?></span>
-                    <span class="amount"><?= number_format($line['Amount'], 2) ?></span>
+                    <span class="income-report-amount"><?= number_format($line['Amount'], 2) ?></span>
                 </div>
                 <?php endforeach; endif; ?>
-                <div class="statement-subtotal">
+                <div class="income-report-rule"></div><div class="income-report-row income-report-total">
                     <span>Total Assets</span>
-                    <span class="amount"><?= number_format($balanceSheet['totalAssets'], 2) ?></span>
+                    <span class="income-report-amount"><span class="income-report-box"><?= number_format($balanceSheet['totalAssets'], 2) ?></span></span>
                 </div>
+                </section>
 
-                <div class="statement-section-title">Liabilities</div>
+                <section class="income-report-section"><div class="income-report-heading">Liabilities</div>
                 <?php if (empty($balanceSheet['liabilities'])): ?>
-                <div class="statement-empty">No liability activity on record.</div>
+                <div class="income-report-note">No liability activity on record.</div>
                 <?php else: foreach ($balanceSheet['liabilities'] as $line): ?>
-                <div class="statement-row indent">
+                <div class="income-report-row">
                     <span><?= tdc_e($line['AccountName']) ?></span>
-                    <span class="amount"><?= number_format($line['Amount'], 2) ?></span>
+                    <span class="income-report-amount"><?= number_format($line['Amount'], 2) ?></span>
                 </div>
                 <?php endforeach; endif; ?>
-                <div class="statement-subtotal">
+                <div class="income-report-rule"></div><div class="income-report-row income-report-total">
                     <span>Total Liabilities</span>
-                    <span class="amount"><?= number_format($balanceSheet['totalLiabilities'], 2) ?></span>
+                    <span class="income-report-amount"><span class="income-report-box"><?= number_format($balanceSheet['totalLiabilities'], 2) ?></span></span>
                 </div>
+                </section>
 
-                <div class="statement-section-title">Equity</div>
+                <section class="income-report-section"><div class="income-report-heading">Equity</div>
                 <?php if (empty($balanceSheet['equity'])): ?>
-                <div class="statement-empty">No equity activity on record.</div>
+                <div class="income-report-note">No equity activity on record.</div>
                 <?php else: foreach ($balanceSheet['equity'] as $line): ?>
-                <div class="statement-row indent">
+                <div class="income-report-row">
                     <span><?= tdc_e($line['AccountName']) ?></span>
-                    <span class="amount"><?= number_format($line['Amount'], 2) ?></span>
+                    <span class="income-report-amount"><?= number_format($line['Amount'], 2) ?></span>
                 </div>
                 <?php endforeach; endif; ?>
-                <div class="statement-row indent">
+                <div class="income-report-row">
                     <span>Retained Earnings (Current)</span>
-                    <span class="amount"><?= number_format($balanceSheet['retainedEarnings'], 2) ?></span>
+                    <span class="income-report-amount"><?= number_format($balanceSheet['retainedEarnings'], 2) ?></span>
                 </div>
-                <div class="statement-footnote">Retained Earnings is the running total of Revenue less Expenses to date that hasn't been posted to an Equity account.</div>
-                <div class="statement-subtotal">
+                <div class="income-report-note">Retained Earnings is the running total of Revenue less Expenses to date that hasn't been posted to an Equity account.</div>
+                <div class="income-report-rule"></div><div class="income-report-row income-report-total">
                     <span>Total Equity</span>
-                    <span class="amount"><?= number_format($balanceSheet['totalEquity'], 2) ?></span>
+                    <span class="income-report-amount"><span class="income-report-box"><?= number_format($balanceSheet['totalEquity'], 2) ?></span></span>
                 </div>
+                </section>
 
-                <div class="statement-grandtotal">
+                <section class="income-report-section income-report-net"><div class="income-report-row income-report-total">
                     <span>Total Liabilities &amp; Equity</span>
-                    <span class="amount"><?= number_format($balanceSheet['totalLiabilities'] + $balanceSheet['totalEquity'], 2) ?></span>
+                    <span class="income-report-amount"><span class="income-report-box"><?= number_format($balanceSheet['totalLiabilities'] + $balanceSheet['totalEquity'], 2) ?></span></span>
+                </div>
+                </section>
+                <div class="income-report-status <?= $balanceSheet['balances'] ? 'ok' : 'warn' ?>">
+                    <?= $balanceSheet['balances'] ? 'Balanced — Total Assets equal Total Liabilities plus Equity.' : 'Unbalanced — Total Assets do not equal Total Liabilities plus Equity.' ?>
                 </div>
             </div>
         </div>
@@ -900,8 +1026,8 @@ $currentPage   = basename((string) ($_SERVER['SCRIPT_NAME'] ?? 'reports.php'));
         <?php endif; ?>
 
         <div class="statement-actions no-print">
-            <button type="button" class="btn-info  btn " onclick="window.print()"><?= tdc_icon('printer',16) ?><span>Print</span></button>
-            <?php if(tdc_can('reports.export')):?><a class="btn-info btn " href="reports.php?section=balance-sheet&amp;as_of=<?=urlencode($bsAsOf)?>&amp;export=csv"><?= tdc_icon('download',16) ?><span>Export CSV</span></a><?php endif;?>
+            <button type="button" class="btn-primary  btn " onclick="window.print()"><?= tdc_icon('printer',16) ?><span>Print</span></button>
+            <?php if(tdc_can('reports.export')):?><a class="btn-secondary btn " href="reports.php?section=balance-sheet&amp;as_of=<?=urlencode($bsAsOf)?>&amp;export=csv"><?= tdc_icon('download',16) ?><span>Export CSV</span></a><?php endif;?>
         </div>
 
     <?php endif; ?>

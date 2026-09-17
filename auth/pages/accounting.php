@@ -50,9 +50,9 @@
  *   - Defensive headers: clickjacking, MIME-sniffing, referrer leakage
  *   - no-store caching so authenticated markup is never cached
  *   - Session gate: unauthenticated requests never reach the markup
- *   - Role gate: only 'superuser' may open this page at all — the role
- *     enum has no dedicated accounting role, and ledger data is the most
- *     sensitive financial data in the app
+ *   - Section and action gates are permission-driven. Routine operational
+ *     accounting views remain available to permitted users, while manual
+ *     journal posting and journal reversal are advanced financial actions.
  *   - CSRF-token-checked POST handlers, rotated on every submit
  *   - Prepared statements only — no string-built SQL from user input
  *   - Post/Redirect/Get on every successful write
@@ -85,8 +85,27 @@ header('Cache-Control: no-store, no-cache, must-revalidate');
 // =======================================================================
 // SECTION 2 — Reference data & shared constants
 // =======================================================================
-const ALLOWED_SECTIONS         = ['ledger', 'accounts'];
+const ALLOWED_SECTIONS         = ['ledger', 'accounts', 'payments'];
 const ALLOWED_ACCOUNTING_ROLES = ['superuser'];
+
+/** Section -> RBAC permission required to open it. */
+const ACCOUNTING_SECTION_PERMISSIONS = [
+    'ledger'   => 'accounting.transactions.view',
+    'accounts' => 'accounting.transactions.view',
+    'payments' => 'accounting.transactions.view',
+];
+
+/** A ledger transaction is grouped by its business reference when present.
+ * Reversal rows reference the original journal batch, so they stay grouped
+ * by their own batch instead of being merged into the original transaction.
+ */
+function tdc_journal_group_expression(string $alias = ''): string
+{
+    $p = $alias === '' ? '' : $alias . '.';
+    return "CASE WHEN {$p}ReferenceID IS NOT NULL AND {$p}ReferenceID <> ''\n"
+        . " AND NOT EXISTS (SELECT 1 FROM accounting b WHERE SUBSTRING_INDEX(b.EntryID, '-', 1) = {$p}ReferenceID)\n"
+        . " THEN {$p}ReferenceID ELSE SUBSTRING_INDEX({$p}EntryID, '-', 1) END";
+}
 
 const ACCOUNT_TYPE_OPTIONS = [
     'Asset'     => 'Asset',
@@ -323,6 +342,11 @@ function tdc_find_or_create_account(PDO $pdo, string $accountName, string $submi
     ];
 }
 
+function tdc_is_system_account(string $accountId): bool
+{
+    return (bool) preg_match('/^(PAY|REV|COGS|AR|AP)-/i', trim($accountId));
+}
+
 /** Current running balance (Debit - Credit) for an account, before any pending posting. */
 function tdc_account_raw_balance(PDO $pdo, string $accountId): float
 {
@@ -336,7 +360,12 @@ function tdc_account_raw_balance(PDO $pdo, string $accountId): float
 /** Normalizes a raw (Debit - Credit) balance to the account's normal-balance side for display. */
 function tdc_normalized_balance(string $accountType, float $rawBalance): float
 {
-    return in_array($accountType, NORMAL_CREDIT_TYPES, true) ? -$rawBalance : $rawBalance;
+    foreach (NORMAL_CREDIT_TYPES as $type) {
+        if (strcasecmp(trim($accountType), $type) === 0) {
+            return -$rawBalance;
+        }
+    }
+    return $rawBalance;
 }
 
 // =======================================================================
@@ -352,7 +381,9 @@ function tdc_validate_journal_form(array $input): array
 {
     $errors = [];
 
-    if ($input['TransactionDate'] !== '' && !tdc_is_valid_date($input['TransactionDate'])) {
+    if ($input['TransactionDate'] === '') {
+        $errors[] = 'Transaction date is required.';
+    } elseif (!tdc_is_valid_date($input['TransactionDate'])) {
         $errors[] = 'Transaction date is not a valid date.';
     }
     if (!array_key_exists($input['BookType'], BOOK_TYPE_OPTIONS)) {
@@ -605,6 +636,9 @@ function tdc_void_journal_entry(PDO $pdo, string $base): array
 /** @return string[] error messages; empty on success */
 function tdc_rename_account(PDO $pdo, string $accountId, string $newName): array
 {
+    if (tdc_is_system_account($accountId)) {
+        return ['System account IDs and meanings are protected. Rename a custom account instead.'];
+    }
     $exists = (int) tdc_scalar($pdo, 'SELECT COUNT(*) FROM accounting WHERE AccountID = :id', ['id' => $accountId]);
     if ($exists === 0) {
         return ['Account not found.'];
@@ -631,6 +665,7 @@ if (empty($_SESSION['user_id'])) {
 tdc_require_permission('accounting.view');
 
 require_once __DIR__ . '/../../db.php';
+require_once __DIR__ . '/../includes/workflow.php';
 
 if (empty($_SESSION['csrf_token'])) {
     $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
@@ -643,6 +678,7 @@ $section = $_GET['section'] ?? null;
 if ($section !== null && !in_array($section, ALLOWED_SECTIONS, true)) {
     $section = null;
 }
+if ($section !== null && !tdc_can(ACCOUNTING_SECTION_PERMISSIONS[$section])) tdc_forbidden();
 
 $errors = [];
 
@@ -665,7 +701,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($section, ALLOWED_SECTIONS
 
         // --- General Ledger --------------------------------------------
         if ($section === 'ledger') {
-            tdc_require_permission($formAction === 'void' ? 'accounting.expenses.edit' : 'accounting.expenses.create');
+            tdc_require_permission($formAction === 'void' ? 'accounting.journal.reverse' : 'accounting.journal.post');
             if ($formAction === 'void') {
                 $base = preg_replace('/[^A-Za-z0-9]/', '', (string) ($_POST['EntryRef'] ?? ''));
                 if ($base === '') {
@@ -733,6 +769,34 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($section, ALLOWED_SECTIONS
                 }
                 $errors = $renameErrors;
             }
+
+        // --- Payments & reversals ---------------------------------------
+        } elseif ($section === 'payments') {
+            tdc_require_permission('payments.reverse');
+            if ($formAction !== 'reverse') {
+                tdc_forbidden();
+            }
+            $paymentId = ctype_digit((string) ($_POST['PaymentID'] ?? '')) ? (int) $_POST['PaymentID'] : 0;
+            $reason    = trim((string) ($_POST['ReversalReason'] ?? ''));
+            $rawAmount = trim((string) ($_POST['ReversalAmount'] ?? ''));
+            $amount    = $rawAmount === '' ? null : (is_numeric($rawAmount) ? round((float) $rawAmount, 2) : null);
+            if ($paymentId < 1) {
+                $errors[] = 'Please select a valid payment to reverse.';
+            } elseif ($rawAmount !== '' && $amount === null) {
+                $errors[] = 'The reversal amount must be a number.';
+            } elseif (mb_strlen($reason) < 5) {
+                $errors[] = 'Please enter a reversal reason of at least 5 characters.';
+            } else {
+                try {
+                    tdc_payments_reverse($pdo, $paymentId, $reason, $amount);
+                    tdc_redirect('payments', 'reversed');
+                } catch (RuntimeException $e) {
+                    $errors[] = $e->getMessage();
+                } catch (Throwable $e) {
+                    error_log('[ACCOUNTING][PAYMENTS] reversal failed: ' . $e->getMessage());
+                    $errors[] = 'A system error occurred while reversing the payment. Please try again.';
+                }
+            }
         }
     }
 
@@ -752,6 +816,7 @@ $ledgerFrom   = '';
 $ledgerTo     = '';
 $journalEntries = [];
 $viewEntryRef   = '';
+$viewBatchRef   = '';
 $viewEntryLines = [];
 $viewIsReversal = false;
 $viewIsReversed = false;
@@ -798,13 +863,16 @@ if ($section === 'ledger') {
     }
     $where = $conditions !== [] ? 'WHERE ' . implode(' AND ', $conditions) : '';
 
+    $groupExpr = tdc_journal_group_expression();
     $stmt = $pdo->prepare(
-        "SELECT SUBSTRING_INDEX(EntryID, '-', 1) AS EntryRef, MIN(Description) AS Description,
+        "SELECT {$groupExpr} AS EntryRef,
+                MIN(SUBSTRING_INDEX(EntryID, '-', 1)) AS BatchRef,
+                MIN(Description) AS Description,
                 MIN(BookType) AS BookType, MIN(TransactionDate) AS TransactionDate,
                 MIN(ReferenceID) AS ReferenceID, SUM(Debit) AS TotalDebit, SUM(Credit) AS TotalCredit,
                 COUNT(*) AS LineCount
          FROM accounting {$where}
-         GROUP BY EntryRef ORDER BY TransactionDate DESC LIMIT 200"
+         GROUP BY {$groupExpr} ORDER BY TransactionDate DESC LIMIT 200"
     );
     $stmt->execute($params);
     $journalEntries = $stmt->fetchAll();
@@ -816,22 +884,28 @@ if ($section === 'ledger') {
 
     foreach ($journalEntries as &$je) {
         $je['IsReversal'] = $je['ReferenceID'] !== null && in_array($je['ReferenceID'], $allBases, true);
-        $je['IsReversed'] = in_array($je['EntryRef'], $referencedBases, true);
+        $je['IsReversed'] = in_array($je['BatchRef'], $referencedBases, true);
     }
     unset($je);
 
     if (empty($errors)) {
         if (isset($_GET['view'])) {
             $viewEntryRef = preg_replace('/[^A-Za-z0-9]/', '', (string) $_GET['view']);
-            $stmt = $pdo->prepare('SELECT * FROM accounting WHERE EntryID LIKE :pattern ORDER BY EntryID ASC');
-            $stmt->execute(['pattern' => $viewEntryRef . '-%']);
+            $stmt = $pdo->prepare(
+                "SELECT * FROM accounting
+                 WHERE SUBSTRING_INDEX(EntryID, '-', 1) = :batch
+                    OR ({$groupExpr} = :reference)
+                 ORDER BY EntryID ASC"
+            );
+            $stmt->execute(['batch' => $viewEntryRef, 'reference' => $viewEntryRef]);
             $viewEntryLines = $stmt->fetchAll();
             if (empty($viewEntryLines)) {
                 $viewEntryRef = ''; // Unknown / stale ref — fall back to the list.
             } else {
                 $head = $viewEntryLines[0];
+                $viewBatchRef = strtok((string) $head['EntryID'], '-');
                 $viewIsReversal = $head['ReferenceID'] !== null && in_array($head['ReferenceID'], $allBases, true);
-                $viewIsReversed = in_array($viewEntryRef, $referencedBases, true);
+                $viewIsReversed = in_array($viewBatchRef, $referencedBases, true);
                 if ($viewIsReversal) {
                     $viewReversalOfDescription = (string) tdc_scalar(
                         $pdo,
@@ -841,6 +915,7 @@ if ($section === 'ledger') {
                 }
             }
         } elseif (isset($_GET['new'])) {
+            tdc_require_permission('accounting.journal.post');
             $entryShowForm = true;
         }
     }
@@ -848,19 +923,34 @@ if ($section === 'ledger') {
 
 // --- 10B. Chart of Accounts ----------------------------------------------
 $accountSearch  = '';
+$accountTypeFilter = '';
 $chartOfAccounts = [];
 $viewAccountId    = '';
 $viewAccountHead  = null;
 $viewAccountLines = [];
+$viewAccountRequested = isset($_GET['view']);
+$viewAccountNotFound = false;
+$viewActivitySearch = '';
+$viewActivityFrom = '';
+$viewActivityTo = '';
+$viewOpeningBalance = 0.0;
+$viewFilteredDebit = 0.0;
+$viewFilteredCredit = 0.0;
 
 if ($section === 'accounts') {
     $accountSearch = trim((string) ($_GET['q'] ?? ''));
+    $accountTypeFilter = (string) ($_GET['type'] ?? '');
+    if (!array_key_exists($accountTypeFilter, ACCOUNT_TYPE_OPTIONS)) $accountTypeFilter = '';
 
     $conditions = [];
     $params     = [];
     if ($accountSearch !== '') {
         $conditions[] = '(AccountName LIKE :q1 OR AccountID LIKE :q2)';
         $params['q1'] = $params['q2']  = '%' . $accountSearch . '%';
+    }
+    if ($accountTypeFilter !== '') {
+        $conditions[] = 'a.AccountType = :account_type';
+        $params['account_type'] = $accountTypeFilter;
     }
     $where = $conditions !== [] ? 'WHERE ' . implode(' AND ', $conditions) : '';
 
@@ -883,8 +973,12 @@ if ($section === 'accounts') {
     }
     unset($acct);
 
-    if (empty($errors) && isset($_GET['view'])) {
-        $viewAccountId = preg_replace('/[^A-Za-z0-9]/', '', (string) $_GET['view']);
+    if (empty($errors) && $viewAccountRequested) {
+        // Stable system IDs legitimately contain hyphens and underscores.
+        $viewAccountId = trim((string) $_GET['view']);
+        if (!preg_match('/^[A-Za-z0-9][A-Za-z0-9_-]*$/', $viewAccountId)) {
+            $viewAccountId = '';
+        }
         $stmt = $pdo->prepare(
             "SELECT (SELECT AccountName FROM accounting WHERE AccountID = :id1 ORDER BY TransactionDate DESC, EntryID DESC LIMIT 1) AS AccountName,
                     (SELECT AccountType FROM accounting WHERE AccountID = :id2 ORDER BY TransactionDate DESC, EntryID DESC LIMIT 1) AS AccountType,
@@ -894,24 +988,232 @@ if ($section === 'accounts') {
         $stmt->execute(['id1' => $viewAccountId, 'id2' => $viewAccountId, 'id3' => $viewAccountId]);
         $viewAccountHead = $stmt->fetch() ?: null;
 
-        if ($viewAccountHead === null || $viewAccountHead['EntryCount'] == 0) {
-            $viewAccountId   = ''; // Unknown / stale id — fall back to the list.
+        if ($viewAccountId === '' || $viewAccountHead === null || $viewAccountHead['EntryCount'] == 0) {
+            $viewAccountId   = '';
             $viewAccountHead = null;
+            $viewAccountNotFound = true;
         } else {
             $raw = (float) $viewAccountHead['TotalDebit'] - (float) $viewAccountHead['TotalCredit'];
             $viewAccountHead['NormalizedBalance'] = tdc_normalized_balance($viewAccountHead['AccountType'], $raw);
 
+            $viewActivitySearch = trim((string) ($_GET['q'] ?? ''));
+            $viewActivityFrom = trim((string) ($_GET['from'] ?? ''));
+            $viewActivityTo = trim((string) ($_GET['to'] ?? ''));
+            if ($viewActivityFrom !== '' && !tdc_is_valid_date($viewActivityFrom)) $viewActivityFrom = '';
+            if ($viewActivityTo !== '' && !tdc_is_valid_date($viewActivityTo)) $viewActivityTo = '';
+
+            $openingRaw = 0.0;
+            if ($viewActivityFrom !== '') {
+                $openingRaw = (float) tdc_scalar(
+                    $pdo,
+                    'SELECT COALESCE(SUM(Debit) - SUM(Credit), 0) FROM accounting WHERE AccountID = :id AND TransactionDate < :from',
+                    ['id' => $viewAccountId, 'from' => $viewActivityFrom . ' 00:00:00']
+                );
+            }
+            $viewOpeningBalance = tdc_normalized_balance($viewAccountHead['AccountType'], $openingRaw);
+
+            $activityConditions = ['AccountID = :activity_account'];
+            $activityParams = ['activity_account' => $viewAccountId];
+            if ($viewActivityFrom !== '') {
+                $activityConditions[] = 'TransactionDate >= :activity_from';
+                $activityParams['activity_from'] = $viewActivityFrom . ' 00:00:00';
+            }
+            if ($viewActivityTo !== '') {
+                $activityConditions[] = 'TransactionDate <= :activity_to';
+                $activityParams['activity_to'] = $viewActivityTo . ' 23:59:59';
+            }
+
+            // Authoritative reversal sets — same source of truth as General Ledger.
+            // A row is a Reversal only when its ReferenceID is a real batch-base in
+            // the accounting table; a POS/business reference that merely happens to
+            // populate ReferenceID is NOT a reversal.
+            $acctAllBases = $pdo->query(
+                "SELECT DISTINCT SUBSTRING_INDEX(EntryID, '-', 1) FROM accounting"
+            )->fetchAll(PDO::FETCH_COLUMN);
+            $acctAllBasesSet = array_flip($acctAllBases); // O(1) lookup
+
+            $acctReferencedBases = $pdo->query(
+                'SELECT DISTINCT ReferenceID FROM accounting WHERE ReferenceID IS NOT NULL'
+            )->fetchAll(PDO::FETCH_COLUMN);
+            $acctReferencedBasesSet = array_flip($acctReferencedBases); // O(1) lookup
+
+            $accountGroupExpr = tdc_journal_group_expression();
             $stmt = $pdo->prepare(
-                "SELECT SUBSTRING_INDEX(EntryID, '-', 1) AS EntryRef, EntryID, Description, TransactionDate, Debit, Credit, Balance
-                 FROM accounting WHERE AccountID = :id ORDER BY TransactionDate DESC, EntryID DESC LIMIT 300"
+                "SELECT {$accountGroupExpr} AS EntryRef, SUBSTRING_INDEX(EntryID, '-', 1) AS BatchRef,
+                        EntryID, Description, BookType, ReferenceID, TransactionDate, Debit, Credit, Balance
+                 FROM accounting WHERE " . implode(' AND ', $activityConditions) . "
+                 ORDER BY TransactionDate ASC, EntryID ASC LIMIT 5000"
             );
-            $stmt->execute(['id' => $viewAccountId]);
-            $viewAccountLines = $stmt->fetchAll();
+            $stmt->execute($activityParams);
+            $activityRows = $stmt->fetchAll();
+
+            $runningRaw = $openingRaw;
+            $filteredRows = [];
+            foreach ($activityRows as $activityRow) {
+                $debit = (float) $activityRow['Debit'];
+                $credit = (float) $activityRow['Credit'];
+                $runningRaw += $debit - $credit;
+                $activityRow['RunningBalance'] = tdc_normalized_balance($viewAccountHead['AccountType'], $runningRaw);
+
+                // Authoritative status — same logic as General Ledger section.
+                $rowRef = (string) ($activityRow['ReferenceID'] ?? '');
+                $batchRef = (string) ($activityRow['BatchRef'] ?? '');
+                $activityRow['IsReversal'] = $rowRef !== '' && isset($acctAllBasesSet[$rowRef]);
+                $activityRow['IsReversed'] = $batchRef !== '' && isset($acctReferencedBasesSet[$batchRef]);
+
+
+                if ($viewActivitySearch !== '') {
+                    $entryRef = (string) ($activityRow['EntryRef'] ?? '');
+                    $entryId  = (string) ($activityRow['EntryID'] ?? '');
+                    $refId    = (string) ($activityRow['ReferenceID'] ?? '');
+                    $desc     = (string) ($activityRow['Description'] ?? '');
+                    $book     = (string) ($activityRow['BookType'] ?? '');
+                    $matched  = (stripos($entryRef, $viewActivitySearch) !== false)
+                        || (stripos($entryId, $viewActivitySearch) !== false)
+                        || (stripos($refId, $viewActivitySearch) !== false)
+                        || (stripos($desc, $viewActivitySearch) !== false)
+                        || (stripos($book, $viewActivitySearch) !== false);
+                    if (!$matched) {
+                        continue;
+                    }
+                }
+
+                $viewFilteredDebit += $debit;
+                $viewFilteredCredit += $credit;
+                $filteredRows[] = $activityRow;
+            }
+            $viewAccountLines = array_reverse($filteredRows);
         }
     }
 }
 
-// --- 10C. Hub summary (only computed on the landing page) -----------------
+// Account activity export uses the exact same resolved, filtered rows as the
+// detail view. It is intentionally after the permission-gated section load.
+if ($section === 'accounts' && $viewAccountRequested && ($_GET['export'] ?? '') === 'csv'
+    && $viewAccountId !== '' && $viewAccountHead !== null) {
+    header('Content-Type: text/csv; charset=UTF-8');
+    header('Content-Disposition: attachment; filename="account-' . preg_replace('/[^A-Za-z0-9_-]/', '', $viewAccountId) . '-activity.csv"');
+    $out = fopen('php://output', 'w');
+    fputcsv($out, ['Date', 'Reference', 'Description', 'Book', 'Debit', 'Credit', 'Running Balance', 'Status']);
+    foreach ($viewAccountLines as $line) {
+        fputcsv($out, [
+            date('Y-m-d', strtotime((string) $line['TransactionDate'])),
+            $line['EntryRef'], $line['Description'], $line['BookType'] ?? '',
+            number_format((float) $line['Debit'], 2, '.', ''),
+            number_format((float) $line['Credit'], 2, '.', ''),
+            number_format((float) ($line['RunningBalance'] ?? 0), 2, '.', ''),
+            $line['IsReversal'] ? 'Reversal' : ($line['IsReversed'] ? 'Reversed' : 'Posted'),
+        ]);
+    }
+    fclose($out);
+    exit;
+}
+
+// --- 10C. Payments & reversals -------------------------------------------
+$paymentSearch   = '';
+$paymentTypeFilter = '';
+$paymentStateFilter = '';
+$paymentRows     = [];
+$paymentTotals   = ['count' => 0, 'amount' => 0.0, 'reversed' => 0.0, 'outstanding' => 0.0];
+
+if ($section === 'payments') {
+    $paymentSearch      = trim((string) ($_GET['q'] ?? ''));
+    $paymentTypeFilter  = (string) ($_GET['type'] ?? '');
+    $paymentStateFilter = (string) ($_GET['state'] ?? '');
+    $allowedTypes  = ['Consultation', 'Laboratory', 'Pharmacy', 'POS', 'Supplier'];
+    $allowedStates = ['Reversible', 'Reversed', 'Reversal'];
+    if (!in_array($paymentTypeFilter, $allowedTypes, true))  $paymentTypeFilter  = '';
+    if (!in_array($paymentStateFilter, $allowedStates, true)) $paymentStateFilter = '';
+
+    $conditions = [];
+    $params     = [];
+    if ($paymentSearch !== '') {
+        $conditions[] = '(p.PaymentReference LIKE :q1 OR p.Notes LIKE :q2 OR p.ReversalReason LIKE :q3
+                          OR p.VisitID LIKE :q4 OR p.LaboratoryID LIKE :q5 OR p.PrescriptionReference LIKE :q6
+                          OR p.SaleReference LIKE :q7 OR p.PurchaseReference LIKE :q8 OR pat.PatientName LIKE :q9)';
+        for ($i = 1; $i <= 9; $i++) $params['q' . $i] = '%' . $paymentSearch . '%';
+    }
+    if ($paymentTypeFilter !== '') {
+        $conditions[] = 'p.PaymentType = :type';
+        $params['type'] = $paymentTypeFilter;
+    }
+    if ($paymentStateFilter === 'Reversed') {
+        $conditions[] = "EXISTS (SELECT 1 FROM payments r WHERE r.ReversalOfPaymentID = p.PaymentID AND r.PaymentStatus = 'Confirmed')";
+    } elseif ($paymentStateFilter === 'Reversal') {
+        $conditions[] = 'p.ReversalOfPaymentID IS NOT NULL';
+    } elseif ($paymentStateFilter === 'Reversible') {
+        $conditions[] = "p.PaymentStatus = 'Confirmed' AND p.ReversalOfPaymentID IS NULL AND p.Amount > 0"
+            . " AND ABS(p.Amount + COALESCE((SELECT SUM(r2.Amount) FROM payments r2 WHERE r2.ReversalOfPaymentID = p.PaymentID AND r2.PaymentStatus = 'Confirmed'), 0)) > 0.005";
+    }
+    $paymentFrom = trim((string) ($_GET['from'] ?? ''));
+    $paymentTo = trim((string) ($_GET['to'] ?? ''));
+    if ($paymentFrom !== '' && tdc_is_valid_date($paymentFrom)) {
+        $conditions[] = 'p.PaidAt >= :payment_from';
+        $params['payment_from'] = $paymentFrom . ' 00:00:00';
+    } else {
+        $paymentFrom = '';
+    }
+    if ($paymentTo !== '' && tdc_is_valid_date($paymentTo)) {
+        $conditions[] = 'p.PaidAt <= :payment_to';
+        $params['payment_to'] = $paymentTo . ' 23:59:59';
+    } else {
+        $paymentTo = '';
+    }
+    $where = $conditions !== [] ? 'WHERE ' . implode(' AND ', $conditions) : '';
+
+    $stmt = $pdo->prepare(
+        "SELECT p.PaymentID, p.PaymentReference, p.PaymentType, p.Amount, p.PaymentMethod, p.PaymentStatus, p.PaidAt, p.Notes,
+                p.ReversalOfPaymentID, p.ReversalReference, p.ReversalReason, p.PatientID, p.VisitID, p.LaboratoryID,
+                p.PrescriptionReference, p.SaleReference, p.PurchaseReference,
+                pat.PatientName,
+                v.VisitReference,
+                (SELECT MIN(SupplierName) FROM purchases pu WHERE p.PurchaseReference IS NOT NULL AND pu.PurchaseID LIKE CONCAT(p.PurchaseReference, '-%')) AS SupplierName,
+                u.username AS ReceivedByUser,
+                COALESCE((SELECT SUM(r.Amount) FROM payments r WHERE r.ReversalOfPaymentID = p.PaymentID AND r.PaymentStatus = 'Confirmed'), 0) AS ReversedAmount
+         FROM payments p
+         LEFT JOIN patients pat ON pat.PatientID = p.PatientID
+         LEFT JOIN visits v ON v.VisitID = p.VisitID
+         LEFT JOIN users u ON u.id = p.ReceivedBy
+         {$where}
+         ORDER BY p.PaidAt DESC, p.PaymentID DESC LIMIT 500"
+    );
+    $stmt->execute($params);
+    $paymentRows = $stmt->fetchAll();
+
+    foreach ($paymentRows as &$row) {
+        $row['Amount']        = round((float) $row['Amount'], 2);
+        $row['ReversedAmount'] = round((float) $row['ReversedAmount'], 2); // negative
+        $row['ReversibleAmount'] = $row['ReversalOfPaymentID'] === null && (string) $row['PaymentStatus'] === 'Confirmed' && $row['Amount'] > 0
+            ? round($row['Amount'] + $row['ReversedAmount'], 2)
+            : 0.0;
+        $row['SourceLabel'] = tdc_payment_source_label($row);
+    }
+    unset($row);
+
+    $totals = $pdo->query(
+        "SELECT COUNT(*) AS RowCount,
+                COALESCE(SUM(CASE WHEN Amount > 0 THEN Amount ELSE 0 END), 0) AS GrossReceived,
+                COALESCE(SUM(CASE WHEN Amount < 0 THEN Amount ELSE 0 END), 0) AS ReversalTotal
+         FROM payments WHERE PaymentStatus = 'Confirmed'"
+    )->fetch();
+    $paymentTotals = [
+        'count'       => (int) ($totals['RowCount'] ?? 0),
+        'amount'      => round((float) ($totals['GrossReceived'] ?? 0), 2),
+        'reversed'    => round(abs((float) ($totals['ReversalTotal'] ?? 0)), 2),
+        'outstanding' => 0.0,
+    ];
+    $paymentTotals['outstanding'] = round((float) tdc_scalar(
+        $pdo,
+        "SELECT ROUND(
+            COALESCE((SELECT SUM(DueBalance) FROM patients WHERE DueBalance > 0), 0)
+          + COALESCE((SELECT SUM(x.DueBalance) FROM (
+                SELECT MIN(DueBalance) AS DueBalance FROM purchases
+                GROUP BY SUBSTRING_INDEX(PurchaseID, '-', 1)
+            ) x WHERE x.DueBalance > 0), 0), 2)"
+    ), 2);
+}
+
+// --- 10D. Hub summary (only computed on the landing page) -----------------
 $hubNetIncomeMonth = 0.0;
 $hubCashBalance    = 0.0;
 $hubReceivableDue  = 0.0;
@@ -958,6 +1260,7 @@ $currentPage   = basename((string) ($_SERVER['SCRIPT_NAME'] ?? 'accounting.php')
 $justSaved    = isset($_GET['success']);
 $justVoided   = isset($_GET['voided']);
 $justRenamed  = isset($_GET['renamed']);
+$justPaymentReversed = isset($_GET['reversed']);
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -1074,6 +1377,10 @@ $justRenamed  = isset($_GET['renamed']);
     .status-badge.warn{ border-color:var(--orange); color:var(--orange); }
     .status-badge.danger{ border-color:#c0392b; color:#c0392b; }
     .status-badge.muted{ border-color:var(--navy-30); color:var(--navy-55); }
+    .account-type-badge{ display:inline-block; padding:3px 8px; border:1.5px solid var(--navy-30); color:var(--navy); font-size:11px; font-weight:700; letter-spacing:.03em; white-space:nowrap; }
+    .account-type-badge.type-revenue{ border-color:#1b7a3d; color:#1b7a3d; }
+    .account-type-badge.type-expense{ border-color:var(--orange); color:var(--orange); }
+    .account-type-badge.type-liability,.account-type-badge.type-equity{ border-color:#7b61a8; color:#6b4c96; }
 
     .row-actions{ display:flex; gap:8px; flex-wrap:wrap; }
     .row-actions form{ display:inline; }
@@ -1103,6 +1410,16 @@ $justRenamed  = isset($_GET['renamed']);
     .info-field .info-label{ font-size:11px; font-weight:700; letter-spacing:0.06em; text-transform:uppercase; color:var(--navy-55); margin-bottom:4px; }
     .info-field .info-value{ font-size:14.5px; font-weight:600; color:var(--navy); word-break:break-word; }
     .subsection-title{ font-size:16px; font-weight:700; color:var(--navy); margin-bottom:12px; display:flex; align-items:center; gap:10px; max-width:1200px; }
+    .account-detail-head{ max-width:1200px; display:flex; align-items:flex-end; justify-content:space-between; gap:20px; margin-bottom:20px; }
+    .back-link{ display:inline-block; color:var(--navy); font-size:13px; font-weight:600; text-decoration:none; margin-bottom:14px; }
+    .back-link:hover{ color:var(--orange); }
+    .account-not-found{ max-width:720px; padding:30px; border:2px solid var(--navy); background:var(--white); }
+    .activity-summary{ max-width:1200px; color:var(--navy-55); font-size:13px; margin:-5px 0 12px; }
+    .account-activity-filter{ justify-content:flex-start; max-width:1200px; }
+    .account-activity-filter input[type="date"]{ min-width:150px; }
+    .account-activity-filter input[type="search"]{ min-width:240px; }
+    .account-list-note{ flex-basis:100%; color:var(--navy-55); font-size:12.5px; }
+    @media(max-width:720px){ .account-detail-head{ align-items:flex-start; flex-direction:column; } .account-activity-filter{ align-items:stretch; } .account-activity-filter input,.account-activity-filter .btn{ width:100%; } }
 
 
     #js-toast{ position:fixed; bottom:28px; left:50%; transform:translateX(-50%) translateY(20px); display:flex; align-items:center; gap:8px; background:var(--white); border:2px solid var(--navy); color:var(--navy); font-size:13px; font-weight:500; padding:10px 18px; white-space:nowrap; z-index:9999; opacity:0; pointer-events:none; transition:opacity 0.2s ease, transform 0.2s ease; }
@@ -1122,6 +1439,20 @@ $justRenamed  = isset($_GET['renamed']);
         .page-body{ padding:0; }
         .info-grid, .data-table-wrap{ max-width:100%; }
     }
+    .account-summary-grid{ display:grid; grid-template-columns:repeat(4, 1fr); gap:16px; margin-bottom:32px; padding:0; border:none; max-width:1200px; }
+    .info-card{ padding:16px; border:1px solid var(--border-ui); border-radius:var(--radius-card); background:var(--surface); display:flex; flex-direction:column; justify-content:center; }
+    .info-card .info-label{ color:var(--text-secondary); font-size:11.5px; font-weight:600; margin-bottom:6px; }
+    .info-card .info-value{ color:var(--text-primary); font-size:22px; font-weight:400; font-variant-numeric:tabular-nums; }
+    .balance-card .info-value{ font-weight:700; color:var(--navy); }
+    @media(max-width:900px){ .account-summary-grid{ grid-template-columns:repeat(2, 1fr); } }
+    @media(max-width:600px){ .account-summary-grid{ grid-template-columns:1fr; } }
+    
+    .account-activity-filter { align-items: flex-end; }
+    .filter-label { display:flex; flex-direction:column; gap:6px; font-size:12px; font-weight:650; color:var(--text-secondary); }
+    .filter-actions { display:flex; align-items:center; gap:6px; }
+    
+    .chart-of-accounts-toolbar { display:flex; gap:8px; align-items:center; flex-wrap:nowrap; width:100%; max-width:800px; }
+    @media(max-width:720px){ .chart-of-accounts-toolbar{ flex-direction:column; align-items:stretch; } .chart-of-accounts-toolbar > * { width:100% !important; flex:none !important; } }
 </style>
 <link rel="stylesheet" href="../assets/clinic.css">
 <script src="../assets/clinic.js" defer></script>
@@ -1207,6 +1538,22 @@ $justRenamed  = isset($_GET['renamed']);
                 <div class="setup-card-desc"><?= $hubAccountCount ?> account<?= $hubAccountCount === 1 ? '' : 's' ?> tracked</div>
             </div>
         </a>
+        <a href="accounting.php?section=payments" class="setup-card">
+            <div class="setup-icon"><svg viewBox="0 0 24 24"><path d="M3 6h18v12H3z"/><path d="M3 10h18M7 15h4"/></svg></div>
+            <div>
+                <div class="setup-card-title">Payments &amp; Collections</div>
+                <div class="setup-card-desc">Review manual payments, balances and reversals.</div>
+            </div>
+        </a>
+        <?php if (tdc_can('accounting.journal.post')): ?>
+        <a href="accounting.php?section=ledger&amp;new=1" class="setup-card">
+            <div class="setup-icon"><svg viewBox="0 0 24 24"><path d="M5 4h14v16H5z"/><path d="M8 8h8M8 12h5M8 16h8"/></svg></div>
+            <div>
+                <div class="setup-card-title">Advanced Accounting</div>
+                <div class="setup-card-desc">Post controlled manual journal entries and adjustments.</div>
+            </div>
+        </a>
+        <?php endif; ?>
     </div>
 
 <?php else: ?>
@@ -1226,9 +1573,76 @@ $justRenamed  = isset($_GET['renamed']);
     <?php endif; ?>
 
     <?php // ============================================================
+          // PAYMENTS & COLLECTIONS
+          // ============================================================ ?>
+    <?php if ($section === 'payments'): ?>
+
+        <div class="welcome-title">Payments &amp; Collections</div>
+        <div class="welcome-sub">Manual payment records, source balances and reversals.</div>
+
+        <div class="kpi-grid">
+            <div class="kpi-card"><div class="kpi-label">Gross Received</div><div class="kpi-value"><?= number_format($paymentTotals['amount'], 2) ?></div></div>
+            <div class="kpi-card"><div class="kpi-label">Reversed</div><div class="kpi-value negative"><?= number_format($paymentTotals['reversed'], 2) ?></div></div>
+            <div class="kpi-card"><div class="kpi-label">Net Received</div><div class="kpi-value"><?= number_format($paymentTotals['amount'] - $paymentTotals['reversed'], 2) ?></div></div>
+            <div class="kpi-card"><div class="kpi-label">Outstanding</div><div class="kpi-value<?= $paymentTotals['outstanding'] > 0 ? ' negative' : '' ?>"><?= number_format($paymentTotals['outstanding'], 2) ?></div></div>
+        </div>
+
+        <div class="section-toolbar">
+            <form method="GET" action="accounting.php" class="filter-box">
+                <input type="hidden" name="section" value="payments">
+                <input type="text" name="q" placeholder="Search payment, note, or source..." value="<?= tdc_e($paymentSearch) ?>">
+                <select name="type"><option value="">All Types</option><?php foreach (['Consultation','Laboratory','Pharmacy','POS','Supplier'] as $type): ?><option value="<?= tdc_e($type) ?>" <?= $paymentTypeFilter === $type ? 'selected' : '' ?>><?= tdc_e($type) ?></option><?php endforeach; ?></select>
+                <select name="state"><option value="">All States</option><?php foreach (['Reversible','Reversed','Reversal'] as $state): ?><option value="<?= tdc_e($state) ?>" <?= $paymentStateFilter === $state ? 'selected' : '' ?>><?= tdc_e($state) ?></option><?php endforeach; ?></select>
+                <input type="date" name="from" aria-label="From date" value="<?= tdc_e($paymentFrom) ?>">
+                <input type="date" name="to" aria-label="To date" value="<?= tdc_e($paymentTo) ?>">
+                <button type="submit" class="btn-primary btn"><?= tdc_icon('search',16) ?><span>Filter</span></button>
+            </form>
+        </div>
+
+        <div class="data-table-wrap">
+            <table class="data-table">
+                <thead><tr><th>Payment Reference</th><th>Type</th><th>Source</th><th>Patient / Supplier</th><th>Amount</th><th>Payment Method</th><th>Date</th><th>Received By</th><th>State</th><th>Reversed Amount</th><th>Remaining Reversible</th><th>Actions</th></tr></thead>
+                <tbody>
+                <?php if (empty($paymentRows)): ?><tr class="empty-row"><td colspan="12">No payments found.</td></tr>
+                <?php else: foreach ($paymentRows as $payment):
+                    $isReversal = $payment['ReversalOfPaymentID'] !== null;
+                    $isReversed = !$isReversal && (float) $payment['ReversibleAmount'] <= 0;
+                    $canReverse = tdc_can('payments.reverse') && !$isReversal && !$isReversed && (string) $payment['PaymentStatus'] === 'Confirmed' && (float) $payment['ReversibleAmount'] > 0;
+                    $party = $payment['SupplierName'] ?: $payment['PatientName'];
+                ?>
+                    <tr>
+                        <td><strong><?= tdc_e($payment['PaymentReference']) ?></strong><?php if ($isReversal): ?><div style="font-size:11px;color:var(--navy-55);">of <?= tdc_e((string) $payment['ReversalReference']) ?></div><?php endif; ?></td>
+                        <td><?= tdc_e($payment['PaymentType']) ?></td><td><?= tdc_e($payment['SourceLabel']) ?></td><td><?= tdc_e((string) ($party ?: '—')) ?></td>
+                        <td><?= number_format((float) $payment['Amount'], 2) ?></td><td><?= tdc_e($payment['PaymentMethod']) ?></td>
+                        <td><?= tdc_e(date('Y-m-d H:i', strtotime((string) $payment['PaidAt']))) ?></td><td><?= tdc_e((string) ($payment['ReceivedByUser'] ?: '—')) ?></td>
+                        <td><?php if ($isReversal): ?><span class="status-badge warn">Reversal</span><?php elseif ($isReversed): ?><span class="status-badge muted">Reversed</span><?php else: ?><span class="status-badge">Reversible</span><?php endif; ?></td>
+                        <td><?= number_format(abs((float) $payment['ReversedAmount']), 2) ?></td><td><?= number_format((float) $payment['ReversibleAmount'], 2) ?></td>
+                        <td><?php if ($canReverse): ?><button type="button" class="btn-sm danger reverse-payment-btn" data-id="<?= (int) $payment['PaymentID'] ?>" data-reference="<?= tdc_e($payment['PaymentReference']) ?>" data-remaining="<?= number_format((float) $payment['ReversibleAmount'], 2, '.', '') ?>">Reverse</button><?php else: ?>—<?php endif; ?></td>
+                    </tr>
+                <?php endforeach; endif; ?>
+                </tbody>
+            </table>
+        </div>
+
+        <div class="modal-overlay" id="paymentReversalModalOverlay">
+            <div class="modal-box">
+                <div class="modal-head"><h3>Reverse Payment</h3><button type="button" class="modal-close" id="paymentReversalCloseBtn" aria-label="Close">&times;</button></div>
+                <form method="POST" action="accounting.php?section=payments">
+                    <div class="modal-body">
+                        <input type="hidden" name="csrf_token" value="<?= tdc_e($csrfToken) ?>"><input type="hidden" name="form_action" value="reverse"><input type="hidden" name="PaymentID" id="pr_PaymentID">
+                        <p style="margin-bottom:16px;">Reverse <strong id="pr_Reference"></strong>. The original payment will remain in the audit trail.</p>
+                        <div class="form-group"><label for="pr_ReversalAmount">Reversal amount</label><input type="number" id="pr_ReversalAmount" name="ReversalAmount" min="0.01" step="0.01" required></div>
+                        <div class="form-group"><label for="pr_ReversalReason">Reason</label><textarea id="pr_ReversalReason" name="ReversalReason" minlength="5" maxlength="500" required placeholder="Explain why this payment is being reversed."></textarea></div>
+                        <div class="modal-actions"><button type="button" class="btn btn-secondary" id="paymentReversalCancelBtn">Cancel</button><button type="submit" class="btn danger">Record reversal</button></div>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+    <?php // ============================================================
           // GENERAL LEDGER
           // ============================================================ ?>
-    <?php if ($section === 'ledger'): ?>
+    <?php elseif ($section === 'ledger'): ?>
 
         <?php if ($viewEntryRef !== ''): ?>
         <?php $head = $viewEntryLines[0]; ?>
@@ -1270,19 +1684,21 @@ $justRenamed  = isset($_GET['renamed']);
         </div>
 
         <div class="row-actions no-print">
-            <button type="button" class="btn-info btn " onclick="window.print()">Print</button>
+            <button type="button" class="btn-primary btn" onclick="window.print()">Print</button>
+            <?php if (tdc_can('accounting.journal.reverse')): ?>
             <form method="POST" action="accounting.php?section=ledger" data-confirm="Reverse this entry? A new offsetting entry will be posted — the original is never deleted. This cannot be undone.">
                 <input type="hidden" name="csrf_token" value="<?= tdc_e($csrfToken) ?>">
                 <input type="hidden" name="form_action" value="void">
-                <input type="hidden" name="EntryRef" value="<?= tdc_e($viewEntryRef) ?>">
+                <input type="hidden" name="EntryRef" value="<?= tdc_e($viewBatchRef) ?>">
                 <button type="submit" class="btn-sm danger" <?= ($viewIsReversal || $viewIsReversed) ? 'disabled' : '' ?>>Reverse Entry</button>
             </form>
+            <?php endif; ?>
         </div>
 
         <?php elseif ($entryShowForm): ?>
 
-        <div class="welcome-title">New Journal Entry</div>
-        <div class="welcome-sub">Every entry must balance — total debits must equal total credits.</div>
+        <div class="welcome-title">Advanced Accounting — Manual Journal Entry</div>
+        <div class="welcome-sub">Use for adjustments and exceptional transactions. Daily clinic workflows post automatically.</div>
 
         <datalist id="existingAccountNames">
             <?php foreach ($existingAccountNames as $acct): ?><option value="<?= tdc_e($acct['AccountName']) ?>"><?php endforeach; ?>
@@ -1293,9 +1709,10 @@ $justRenamed  = isset($_GET['renamed']);
             <input type="hidden" name="form_action" value="save">
 
             <div class="form-row" style="max-width:1200px;margin-bottom:16px;">
-                <div class="form-group"><label for="jf_TransactionDate">Date</label>
-                    <input type="date" id="jf_TransactionDate" name="TransactionDate" value="<?= tdc_e($oldEntry['TransactionDate']) ?>"></div>
-                <div class="form-group"><label for="jf_BookType">Book</label>
+                <div class="form-group"><label for="jf_TransactionDate">Date <span style="color:#c0392b;">*</span></label>
+                    <input type="date" id="jf_TransactionDate" name="TransactionDate" required
+                           value="<?= tdc_e($oldEntry['TransactionDate']) ?>"></div>
+                <div class="form-group"><label for="jf_BookType">Book <span style="color:#c0392b;">*</span></label>
                     <select id="jf_BookType" name="BookType">
                         <?php foreach (BOOK_TYPE_OPTIONS as $v => $l): ?>
                             <option value="<?= tdc_e($v) ?>" <?= $oldEntry['BookType'] === $v ? 'selected' : '' ?>><?= tdc_e($l) ?></option>
@@ -1305,13 +1722,13 @@ $justRenamed  = isset($_GET['renamed']);
                     <input type="text" id="jf_ReferenceID" name="ReferenceID" value="<?= tdc_e($oldEntry['ReferenceID']) ?>" placeholder="e.g. POS000042"></div>
             </div>
             <div class="form-group" style="max-width:1200px;margin-bottom:20px;">
-                <label for="jf_Description">Description</label>
+                <label for="jf_Description">Description <span style="color:#c0392b;">*</span></label>
                 <textarea id="jf_Description" name="Description" required><?= tdc_e($oldEntry['Description']) ?></textarea>
             </div>
 
             <div class="line-items-wrap">
                 <table class="line-items" id="lineItemsTable">
-                    <thead><tr><th style="width:40px;">#</th><th>Account</th><th style="width:150px;">Type</th><th style="width:120px;">Debit</th><th style="width:120px;">Credit</th><th style="width:36px;"></th></tr></thead>
+                    <thead><tr><th style="width:40px;">#</th><th>Account</th><th style="width:170px;">Type</th><th style="width:120px;">Debit</th><th style="width:120px;">Credit</th><th style="width:36px;"></th></tr></thead>
                     <tbody id="lineItemsBody">
                     <?php
                     $entryLineCount = max(2, count($oldEntry['AccountName']));
@@ -1319,7 +1736,14 @@ $justRenamed  = isset($_GET['renamed']);
                     ?>
                         <tr class="line-item-row">
                             <td class="line-no"><?= $i + 1 ?></td>
-                            <td><input type="text" list="existingAccountNames" name="AccountName[]" class="account-name-input" value="<?= tdc_e($oldEntry['AccountName'][$i] ?? '') ?>" placeholder="e.g. Cash on Hand"></td>
+                            <td>
+                                <input type="text" list="existingAccountNames" name="AccountName[]"
+                                    class="account-name-input"
+                                    value="<?= tdc_e($oldEntry['AccountName'][$i] ?? '') ?>"
+                                    placeholder="e.g. Cash on Hand"
+                                    autocomplete="off">
+                                <span class="acct-status-badge" style="display:none;font-size:10px;font-weight:700;padding:2px 5px;letter-spacing:.03em;vertical-align:middle;"></span>
+                            </td>
                             <td><select name="AccountType[]" class="account-type-select">
                                     <option value="">Select type</option>
                                     <?php foreach (ACCOUNT_TYPE_OPTIONS as $v => $l): ?>
@@ -1334,17 +1758,18 @@ $justRenamed  = isset($_GET['renamed']);
                     </tbody>
                 </table>
             </div>
-            <button type="button" class="btn-success  btn  add-line-btn" id="addLineBtn"><?= tdc_icon('plus',16) ?><span>+ Add Line</span></button>
+            <button type="button" class="btn-success btn add-line-btn" id="addLineBtn"><?= tdc_icon('plus',16) ?><span>+ Add Line</span></button>
 
             <div class="totals-row">
                 <div class="form-group"><label>Total Debit</label><div class="due-display" id="jf_TotalDebit">0.00</div></div>
                 <div class="form-group"><label>Total Credit</label><div class="due-display" id="jf_TotalCredit">0.00</div></div>
                 <div class="form-group"><label>Difference</label><div class="due-display" id="jf_Difference">0.00</div></div>
+                <div class="form-group"><label>Status</label><div class="due-display" id="jf_BalanceStatus" style="font-size:12px;">—</div></div>
             </div>
 
             <div class="form-actions">
                 <a href="accounting.php?section=ledger" class="btn btn-secondary">Cancel</a>
-                <button type="submit" class="btn btn-primary" id="jf_SubmitBtn">Post Entry</button>
+                <button type="submit" class="btn btn-primary" id="jf_SubmitBtn" disabled>Post Entry</button>
             </div>
         </form>
 
@@ -1367,7 +1792,7 @@ $justRenamed  = isset($_GET['renamed']);
                 <input type="date" name="to" value="<?= tdc_e($ledgerTo) ?>">
                 <button type="submit" class="btn-primary btn "><?= tdc_icon('search',16) ?><span>Filter</span></button>
             </form>
-            <a href="accounting.php?section=ledger&new=1" class="btn-success btn ">+ New Entry</a>
+            <?php if (tdc_can('accounting.journal.post')): ?><a href="accounting.php?section=ledger&new=1" class="btn-success btn ">+ Manual Journal</a><?php endif; ?>
         </div>
 
         <div class="data-table-wrap">
@@ -1392,12 +1817,12 @@ $justRenamed  = isset($_GET['renamed']);
                         <td>
                             <div class="row-actions">
                                 <a href="accounting.php?section=ledger&view=<?= urlencode($je['EntryRef']) ?>" class="btn-sm">View</a>
-                                <form method="POST" action="accounting.php?section=ledger" data-confirm="Reverse this entry? A new offsetting entry will be posted — the original is never deleted. This cannot be undone.">
+                                <?php if (tdc_can('accounting.journal.reverse')): ?><form method="POST" action="accounting.php?section=ledger" data-confirm="Reverse this entry? A new offsetting entry will be posted — the original is never deleted. This cannot be undone.">
                                     <input type="hidden" name="csrf_token" value="<?= tdc_e($csrfToken) ?>">
                                     <input type="hidden" name="form_action" value="void">
-                                    <input type="hidden" name="EntryRef" value="<?= tdc_e($je['EntryRef']) ?>">
+                                    <input type="hidden" name="EntryRef" value="<?= tdc_e($je['BatchRef']) ?>">
                                     <button type="submit" class="btn-sm danger" <?= ($je['IsReversal'] || $je['IsReversed']) ? 'disabled' : '' ?>>Reverse</button>
-                                </form>
+                                </form><?php endif; ?>
                             </div>
                         </td>
                     </tr>
@@ -1413,38 +1838,69 @@ $justRenamed  = isset($_GET['renamed']);
           // ============================================================ ?>
     <?php elseif ($section === 'accounts'): ?>
 
-        <?php if ($viewAccountId !== '' && $viewAccountHead !== null): ?>
+        <?php if ($viewAccountRequested && $viewAccountNotFound): ?>
 
-        <div class="welcome-title"><?= tdc_e($viewAccountHead['AccountName']) ?></div>
+        <div class="account-not-found">
+            <div class="welcome-title">Account not found</div>
+            <div class="welcome-sub">The requested account does not exist in the accounting ledger.</div>
+            <a href="accounting.php?section=accounts" class="btn-secondary btn">Back to Chart of Accounts</a>
+        </div>
+
+        <?php elseif ($viewAccountId !== '' && $viewAccountHead !== null): ?>
+
+        <div class="account-detail-head">
+            <div>
+                <a href="accounting.php?section=accounts" class="back-link no-print">&larr; Back to Chart of Accounts</a>
+                <div class="welcome-title"><?= tdc_e($viewAccountHead['AccountName']) ?></div>
+            </div>
+            <div class="row-actions no-print">
+                <button type="button" class="btn-primary btn" onclick="window.print()">Print</button>
+                <a class="btn-secondary btn" href="accounting.php?section=accounts&view=<?= urlencode($viewAccountId) ?>&export=csv">Export CSV</a>
+            </div>
+        </div>
         <div class="welcome-sub"><?= tdc_e($viewAccountId) ?> &middot; <?= tdc_e($viewAccountHead['AccountType']) ?></div>
 
-        <div class="info-grid">
-            <div class="info-field"><div class="info-label">Total Debit</div><div class="info-value"><?= number_format((float) $viewAccountHead['TotalDebit'], 2) ?></div></div>
-            <div class="info-field"><div class="info-label">Total Credit</div><div class="info-value"><?= number_format((float) $viewAccountHead['TotalCredit'], 2) ?></div></div>
-            <div class="info-field"><div class="info-label">Balance</div><div class="info-value"><?= number_format((float) $viewAccountHead['NormalizedBalance'], 2) ?></div></div>
-            <div class="info-field"><div class="info-label">Entries</div><div class="info-value"><?= (int) $viewAccountHead['EntryCount'] ?></div></div>
+        <div class="info-grid account-summary-grid">
+            <div class="info-card"><div class="info-label">Total Debit</div><div class="info-value"><?= number_format((float) $viewAccountHead['TotalDebit'], 2) ?></div></div>
+            <div class="info-card"><div class="info-label">Total Credit</div><div class="info-value"><?= number_format((float) $viewAccountHead['TotalCredit'], 2) ?></div></div>
+            <div class="info-card balance-card"><div class="info-label">Current Balance</div><div class="info-value"><?= number_format((float) $viewAccountHead['NormalizedBalance'], 2) ?></div></div>
+            <div class="info-card"><div class="info-label">Entries</div><div class="info-value"><?= (int) $viewAccountHead['EntryCount'] ?></div></div>
         </div>
 
         <div class="row-actions no-print" style="margin-bottom:20px;">
-            <?php if (tdc_can('setup.financial.manage')): ?><button type="button" class="btn-warning btn  rename-account-btn"
+            <?php if (tdc_can('setup.financial.manage') && !tdc_is_system_account($viewAccountId)): ?><button type="button" class="btn-secondary btn  rename-account-btn"
                 data-id="<?= tdc_e($viewAccountId) ?>" data-name="<?= tdc_e($viewAccountHead['AccountName']) ?>"><?= tdc_icon('pencil',16) ?><span>Rename Account</span></button><?php endif; ?>
         </div>
 
-        <div class="subsection-title">Transaction History</div>
+        <div class="subsection-title">Account Activity</div>
+        <form method="GET" action="accounting.php" class="section-toolbar account-activity-filter no-print">
+            <input type="hidden" name="section" value="accounts">
+            <input type="hidden" name="view" value="<?= tdc_e($viewAccountId) ?>">
+            <label class="filter-label"><span>From Date</span><input type="date" name="from" value="<?= tdc_e($viewActivityFrom) ?>" aria-label="From date"></label>
+            <label class="filter-label"><span>To Date</span><input type="date" name="to" value="<?= tdc_e($viewActivityTo) ?>" aria-label="To date"></label>
+            <label class="filter-label"><span>Search</span><input type="search" name="q" placeholder="Search transactions..." value="<?= tdc_e($viewActivitySearch) ?>"></label>
+            <div class="filter-actions row-actions">
+                <button type="submit" class="btn-primary btn">Apply</button>
+                <a href="accounting.php?section=accounts&view=<?= urlencode($viewAccountId) ?>" class="btn-secondary btn">Clear</a>
+            </div>
+        </form>
+        <div class="activity-summary no-print"><?php if ($viewActivityFrom !== ''): ?>Opening balance: <strong><?= number_format($viewOpeningBalance, 2) ?></strong> &middot; <?php endif; ?>Filtered activity: Debit <strong><?= number_format($viewFilteredDebit, 2) ?></strong> &middot; Credit <strong><?= number_format($viewFilteredCredit, 2) ?></strong></div>
         <div class="data-table-wrap">
             <table class="data-table">
-                <thead><tr><th>Entry Ref</th><th>Description</th><th>Debit</th><th>Credit</th><th>Running Balance</th><th>Date</th></tr></thead>
+                <thead><tr><th>Date</th><th>Reference</th><th>Description</th><th>Book</th><th>Debit</th><th>Credit</th><th>Running Balance</th><th>Status</th></tr></thead>
                 <tbody>
                     <?php if (empty($viewAccountLines)): ?>
-                    <tr class="empty-row"><td colspan="6">No transactions on record.</td></tr>
+                    <tr class="empty-row"><td colspan="8">No transactions match the selected activity filters.</td></tr>
                     <?php else: foreach ($viewAccountLines as $l): ?>
                     <tr>
+                        <td><?= tdc_e(date('Y-m-d', strtotime((string) $l['TransactionDate']))) ?></td>
                         <td><a href="accounting.php?section=ledger&view=<?= urlencode($l['EntryRef']) ?>"><?= tdc_e($l['EntryRef']) ?></a></td>
                         <td style="white-space:normal;max-width:320px;"><?= tdc_e($l['Description']) ?></td>
+                        <td><?= tdc_e($l['BookType'] ?? '—') ?></td>
                         <td><?= (float) $l['Debit'] > 0 ? number_format((float) $l['Debit'], 2) : '—' ?></td>
                         <td><?= (float) $l['Credit'] > 0 ? number_format((float) $l['Credit'], 2) : '—' ?></td>
-                        <td><?= number_format((float) $l['Balance'], 2) ?></td>
-                        <td><?= tdc_e(date('Y-m-d', strtotime((string) $l['TransactionDate']))) ?></td>
+                        <td><?= number_format((float) ($l['RunningBalance'] ?? tdc_normalized_balance($viewAccountHead['AccountType'], (float) ($l['Balance'] ?? 0))), 2) ?></td>
+                        <td><?php if ($l['IsReversal']): ?><span class="status-badge warn">Reversal</span><?php elseif ($l['IsReversed']): ?><span class="status-badge muted">Reversed</span><?php else: ?><span class="status-badge">Posted</span><?php endif; ?></td>
                     </tr>
                     <?php endforeach; endif; ?>
                 </tbody>
@@ -1457,12 +1913,14 @@ $justRenamed  = isset($_GET['renamed']);
         <div class="welcome-sub">Every account that has appeared on a journal entry, with its running balance.</div>
 
         <div class="section-toolbar">
-            <form method="GET" action="accounting.php" class="filter-box">
+            <form method="GET" action="accounting.php" class="chart-of-accounts-toolbar no-print">
                 <input type="hidden" name="section" value="accounts">
-                <input type="text" name="q" placeholder="Search by account name or ID..." value="<?= tdc_e($accountSearch) ?>">
+                <input type="text" name="q" placeholder="Search account name or ID..." value="<?= tdc_e($accountSearch) ?>" style="flex:1; min-width: 200px;">
+                <select name="type" aria-label="Account type" style="width:auto;"><option value="">All Types</option><?php foreach (ACCOUNT_TYPE_OPTIONS as $type): ?><option value="<?= tdc_e($type) ?>" <?= $accountTypeFilter === $type ? 'selected' : '' ?>><?= tdc_e($type) ?></option><?php endforeach; ?></select>
                 <button type="submit" class="btn-primary btn "><?= tdc_icon('search',16) ?><span>Search</span></button>
+                <?php if ($accountSearch !== '' || $accountTypeFilter !== ''): ?><a href="accounting.php?section=accounts" class="btn-secondary btn">Clear</a><?php endif; ?>
             </form>
-            <span style="font-size:12.5px;color:var(--navy-55);">New accounts are created automatically the first time they're used on a journal entry.</span>
+            <div class="account-list-note">Choose an account from the searchable existing-account list. System account IDs remain stable.</div>
         </div>
 
         <div class="data-table-wrap">
@@ -1475,7 +1933,7 @@ $justRenamed  = isset($_GET['renamed']);
                     <tr>
                         <td><?= tdc_e($acct['AccountID']) ?></td>
                         <td><?= tdc_e($acct['AccountName']) ?></td>
-                        <td><?= tdc_e($acct['AccountType']) ?></td>
+                        <td><span class="account-type-badge type-<?= strtolower(tdc_e($acct['AccountType'])) ?>"><?= tdc_e($acct['AccountType']) ?></span></td>
                         <td><?= number_format((float) $acct['TotalDebit'], 2) ?></td>
                         <td><?= number_format((float) $acct['TotalCredit'], 2) ?></td>
                         <td><?= number_format((float) $acct['NormalizedBalance'], 2) ?></td>
@@ -1483,7 +1941,7 @@ $justRenamed  = isset($_GET['renamed']);
                         <td>
                             <div class="row-actions">
                                 <a href="accounting.php?section=accounts&view=<?= urlencode($acct['AccountID']) ?>" class="btn-sm">View</a>
-                                <?php if (tdc_can('setup.financial.manage')): ?><button type="button" class="btn-warning btn-sm rename-account-btn"
+                                <?php if (tdc_can('setup.financial.manage') && !tdc_is_system_account((string) $acct['AccountID'])): ?><button type="button" class="btn-warning btn-sm rename-account-btn"
                                     data-id="<?= tdc_e($acct['AccountID']) ?>" data-name="<?= tdc_e($acct['AccountName']) ?>"><?= tdc_icon('pencil',16) ?><span>Rename</span></button><?php endif; ?>
                             </div>
                         </td>
@@ -1560,86 +2018,191 @@ function showToast(message){
 
 <?php if ($section === 'ledger' && $entryShowForm): ?>
 (function(){
-    // AccountName -> AccountType lookup, so picking a known account
-    // auto-selects (and locks) its type — one account can't end up
-    // split across two types from the browser side either.
+    /**
+     * AccountName (lower-cased) -> AccountType lookup.
+     * When a user picks an existing account, its stored type auto-fills
+     * and the type dropdown is locked — preventing one account from being
+     * split across two types from the browser side.
+     */
     const accountTypeMap = <?= json_encode(array_combine(
         array_map(static fn ($a) => mb_strtolower($a['AccountName']), $existingAccountNames),
         array_map(static fn ($a) => $a['AccountType'], $existingAccountNames)
     ), JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>;
 
-    const tbody = document.getElementById('lineItemsBody');
+    const tbody     = document.getElementById('lineItemsBody');
+    const submitBtn = document.getElementById('jf_SubmitBtn');
+    const dateInput = document.getElementById('jf_TransactionDate');
+    const descInput = document.getElementById('jf_Description');
 
-    function wireRow(row){
-        const nameInput = row.querySelector('.account-name-input');
-        const typeSelect = row.querySelector('.account-type-select');
-        const debitInput = row.querySelector('.debit-input');
+    /* -- account badge helper ----------------------------------------- */
+    function updateAccountBadge(nameInput, typeSelect) {
+        const badge = nameInput.parentElement.querySelector('.acct-status-badge');
+        if (!badge) return;
+        const name = nameInput.value.trim();
+        if (name === '') { badge.style.display = 'none'; return; }
+        const match = accountTypeMap[name.toLowerCase()];
+        if (match) {
+            badge.textContent = 'Existing';
+            badge.style.cssText = 'display:inline;font-size:10px;font-weight:700;padding:2px 5px;letter-spacing:.03em;vertical-align:middle;color:#1b7a3d;border:1px solid #1b7a3d;';
+            typeSelect.value    = match;
+            typeSelect.disabled = true;
+        } else {
+            badge.textContent = 'NEW';
+            badge.style.cssText = 'display:inline;font-size:10px;font-weight:700;padding:2px 5px;letter-spacing:.03em;vertical-align:middle;color:#c0392b;border:1px solid #c0392b;';
+            typeSelect.disabled = false;
+        }
+    }
+
+    /* -- per-row wiring ----------------------------------------------- */
+    function wireRow(row) {
+        const nameInput   = row.querySelector('.account-name-input');
+        const typeSelect  = row.querySelector('.account-type-select');
+        const debitInput  = row.querySelector('.debit-input');
         const creditInput = row.querySelector('.credit-input');
 
-        nameInput.addEventListener('input', function(){
-            const match = accountTypeMap[nameInput.value.trim().toLowerCase()];
-            if (match){
-                typeSelect.value = match;
-                typeSelect.disabled = true;
+        nameInput.addEventListener('input',  function() { updateAccountBadge(nameInput, typeSelect); recalcAll(); });
+        nameInput.addEventListener('change', function() { updateAccountBadge(nameInput, typeSelect); recalcAll(); });
+        typeSelect.addEventListener('change', recalcAll);
+
+        function updateDebitCreditState() {
+            const dVal = parseFloat(debitInput.value) || 0;
+            const cVal = parseFloat(creditInput.value) || 0;
+            if (dVal > 0) {
+                creditInput.disabled = true;
+                creditInput.value = '';
+            } else if (cVal > 0) {
+                debitInput.disabled = true;
+                debitInput.value = '';
             } else {
-                typeSelect.disabled = false;
+                creditInput.disabled = false;
+                debitInput.disabled = false;
             }
-        });
-        if (accountTypeMap[nameInput.value.trim().toLowerCase()]) {
-            typeSelect.disabled = true;
         }
 
-        debitInput.addEventListener('input', function(){
-            if (parseFloat(debitInput.value) > 0) creditInput.value = '';
+        debitInput.addEventListener('input', function() {
+            updateDebitCreditState();
             recalcAll();
         });
-        creditInput.addEventListener('input', function(){
-            if (parseFloat(creditInput.value) > 0) debitInput.value = '';
+        creditInput.addEventListener('input', function() {
+            updateDebitCreditState();
             recalcAll();
         });
 
-        row.querySelector('.remove-line-btn').addEventListener('click', function(){
-            if (tbody.querySelectorAll('.line-item-row').length > 2){ row.remove(); renumber(); recalcAll(); }
+        row.querySelector('.remove-line-btn').addEventListener('click', function() {
+            if (tbody.querySelectorAll('.line-item-row').length > 2) {
+                row.remove(); renumber(); recalcAll();
+            }
+        });
+
+        updateAccountBadge(nameInput, typeSelect); // init for error-repopulated forms
+        updateDebitCreditState(); // init disabled states
+    }
+
+    // Ensure disabled fields are submitted so PHP array indices match up
+    document.getElementById('journalForm').addEventListener('submit', function() {
+        this.querySelectorAll('.debit-input, .credit-input').forEach(function(input) {
+            input.disabled = false;
+        });
+    });
+
+    /* -- renumber -------------------------------------------------------- */
+    function renumber() {
+        tbody.querySelectorAll('.line-item-row').forEach(function(row, i) {
+            row.querySelector('.line-no').textContent = i + 1;
         });
     }
 
-    function renumber(){
-        tbody.querySelectorAll('.line-item-row').forEach(function(row, i){ row.querySelector('.line-no').textContent = i + 1; });
+    /* -- full client-side validation (mirrors server logic) -------------- */
+    function isFormValid() {
+        if (!dateInput.value.trim()) return false;
+        if (!descInput.value.trim()) return false;
+
+        let totalDebit = 0, totalCredit = 0, validLines = 0;
+        let hasDebit = false, hasCred = false;
+
+        for (const row of tbody.querySelectorAll('.line-item-row')) {
+            const name   = row.querySelector('.account-name-input').value.trim();
+            const type   = row.querySelector('.account-type-select').value;
+            const debit  = parseFloat(row.querySelector('.debit-input').value)  || 0;
+            const credit = parseFloat(row.querySelector('.credit-input').value) || 0;
+
+            if (name === '' && debit === 0 && credit === 0) continue; // blank spare
+
+            if (name === '' || !type) return false;
+            if (debit < 0 || credit < 0) return false;
+            if ((debit > 0) === (credit > 0)) return false; // both or neither
+
+            if (debit  > 0) hasDebit = true;
+            if (credit > 0) hasCred  = true;
+            totalDebit  += debit;
+            totalCredit += credit;
+            validLines++;
+        }
+
+        if (validLines < 2 || !hasDebit || !hasCred) return false;
+        if (totalDebit <= 0 || totalCredit <= 0) return false;
+        if (Math.abs(totalDebit - totalCredit) >= 0.01) return false;
+
+        return true;
     }
 
-    function recalcAll(){
-        let totalDebit = 0;
-        let totalCredit = 0;
-        tbody.querySelectorAll('.line-item-row').forEach(function(row){
-            totalDebit += parseFloat(row.querySelector('.debit-input').value) || 0;
+    /* -- recalculate totals + live status + enable/disable submit ------- */
+    function recalcAll() {
+        let totalDebit = 0, totalCredit = 0;
+        tbody.querySelectorAll('.line-item-row').forEach(function(row) {
+            totalDebit  += parseFloat(row.querySelector('.debit-input').value)  || 0;
             totalCredit += parseFloat(row.querySelector('.credit-input').value) || 0;
         });
-        document.getElementById('jf_TotalDebit').textContent = totalDebit.toFixed(2);
+        document.getElementById('jf_TotalDebit').textContent  = totalDebit.toFixed(2);
         document.getElementById('jf_TotalCredit').textContent = totalCredit.toFixed(2);
-        const diff = totalDebit - totalCredit;
+
+        const diff   = totalDebit - totalCredit;
         const diffEl = document.getElementById('jf_Difference');
         diffEl.textContent = diff.toFixed(2);
-        diffEl.classList.toggle('balanced', Math.abs(diff) < 0.01 && totalDebit > 0);
+        diffEl.classList.toggle('balanced',   Math.abs(diff) < 0.01 && totalDebit > 0);
         diffEl.classList.toggle('unbalanced', Math.abs(diff) >= 0.01);
+
+        const statusEl = document.getElementById('jf_BalanceStatus');
+        if (totalDebit === 0 && totalCredit === 0) {
+            statusEl.textContent = '\u2014';
+            statusEl.className = 'due-display';
+        } else if (Math.abs(diff) < 0.01 && totalDebit > 0) {
+            statusEl.textContent = '\u2713 Balanced';
+            statusEl.className = 'due-display balanced';
+        } else {
+            statusEl.textContent = '\u2717 Not Balanced';
+            statusEl.className = 'due-display unbalanced';
+        }
+
+        submitBtn.disabled = !isFormValid();
     }
 
+    /* -- init + add line ------------------------------------------------ */
     tbody.querySelectorAll('.line-item-row').forEach(wireRow);
 
-    document.getElementById('addLineBtn').addEventListener('click', function(){
+    document.getElementById('addLineBtn').addEventListener('click', function() {
         const template = tbody.querySelector('.line-item-row').cloneNode(true);
         template.querySelector('.account-name-input').value = '';
-        template.querySelector('.account-type-select').value = '';
+        const badge = template.querySelector('.acct-status-badge');
+        if (badge) badge.style.display = 'none';
+        template.querySelector('.account-type-select').value    = '';
         template.querySelector('.account-type-select').disabled = false;
-        template.querySelector('.debit-input').value = '';
+        template.querySelector('.debit-input').value  = '';
         template.querySelector('.credit-input').value = '';
         tbody.appendChild(template);
         wireRow(template);
         renumber();
+        recalcAll();
+        template.querySelector('.account-name-input').focus();
     });
 
-    recalcAll();
+    dateInput.addEventListener('input', recalcAll);
+    descInput.addEventListener('input', recalcAll);
+
+    recalcAll(); // initial state — button starts disabled
 })();
 <?php endif; ?>
+
 
 <?php if ($section === 'accounts'): ?>
 (function(){
@@ -1665,12 +2228,36 @@ function showToast(message){
 })();
 <?php endif; ?>
 
-<?php if ($justSaved || $justVoided || $justRenamed): ?>
+<?php if ($section === 'payments'): ?>
+(function(){
+    const overlay = document.getElementById('paymentReversalModalOverlay');
+    const id = document.getElementById('pr_PaymentID');
+    const reference = document.getElementById('pr_Reference');
+    const amount = document.getElementById('pr_ReversalAmount');
+    function close(){ overlay.classList.remove('show'); }
+    document.querySelectorAll('.reverse-payment-btn').forEach(function(btn){
+        btn.addEventListener('click', function(){
+            id.value = btn.dataset.id;
+            reference.textContent = btn.dataset.reference;
+            amount.value = btn.dataset.remaining;
+            amount.max = btn.dataset.remaining;
+            overlay.classList.add('show');
+        });
+    });
+    document.getElementById('paymentReversalCloseBtn').addEventListener('click', close);
+    document.getElementById('paymentReversalCancelBtn').addEventListener('click', close);
+    overlay.addEventListener('click', function(e){ if (e.target === overlay) close(); });
+    document.addEventListener('keydown', function(e){ if (e.key === 'Escape') close(); });
+})();
+<?php endif; ?>
+
+<?php if ($justSaved || $justVoided || $justRenamed || $justPaymentReversed): ?>
 (function(){
     let message = 'Saved successfully.';
     <?php if ($justVoided): ?>message = 'Reversing entry posted successfully.';<?php endif; ?>
     <?php if ($justRenamed): ?>message = 'Account renamed successfully.';<?php endif; ?>
     <?php if ($justSaved): ?>message = 'Journal entry posted successfully.';<?php endif; ?>
+    <?php if ($justPaymentReversed): ?>message = 'Payment reversal recorded successfully.';<?php endif; ?>
     showToast(message);
 })();
 <?php endif; ?>

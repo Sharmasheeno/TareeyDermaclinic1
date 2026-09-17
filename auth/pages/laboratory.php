@@ -431,7 +431,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $formAction = (string) ($_POST['form_action'] ?? 'save');
 
         if ($formAction === 'save_service') {
-            tdc_forbidden();
+            // Service catalogue management belongs in Setup → Laboratory Services.
+            // Redirect to setup without processing, preserving CSRF safety.
+            tdc_require_permission('setup.laboratory.manage');
+            header('Location: setup.php?section=laboratory');
+            exit;
             $serviceId = ctype_digit((string)($_POST['ServiceID'] ?? '')) ? (int)$_POST['ServiceID'] : 0;
             $serviceName = trim((string)($_POST['ServiceName'] ?? ''));
             $category = trim((string)($_POST['Category'] ?? ''));
@@ -533,6 +537,12 @@ if ($labBills !== []) {
 }
 
 $hasActiveFilters = $search !== '' || $resultFilter !== '' || $paymentFilter !== '';
+
+// --- 10C. Active services count for empty-state context ------------------
+// Used by the empty state to guide lab staff and SuperAdmins correctly.
+$activeLabServiceCount = (int) tdc_scalar($pdo, 'SELECT COUNT(*) FROM labservices WHERE IsActive=1');
+
+
 
 // =======================================================================
 // SECTION 11 — View data
@@ -637,7 +647,7 @@ $justDeleted = isset($_GET['deleted']);
             </select>
             <button type="submit" class="btn btn-primary">Search</button>
             <?php if ($hasActiveFilters): ?>
-                <a href="laboratory.php" class="clear-filters">Clear filters</a>
+                <a href="laboratory.php" class="btn btn-secondary clear-filters">Clear filters</a>
             <?php endif; ?>
         </form>
     </div>
@@ -652,8 +662,22 @@ $justDeleted = isset($_GET['deleted']);
                 </tr>
             </thead>
             <tbody>
-                <?php if (empty($labBills)): ?>
-                <?= tdc_empty_state('flask', 'No laboratory bills found', ($hasActiveFilters ? 'No records match the current filters.' : 'No records to show yet.') . ($isLabStaff ? ' Doctor requests will appear here, including orders awaiting payment.' : ''), '', $canManage ? 10 : 9) ?>
+                <?php if (empty($labBills)):
+                    if ($hasActiveFilters) {
+                        $emptyTitle = 'No matching laboratory requests';
+                        $emptyMsg   = 'No records match the current filters.';
+                    } elseif ($activeLabServiceCount === 0) {
+                        $emptyTitle = 'No laboratory services configured';
+                        $emptyMsg   = $isSuperAdmin
+                            ? 'Go to Setup → Laboratory Services to create the test catalogue before doctors can request tests.'
+                            : 'No laboratory services are configured yet. Ask a SuperAdmin to configure laboratory services first.';
+                    } else {
+                        $emptyTitle = 'No laboratory requests';
+                        $emptyMsg   = 'No laboratory requests have been created yet. Doctors order tests from the Doctor Workspace during a paid consultation. Paid requests will appear here for processing.';
+                    }
+                ?>
+                <?= tdc_empty_state('flask', $emptyTitle, $emptyMsg, $isSuperAdmin && $activeLabServiceCount === 0 ? 'setup.php?section=laboratory' : '', $canManage ? 10 : 9) ?>
+
                 <?php else: foreach ($labBills as $l): ?>
                 <tr>
                     <td><?= tdc_e($l['LaboratoryID']) ?></td>
@@ -671,7 +695,7 @@ $justDeleted = isset($_GET['deleted']);
                     <?php if ($canManage): ?>
                     <td>
                         <div class="row-actions">
-                            <?php if ($canEnterResult && $l['WorkflowStatus'] === 'In Progress'): ?><button type="button" class="btn-sm edit-lab-btn"
+                            <?php if ($canEnterResult && $l['WorkflowStatus'] === 'In Progress'): ?><button type="button" class="btn-success btn-sm edit-lab-btn"
                                 data-id="<?= tdc_e($l['LaboratoryID']) ?>"
                                 data-patientid="<?= (int) $l['PatientID'] ?>"
                                 data-patientlabel="<?= tdc_e($l['PatientName'] . ($l['PatientPhone'] ? ' — ' . $l['PatientPhone'] : '')) ?>"

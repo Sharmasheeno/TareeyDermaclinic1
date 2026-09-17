@@ -136,7 +136,31 @@ CREATE TABLE IF NOT EXISTS `specializations` (
 -- Link doctor records to login accounts (Setup "Users", doctor workspace).
 ALTER TABLE `doctors`
     ADD COLUMN IF NOT EXISTS `UserID` INT(11) DEFAULT NULL AFTER `DoctorID`;
+ALTER TABLE `doctors`
+    ADD COLUMN IF NOT EXISTS `WorkingDays` VARCHAR(20) NOT NULL DEFAULT '1,2,3,4,5' AFTER `JoinedDate`,
+    ADD COLUMN IF NOT EXISTS `WorkStartTime` TIME NOT NULL DEFAULT '09:00:00' AFTER `WorkingDays`,
+    ADD COLUMN IF NOT EXISTS `WorkEndTime` TIME NOT NULL DEFAULT '17:00:00' AFTER `WorkStartTime`;
 CREATE UNIQUE INDEX IF NOT EXISTS `uq_doctors_user` ON `doctors` (`UserID`);
+
+-- Manual payment methods are configurable labels; this is not an online
+-- payment integration. Preserve existing values while allowing methods such
+-- as EVC Plus, Cheque, or Bank Transfer.
+ALTER TABLE `payments`
+    MODIFY COLUMN `PaymentMethod` VARCHAR(80) NOT NULL DEFAULT 'Cash';
+
+CREATE TABLE IF NOT EXISTS `reference_sequences` (
+    `SequenceKey` VARCHAR(80) NOT NULL,
+    `NextValue` BIGINT NOT NULL DEFAULT 0,
+    PRIMARY KEY (`SequenceKey`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+CREATE TABLE IF NOT EXISTS `login_attempts` (
+    `AttemptKey` VARCHAR(191) NOT NULL,
+    `FailedCount` INT NOT NULL DEFAULT 0,
+    `FirstAttempt` DATETIME NOT NULL,
+    `BlockedUntil` DATETIME NULL,
+    `UpdatedAt` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`AttemptKey`), KEY `idx_login_attempts_blocked` (`BlockedUntil`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 CREATE INDEX IF NOT EXISTS `idx_users_role_id` ON `users` (`role_id`);
 
@@ -153,12 +177,19 @@ ALTER TABLE `prescriptions`
 -- columns that the Pharmacy purchases workflow writes.
 ALTER TABLE `inventory`
     ADD COLUMN IF NOT EXISTS `DefaultPurchaseUnit` VARCHAR(50) NULL DEFAULT NULL,
-    ADD COLUMN IF NOT EXISTS `UnitsPerPackage` INT NULL DEFAULT NULL;
+    ADD COLUMN IF NOT EXISTS `UnitsPerPackage` INT NULL DEFAULT NULL,
+    ADD COLUMN IF NOT EXISTS `LastAcquisitionCostPerUnit` DECIMAL(10,4) NULL DEFAULT NULL;
 
 ALTER TABLE `purchases`
+    ADD COLUMN IF NOT EXISTS `ItemID` VARCHAR(50) NULL AFTER `SupplierID`,
     ADD COLUMN IF NOT EXISTS `ReferenceNumber` VARCHAR(100) NULL DEFAULT NULL,
     ADD COLUMN IF NOT EXISTS `Discount` DECIMAL(10,2) NOT NULL DEFAULT 0.00,
     ADD COLUMN IF NOT EXISTS `VATAmount` DECIMAL(10,2) NOT NULL DEFAULT 0.00;
+ALTER TABLE `purchases`
+    ADD COLUMN IF NOT EXISTS `ExpiryDate` DATE NULL DEFAULT NULL AFTER `SellingPrice`;
+SET @tdc_idx_purchase_item_date = (SELECT COUNT(*) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='purchases' AND INDEX_NAME='idx_purchases_item_date');
+SET @tdc_sql_purchase_item_date = IF(@tdc_idx_purchase_item_date=0, 'ALTER TABLE `purchases` ADD KEY `idx_purchases_item_date` (`ItemID`,`PurchaseDate`)', 'SELECT 1');
+PREPARE tdc_stmt_purchase_item_date FROM @tdc_sql_purchase_item_date; EXECUTE tdc_stmt_purchase_item_date; DEALLOCATE PREPARE tdc_stmt_purchase_item_date;
 
 -- Guarded core-workflow columns (no-ops on a database already imported from
 -- the current tareydermaclinic.sql dump; they repair older databases).
@@ -177,6 +208,18 @@ ALTER TABLE `laboratory`
     ADD COLUMN IF NOT EXISTS `WorkflowStatus` ENUM('Requested','Awaiting Payment','Ready','In Progress','Completed','Cancelled') NOT NULL DEFAULT 'Awaiting Payment' AFTER `PaymentStatus`,
     ADD COLUMN IF NOT EXISTS `ClinicalResult` TEXT DEFAULT NULL AFTER `Result`,
     ADD COLUMN IF NOT EXISTS `ReviewedAt` DATETIME DEFAULT NULL AFTER `ResultDate`;
+
+ALTER TABLE `pharmacysales`
+    ADD COLUMN IF NOT EXISTS `PatientID` INT(11) DEFAULT NULL AFTER `CustomerPhone`,
+    ADD COLUMN IF NOT EXISTS `VisitID` INT(11) DEFAULT NULL AFTER `PatientID`,
+    ADD COLUMN IF NOT EXISTS `CostPerUnitSnapshot` DECIMAL(10,4) NULL DEFAULT NULL AFTER `LineTotal`,
+    ADD COLUMN IF NOT EXISTS `LineCost` DECIMAL(10,2) NULL DEFAULT NULL AFTER `CostPerUnitSnapshot`;
+SET @tdc_idx_sales_patient = (SELECT COUNT(*) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='pharmacysales' AND INDEX_NAME='idx_pharmacy_sales_patient');
+SET @tdc_sql_sales_patient = IF(@tdc_idx_sales_patient=0, 'ALTER TABLE `pharmacysales` ADD KEY `idx_pharmacy_sales_patient` (`PatientID`)', 'SELECT 1');
+PREPARE tdc_stmt_sales_patient FROM @tdc_sql_sales_patient; EXECUTE tdc_stmt_sales_patient; DEALLOCATE PREPARE tdc_stmt_sales_patient;
+SET @tdc_idx_sales_visit = (SELECT COUNT(*) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='pharmacysales' AND INDEX_NAME='idx_pharmacy_sales_visit');
+SET @tdc_sql_sales_visit = IF(@tdc_idx_sales_visit=0, 'ALTER TABLE `pharmacysales` ADD KEY `idx_pharmacy_sales_visit` (`VisitID`)', 'SELECT 1');
+PREPARE tdc_stmt_sales_visit FROM @tdc_sql_sales_visit; EXECUTE tdc_stmt_sales_visit; DEALLOCATE PREPARE tdc_stmt_sales_visit;
 
 -- ----------------------------------------------------------------------------
 -- 3. Seed data (idempotent; unique keys make INSERT IGNORE a no-op on rerun).
@@ -229,16 +272,20 @@ INSERT IGNORE INTO `permissions` (`PermissionKey`,`ModuleName`,`ResourceName`,`A
 ('pharmacy.dispense','Pharmacy','Prescriptions','dispense','Dispense prescriptions'),
 ('pharmacy.pos','Pharmacy','Point of sale','sell','Use point of sale'),
 ('pharmacy.purchases.manage','Pharmacy','Purchases','manage','Manage purchases'),
+('pharmacy.purchase_cost.view','Pharmacy','Purchase costs','view','View confidential supplier acquisition costs'),
 ('pharmacy.inventory.view','Inventory','Inventory','view','View medicine inventory'),
 ('pharmacy.inventory.manage','Inventory','Inventory','manage','Manage medicine inventory'),
 ('pharmacy_billing.view','Pharmacy Billing','Pharmacy bills','view','View pharmacy billing'),
 ('pharmacy_billing.payment','Pharmacy Billing','Pharmacy payments','receive','Receive pharmacy payments'),
 ('accounting.view','Accounting','Accounting','view','View accounting'),
 ('accounting.transactions.view','Accounting','Transactions','view','View accounting transactions'),
+('accounting.journal.post','Accounting','Advanced accounting','post','Post manual journal entries'),
+('accounting.journal.reverse','Accounting','Advanced accounting','reverse','Reverse manual journal entries'),
 ('accounting.expenses.create','Accounting','Expenses','create','Create expense entries'),
 ('accounting.expenses.edit','Accounting','Expenses','edit','Reverse or correct expense entries'),
 ('reports.view','Reports','Reports','view','View reports'),
 ('reports.export','Reports','Reports','export','Export reports'),
+('reports.income.cost.view','Reports','Income Statement','view cost','View aggregate pharmacy cost and profit in the Income Statement'),
 ('setup.view','Setup','Setup','view','Open system Setup'),
 ('setup.organization.manage','Setup','Organization','manage','Manage clinic organization'),
 ('setup.users.manage','Users','Users','manage','Manage user accounts'),
@@ -266,6 +313,16 @@ JOIN `permissions` p ON p.`PermissionKey` IN (
     'dashboard.view','reception.view','patients.view','patients.create','patients.edit','patients.history','patients.import','patients.export',
     'visits.view','visits.create','visits.edit','visits.assign','consultations.view','consultations.create',
     'lab_billing.view','lab_billing.payment','pharmacy_billing.view','pharmacy_billing.payment'
+)
+WHERE r.`RoleKey` = 'receptionuser';
+
+-- Keep production SQL equivalent to auth/includes/operational-role-defaults.php.
+INSERT IGNORE INTO `rolepermissions` (`RoleID`,`PermissionID`)
+SELECT r.`RoleID`, p.`PermissionID`
+FROM `roles` r JOIN `permissions` p ON p.`PermissionKey` IN (
+    'pharmacy.view','pharmacy.prescriptions.view','pharmacy.dispense','pharmacy.pos',
+    'pharmacy.inventory.view','pharmacy.inventory.manage',
+    'laboratory.view','laboratory.process','laboratory.result.create','laboratory.result.edit','laboratory.complete','laboratory.results.view'
 )
 WHERE r.`RoleKey` = 'receptionuser';
 
@@ -301,7 +358,7 @@ INSERT IGNORE INTO `rolepermissions` (`RoleID`,`PermissionID`)
 SELECT r.`RoleID`, p.`PermissionID`
 FROM `roles` r
 JOIN `permissions` p ON p.`PermissionKey` IN (
-    'pharmacy.inventory.view','pharmacy.inventory.manage','pharmacy.purchases.manage',
+    'pharmacy.inventory.view','pharmacy.inventory.manage',
     'laboratory.results.view','patients.delete',
     'accounting.view','accounting.transactions.view','accounting.expenses.create','accounting.expenses.edit',
     'reports.view','reports.export'
@@ -316,11 +373,17 @@ WHERE r.`RoleKey` = 'receptionuser'
   AND (p.`PermissionKey` LIKE 'setup.%'
        OR p.`PermissionKey` IN ('doctor.workspace','doctors.manage','doctors.import',
             'consultations.edit','consultations.complete','pharmacy.prescription.create',
-            'laboratory.request'));
+            'pharmacy.purchases.manage','pharmacy.purchase_cost.view','laboratory.request'));
 
 -- 3f. Standard payment methods.
-INSERT IGNORE INTO `paymentmethods` (`MethodName`,`DisplayOrder`) VALUES
-('Cash',1),('Card',2),('Mobile Money',3),('Bank',4),('Other',5);
+INSERT IGNORE INTO `paymentmethods` (`MethodName`,`Description`,`DisplayOrder`) VALUES
+('Cash','Physical cash received at the cashier desk.',1),
+('EVC Plus','Manual EVC Plus mobile wallet transfer (recorded by hand).',2),
+('Mobile Money','Manual mobile money transfer (recorded by hand).',3),
+('Bank Transfer','Manual bank transfer (recorded by hand).',4),
+('Card','Manual card terminal settlement (recorded by hand).',5),
+('Cheque','Manual cheque deposit (recorded by hand).',6),
+('Other','Any other manual settlement method.',7);
 
 -- 3g. Specializations from existing doctor records.
 INSERT IGNORE INTO `specializations` (`SpecializationName`)

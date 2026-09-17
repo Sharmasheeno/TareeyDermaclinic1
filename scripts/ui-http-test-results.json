@@ -17,47 +17,32 @@
   {
     "name": "doctors.php?download=doctors superuser",
     "ok": true,
-    "detail": "status=200; attachment; filename=\"doctors-2026-09-16.csv\"; rows=4"
+    "detail": "status=200; attachment; filename=\"doctors-2026-09-17.csv\"; rows=4"
   },
   {
     "name": "patients.php?download=patients superuser",
     "ok": true,
-    "detail": "status=200; attachment; filename=\"patients-2026-09-16.csv\"; rows=6"
+    "detail": "status=200; attachment; filename=\"patients-2026-09-17.csv\"; rows=6"
   },
   {
     "name": "setup.php?section=users&download=users superuser",
     "ok": true,
-    "detail": "status=200; attachment; filename=\"users-2026-09-16.csv\"; rows=10"
+    "detail": "status=200; attachment; filename=\"users-2026-09-17.csv\"; rows=10"
   },
   {
     "name": "reception.php?section=consultations&export=csv superuser",
     "ok": true,
-    "detail": "status=200; attachment; filename=\"doctor-waiting-2026-09-16.csv\"; rows=6"
+    "detail": "status=200; attachment; filename=\"doctor-waiting-2026-09-17.csv\"; rows=6"
   },
   {
     "name": "pharmacy.php?section=purchases&export=csv superuser",
     "ok": true,
-    "detail": "status=200; attachment; filename=\"purchase-orders-2026-09-16.csv\"; rows=2"
+    "detail": "status=200; attachment; filename=\"purchase-orders-2026-09-17.csv\"; rows=2"
   },
   {
     "name": "doctors.php?workspace=1&export=csv doctoruser",
     "ok": true,
     "detail": "status=200; attachment; filename=\"doctor-waiting.csv\"; rows=5"
-  },
-  {
-    "name": "pharmacy.php?section=purchases&export=csv receptionuser",
-    "ok": true,
-    "detail": "status=200; attachment; filename=\"purchase-orders.csv\"; rows=2"
-  },
-  {
-    "name": "receptionuser purchase privacy",
-    "ok": true,
-    "detail": ""
-  },
-  {
-    "name": "receptionuser purchase report denied",
-    "ok": true,
-    "detail": ""
   },
   {
     "name": "pharmacy.php?section=purchases&export=csv pharmacyuser",
@@ -97,7 +82,7 @@
   {
     "name": "reports.php?section=patients&export=csv superuser",
     "ok": true,
-    "detail": "status=200; attachment; filename=\"tarey-patients-2026-09-16.csv\"; rows=7"
+    "detail": "status=200; attachment; filename=\"tarey-patients-2026-09-17.csv\"; rows=7"
   },
   {
     "name": "patients CSV rows match header",
@@ -112,7 +97,7 @@
   {
     "name": "reports.php?section=visits&export=csv superuser",
     "ok": true,
-    "detail": "status=200; attachment; filename=\"tarey-visits-2026-09-16.csv\"; rows=7"
+    "detail": "status=200; attachment; filename=\"tarey-visits-2026-09-17.csv\"; rows=7"
   },
   {
     "name": "visits CSV rows match header",
@@ -127,7 +112,7 @@
   {
     "name": "reports.php?section=doctor-consultations&export=csv superuser",
     "ok": true,
-    "detail": "status=200; attachment; filename=\"tarey-doctor-consultations-2026-09-16.csv\"; rows=5"
+    "detail": "status=200; attachment; filename=\"tarey-doctor-consultations-2026-09-17.csv\"; rows=5"
   },
   {
     "name": "doctor-consultations CSV rows match header",
@@ -142,7 +127,7 @@
   {
     "name": "reports.php?section=billing&export=csv superuser",
     "ok": true,
-    "detail": "status=200; attachment; filename=\"tarey-billing-2026-09-16.csv\"; rows=18"
+    "detail": "status=200; attachment; filename=\"tarey-billing-2026-09-17.csv\"; rows=21"
   },
   {
     "name": "billing CSV rows match header",
@@ -155,9 +140,14 @@
     "detail": "status=200"
   },
   {
+    "name": "payment report uses confirmed payment ledger",
+    "ok": true,
+    "detail": ""
+  },
+  {
     "name": "reports.php?section=payments&export=csv superuser",
     "ok": true,
-    "detail": "status=200; attachment; filename=\"tarey-payments-2026-09-16.csv\"; rows=18"
+    "detail": "status=200; attachment; filename=\"tarey-payments-2026-09-17.csv\"; rows=20"
   },
   {
     "name": "payments CSV rows match header",
@@ -172,7 +162,7 @@
   {
     "name": "reports.php?section=outstanding&export=csv superuser",
     "ok": true,
-    "detail": "status=200; attachment; filename=\"tarey-outstanding-2026-09-16.csv\"; rows=5"
+    "detail": "status=200; attachment; filename=\"tarey-outstanding-2026-09-17.csv\"; rows=7"
   },
   {
     "name": "outstanding CSV rows match header",
@@ -187,7 +177,7 @@
   {
     "name": "reports.php?section=pharmacy-sales&export=csv superuser",
     "ok": true,
-    "detail": "status=200; attachment; filename=\"tarey-pharmacy-sales-2026-09-16.csv\"; rows=7"
+    "detail": "status=200; attachment; filename=\"tarey-pharmacy-sales-2026-09-17.csv\"; rows=12"
   },
   {
     "name": "pharmacy-sales CSV rows match header",
@@ -202,7 +192,7 @@
   {
     "name": "reports.php?section=pharmacy-purchases&export=csv superuser",
     "ok": true,
-    "detail": "status=200; attachment; filename=\"tarey-pharmacy-purchases-2026-09-16.csv\"; rows=3"
+    "detail": "status=200; attachment; filename=\"tarey-pharmacy-purchases-2026-09-17.csv\"; rows=3"
   },
   {
     "name": "pharmacy-purchases CSV rows match header",
@@ -215,9 +205,14 @@
     "detail": "status=200"
   },
   {
+    "name": "pharmacy-stock identifies current snapshot",
+    "ok": true,
+    "detail": ""
+  },
+  {
     "name": "reports.php?section=pharmacy-stock&export=csv superuser",
     "ok": true,
-    "detail": "status=200; attachment; filename=\"tarey-pharmacy-stock-2026-09-16.csv\"; rows=9"
+    "detail": "status=200; attachment; filename=\"tarey-pharmacy-stock-2026-09-17.csv\"; rows=10"
   },
   {
     "name": "pharmacy-stock CSV rows match header",
@@ -230,9 +225,14 @@
     "detail": "status=200"
   },
   {
+    "name": "pharmacy-low-stock identifies current snapshot",
+    "ok": true,
+    "detail": ""
+  },
+  {
     "name": "reports.php?section=pharmacy-low-stock&export=csv superuser",
     "ok": true,
-    "detail": "status=200; attachment; filename=\"tarey-pharmacy-low-stock-2026-09-16.csv\"; rows=2"
+    "detail": "status=200; attachment; filename=\"tarey-pharmacy-low-stock-2026-09-17.csv\"; rows=2"
   },
   {
     "name": "pharmacy-low-stock CSV rows match header",
@@ -245,9 +245,14 @@
     "detail": "status=200"
   },
   {
+    "name": "pharmacy-expiry identifies current snapshot",
+    "ok": true,
+    "detail": ""
+  },
+  {
     "name": "reports.php?section=pharmacy-expiry&export=csv superuser",
     "ok": true,
-    "detail": "status=200; attachment; filename=\"tarey-pharmacy-expiry-2026-09-16.csv\"; rows=2"
+    "detail": "status=200; attachment; filename=\"tarey-pharmacy-expiry-2026-09-17.csv\"; rows=2"
   },
   {
     "name": "pharmacy-expiry CSV rows match header",
@@ -262,7 +267,7 @@
   {
     "name": "reports.php?section=lab-orders&export=csv superuser",
     "ok": true,
-    "detail": "status=200; attachment; filename=\"tarey-lab-orders-2026-09-16.csv\"; rows=8"
+    "detail": "status=200; attachment; filename=\"tarey-lab-orders-2026-09-17.csv\"; rows=6"
   },
   {
     "name": "lab-orders CSV rows match header",
@@ -277,7 +282,7 @@
   {
     "name": "reports.php?section=lab-completed&export=csv superuser",
     "ok": true,
-    "detail": "status=200; attachment; filename=\"tarey-lab-completed-2026-09-16.csv\"; rows=6"
+    "detail": "status=200; attachment; filename=\"tarey-lab-completed-2026-09-17.csv\"; rows=4"
   },
   {
     "name": "lab-completed CSV rows match header",
@@ -292,7 +297,7 @@
   {
     "name": "reports.php?section=lab-pending&export=csv superuser",
     "ok": true,
-    "detail": "status=200; attachment; filename=\"tarey-lab-pending-2026-09-16.csv\"; rows=4"
+    "detail": "status=200; attachment; filename=\"tarey-lab-pending-2026-09-17.csv\"; rows=4"
   },
   {
     "name": "lab-pending CSV rows match header",
@@ -307,7 +312,7 @@
   {
     "name": "reports.php?section=lab-revenue&export=csv superuser",
     "ok": true,
-    "detail": "status=200; attachment; filename=\"tarey-lab-revenue-2026-09-16.csv\"; rows=7"
+    "detail": "status=200; attachment; filename=\"tarey-lab-revenue-2026-09-17.csv\"; rows=6"
   },
   {
     "name": "lab-revenue CSV rows match header",
@@ -322,7 +327,7 @@
   {
     "name": "reports.php?section=revenue-by-account&export=csv superuser",
     "ok": true,
-    "detail": "status=200; attachment; filename=\"tarey-revenue-by-account-2026-09-16.csv\"; rows=5"
+    "detail": "status=200; attachment; filename=\"tarey-revenue-by-account-2026-09-17.csv\"; rows=5"
   },
   {
     "name": "revenue-by-account CSV rows match header",
@@ -337,7 +342,7 @@
   {
     "name": "reports.php?section=expenses&export=csv superuser",
     "ok": true,
-    "detail": "status=200; attachment; filename=\"tarey-expenses-2026-09-16.csv\"; rows=3"
+    "detail": "status=200; attachment; filename=\"tarey-expenses-2026-09-17.csv\"; rows=3"
   },
   {
     "name": "expenses CSV rows match header",
@@ -352,7 +357,7 @@
   {
     "name": "reports.php?section=transactions&export=csv superuser",
     "ok": true,
-    "detail": "status=200; attachment; filename=\"tarey-transactions-2026-09-16.csv\"; rows=18"
+    "detail": "status=200; attachment; filename=\"tarey-transactions-2026-09-17.csv\"; rows=40"
   },
   {
     "name": "transactions CSV rows match header",
@@ -365,9 +370,14 @@
     "detail": "status=200"
   },
   {
+    "name": "income statement uses printable paper markup",
+    "ok": true,
+    "detail": ""
+  },
+  {
     "name": "reports.php?section=income-statement&export=csv superuser",
     "ok": true,
-    "detail": "status=200; attachment; filename=\"tarey-income-statement-2026-09-16.csv\"; rows=8"
+    "detail": "status=200; attachment; filename=\"tarey-income-statement-2026-09-17.csv\"; rows=9"
   },
   {
     "name": "income-statement CSV rows match header",
@@ -380,12 +390,27 @@
     "detail": "status=200"
   },
   {
+    "name": "balance sheet uses printable paper markup",
+    "ok": true,
+    "detail": ""
+  },
+  {
     "name": "reports.php?section=balance-sheet&export=csv superuser",
     "ok": true,
-    "detail": "status=200; attachment; filename=\"tarey-balance-sheet-2026-09-16.csv\"; rows=6"
+    "detail": "status=200; attachment; filename=\"tarey-balance-sheet-2026-09-17.csv\"; rows=9"
   },
   {
     "name": "balance-sheet CSV rows match header",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "reports.php?section=income-statement&export=csv receptionuser",
+    "ok": true,
+    "detail": "status=200; attachment; filename=\"tarey-income-statement-2026-09-17.csv\"; rows=7"
+  },
+  {
+    "name": "reception income CSV omits confidential COGS",
     "ok": true,
     "detail": ""
   },
@@ -480,6 +505,51 @@
     "detail": "status=200"
   },
   {
+    "name": "accounts-list page",
+    "ok": true,
+    "detail": "status=200"
+  },
+  {
+    "name": "account-detail-pay-cash page",
+    "ok": true,
+    "detail": "status=200"
+  },
+  {
+    "name": "PAY-CASH view renders account detail",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "account-detail-revenue page",
+    "ok": true,
+    "detail": "status=200"
+  },
+  {
+    "name": "REV-CONSULT view renders account detail",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "account-detail-invalid page",
+    "ok": true,
+    "detail": "status=200"
+  },
+  {
+    "name": "Invalid account view is handled",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "Account list remains separate from detail",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "accounting.php?section=accounts&view=PAY-CASH&export=csv superuser",
+    "ok": true,
+    "detail": "status=200; attachment; filename=\"account-PAY-CASH-activity.csv\"; rows=14"
+  },
+  {
     "name": "multipart import doctors.php",
     "ok": true,
     "detail": "status=302"
@@ -487,7 +557,7 @@
   {
     "name": "doctors.php?download=doctors superuser",
     "ok": true,
-    "detail": "status=200; attachment; filename=\"doctors-2026-09-16.csv\"; rows=5"
+    "detail": "status=200; attachment; filename=\"doctors-2026-09-17.csv\"; rows=5"
   },
   {
     "name": "import persisted doctors.php",
@@ -507,7 +577,7 @@
   {
     "name": "patients.php?download=patients superuser",
     "ok": true,
-    "detail": "status=200; attachment; filename=\"patients-2026-09-16.csv\"; rows=7"
+    "detail": "status=200; attachment; filename=\"patients-2026-09-17.csv\"; rows=7"
   },
   {
     "name": "import persisted patients.php",
@@ -527,7 +597,7 @@
   {
     "name": "setup.php?section=users&download=users superuser",
     "ok": true,
-    "detail": "status=200; attachment; filename=\"users-2026-09-16.csv\"; rows=11"
+    "detail": "status=200; attachment; filename=\"users-2026-09-17.csv\"; rows=11"
   },
   {
     "name": "import persisted setup.php?section=users",
@@ -586,6 +656,66 @@
   },
   {
     "name": "pharmacyuser medicine edit persisted",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "reception operational pharmacy.php",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "reception operational laboratory.php",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "POS defaults to New Sale workspace",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "POS Sales History view works",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "reception billing consultations",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "reception billing laboratory",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "reception billing pharmacy",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "reception consultation payment uses configured methods",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "POS receipt paper preview loads",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "POS receipt uses clinic letterhead",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "POS receipt uses clinical columns and hides purchase cost",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "POS receipt resolves prescription and doctor details",
     "ok": true,
     "detail": ""
   },

@@ -10,12 +10,22 @@
     "detail": ""
   },
   {
+    "name": "inventory script 2",
+    "ok": true,
+    "detail": ""
+  },
+  {
     "name": "reports script 0",
     "ok": true,
     "detail": ""
   },
   {
     "name": "reports script 1",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "reports script 2",
     "ok": true,
     "detail": ""
   },
@@ -70,14 +80,19 @@
     "detail": ""
   },
   {
+    "name": "permissions-edit script 4",
+    "ok": true,
+    "detail": ""
+  },
+  {
     "name": "inventory 1920px",
     "ok": true,
-    "detail": "{\"overflow\":false,\"scroll\":1905,\"width\":1920,\"modal\":true,\"primary\":true,\"success\":true}"
+    "detail": "{\"overflow\":false,\"scroll\":1920,\"width\":1920,\"modal\":true,\"primary\":true,\"success\":true}"
   },
   {
     "name": "inventory 1366px",
     "ok": true,
-    "detail": "{\"overflow\":false,\"scroll\":1351,\"width\":1366,\"modal\":true,\"primary\":true,\"success\":true}"
+    "detail": "{\"overflow\":false,\"scroll\":1366,\"width\":1366,\"modal\":true,\"primary\":true,\"success\":true}"
   },
   {
     "name": "inventory 1080px",

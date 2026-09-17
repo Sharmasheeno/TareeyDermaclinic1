@@ -31,10 +31,10 @@ function tdc_is_root_superadmin(): bool
     return (string) ($_SESSION['role'] ?? '') === 'superuser';
 }
 
-/** Acquisition costs are role-exclusive, even for custom permission grants. */
+/** Acquisition costs require the dedicated confidential-cost permission. */
 function tdc_can_view_purchase_cost(): bool
 {
-    return ($_SESSION['role'] ?? '') === 'superuser';
+    return tdc_can('pharmacy.purchase_cost.view');
 }
 
 function tdc_can(string $permissionKey): bool
@@ -92,7 +92,7 @@ function tdc_payment_methods(PDO $pdo, bool $includeInactive = false): array
         $sql = 'SELECT PaymentMethodID,MethodName,Description,IsActive FROM paymentmethods' . ($includeInactive ? '' : ' WHERE IsActive=1') . ' ORDER BY DisplayOrder,MethodName';
         return $pdo->query($sql)->fetchAll();
     } catch (PDOException) {
-        return array_map(static fn(string $name): array => ['PaymentMethodID'=>0,'MethodName'=>$name,'Description'=>null,'IsActive'=>1], ['Cash','Card','Mobile Money','Bank','Other']);
+        return array_map(static fn(string $name): array => ['PaymentMethodID'=>0,'MethodName'=>$name,'Description'=>null,'IsActive'=>1], ['Cash','EVC Plus','Mobile Money','Bank Transfer','Card','Cheque','Other']);
     }
 }
 

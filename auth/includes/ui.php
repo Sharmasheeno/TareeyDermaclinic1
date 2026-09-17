@@ -334,16 +334,16 @@ if (!function_exists('tdc_export_buttons')) {
     {
         $html = '<div class="export-group">';
         if (!empty($links['csv'])) {
-            $html .= '<a class="btn btn-info btn-sm" href="' . tdc_ui_h($links['csv']) . '">' . tdc_icon('download', 14) . '<span>Export CSV</span></a>';
+            $html .= '<a class="btn btn-secondary btn-sm" href="' . tdc_ui_h($links['csv']) . '">' . tdc_icon('download', 14) . '<span>Export CSV</span></a>';
         }
         if (!empty($links['excel'])) {
-            $html .= '<a class="btn btn-info btn-sm" href="' . tdc_ui_h($links['excel']) . '">' . tdc_icon('file-text', 14) . '<span>Excel</span></a>';
+            $html .= '<a class="btn btn-secondary btn-sm" href="' . tdc_ui_h($links['excel']) . '">' . tdc_icon('file-text', 14) . '<span>Excel</span></a>';
         }
         if (!empty($links['pdf'])) {
-            $html .= '<a class="btn btn-info btn-sm" href="' . tdc_ui_h($links['pdf']) . '">' . tdc_icon('file-text', 14) . '<span>PDF</span></a>';
+            $html .= '<a class="btn btn-secondary btn-sm" href="' . tdc_ui_h($links['pdf']) . '">' . tdc_icon('file-text', 14) . '<span>PDF</span></a>';
         }
         if ($withPrint) {
-            $html .= '<button type="button" class="btn btn-info btn-sm" data-print-page>' . tdc_icon('printer', 14) . '<span>Print</span></button>';
+            $html .= '<button type="button" class="btn btn-primary btn-sm" data-print-page>' . tdc_icon('printer', 14) . '<span>Print</span></button>';
         }
         return $html . '</div>';
     }

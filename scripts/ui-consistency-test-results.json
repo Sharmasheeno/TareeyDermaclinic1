@@ -10,12 +10,27 @@
     "detail": ""
   },
   {
+    "name": "dashboard script 2",
+    "ok": true,
+    "detail": ""
+  },
+  {
     "name": "reception script 0",
     "ok": true,
     "detail": ""
   },
   {
     "name": "reception script 1",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "reception script 2",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "reception script 3",
     "ok": true,
     "detail": ""
   },
@@ -30,6 +45,16 @@
     "detail": ""
   },
   {
+    "name": "registration script 2",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "registration script 3",
+    "ok": true,
+    "detail": ""
+  },
+  {
     "name": "waiting script 0",
     "ok": true,
     "detail": ""
@@ -40,12 +65,22 @@
     "detail": ""
   },
   {
+    "name": "waiting script 2",
+    "ok": true,
+    "detail": ""
+  },
+  {
     "name": "schedule script 0",
     "ok": true,
     "detail": ""
   },
   {
     "name": "schedule script 1",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "schedule script 2",
     "ok": true,
     "detail": ""
   },
@@ -65,12 +100,22 @@
     "detail": ""
   },
   {
+    "name": "doctors script 3",
+    "ok": true,
+    "detail": ""
+  },
+  {
     "name": "laboratory script 0",
     "ok": true,
     "detail": ""
   },
   {
     "name": "laboratory script 1",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "laboratory script 2",
     "ok": true,
     "detail": ""
   },
@@ -85,12 +130,22 @@
     "detail": ""
   },
   {
+    "name": "inventory script 2",
+    "ok": true,
+    "detail": ""
+  },
+  {
     "name": "purchase script 0",
     "ok": true,
     "detail": ""
   },
   {
     "name": "purchase script 1",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "purchase script 2",
     "ok": true,
     "detail": ""
   },
@@ -105,12 +160,27 @@
     "detail": ""
   },
   {
+    "name": "purchases script 2",
+    "ok": true,
+    "detail": ""
+  },
+  {
     "name": "pos script 0",
     "ok": true,
     "detail": ""
   },
   {
     "name": "pos script 1",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "pos script 2",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "pos script 3",
     "ok": true,
     "detail": ""
   },
@@ -125,6 +195,11 @@
     "detail": ""
   },
   {
+    "name": "accounting script 2",
+    "ok": true,
+    "detail": ""
+  },
+  {
     "name": "expense script 0",
     "ok": true,
     "detail": ""
@@ -135,12 +210,22 @@
     "detail": ""
   },
   {
+    "name": "expense script 2",
+    "ok": true,
+    "detail": ""
+  },
+  {
     "name": "reports script 0",
     "ok": true,
     "detail": ""
   },
   {
     "name": "reports script 1",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "reports script 2",
     "ok": true,
     "detail": ""
   },
@@ -166,6 +251,11 @@
   },
   {
     "name": "setup script 4",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "setup script 5",
     "ok": true,
     "detail": ""
   },
@@ -220,12 +310,22 @@
     "detail": ""
   },
   {
+    "name": "permissions-edit script 4",
+    "ok": true,
+    "detail": ""
+  },
+  {
     "name": "report-patients script 0",
     "ok": true,
     "detail": ""
   },
   {
     "name": "report-patients script 1",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-patients script 2",
     "ok": true,
     "detail": ""
   },
@@ -240,12 +340,22 @@
     "detail": ""
   },
   {
+    "name": "report-visits script 2",
+    "ok": true,
+    "detail": ""
+  },
+  {
     "name": "report-doctor-consultations script 0",
     "ok": true,
     "detail": ""
   },
   {
     "name": "report-doctor-consultations script 1",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-doctor-consultations script 2",
     "ok": true,
     "detail": ""
   },
@@ -260,12 +370,22 @@
     "detail": ""
   },
   {
+    "name": "report-billing script 2",
+    "ok": true,
+    "detail": ""
+  },
+  {
     "name": "report-payments script 0",
     "ok": true,
     "detail": ""
   },
   {
     "name": "report-payments script 1",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-payments script 2",
     "ok": true,
     "detail": ""
   },
@@ -280,12 +400,22 @@
     "detail": ""
   },
   {
+    "name": "report-outstanding script 2",
+    "ok": true,
+    "detail": ""
+  },
+  {
     "name": "report-pharmacy-sales script 0",
     "ok": true,
     "detail": ""
   },
   {
     "name": "report-pharmacy-sales script 1",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-pharmacy-sales script 2",
     "ok": true,
     "detail": ""
   },
@@ -300,12 +430,22 @@
     "detail": ""
   },
   {
+    "name": "report-pharmacy-purchases script 2",
+    "ok": true,
+    "detail": ""
+  },
+  {
     "name": "report-pharmacy-stock script 0",
     "ok": true,
     "detail": ""
   },
   {
     "name": "report-pharmacy-stock script 1",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-pharmacy-stock script 2",
     "ok": true,
     "detail": ""
   },
@@ -320,12 +460,22 @@
     "detail": ""
   },
   {
+    "name": "report-pharmacy-low-stock script 2",
+    "ok": true,
+    "detail": ""
+  },
+  {
     "name": "report-pharmacy-expiry script 0",
     "ok": true,
     "detail": ""
   },
   {
     "name": "report-pharmacy-expiry script 1",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-pharmacy-expiry script 2",
     "ok": true,
     "detail": ""
   },
@@ -340,12 +490,22 @@
     "detail": ""
   },
   {
+    "name": "report-lab-orders script 2",
+    "ok": true,
+    "detail": ""
+  },
+  {
     "name": "report-lab-completed script 0",
     "ok": true,
     "detail": ""
   },
   {
     "name": "report-lab-completed script 1",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-lab-completed script 2",
     "ok": true,
     "detail": ""
   },
@@ -360,12 +520,22 @@
     "detail": ""
   },
   {
+    "name": "report-lab-pending script 2",
+    "ok": true,
+    "detail": ""
+  },
+  {
     "name": "report-lab-revenue script 0",
     "ok": true,
     "detail": ""
   },
   {
     "name": "report-lab-revenue script 1",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-lab-revenue script 2",
     "ok": true,
     "detail": ""
   },
@@ -380,12 +550,22 @@
     "detail": ""
   },
   {
+    "name": "report-revenue-by-account script 2",
+    "ok": true,
+    "detail": ""
+  },
+  {
     "name": "report-expenses script 0",
     "ok": true,
     "detail": ""
   },
   {
     "name": "report-expenses script 1",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-expenses script 2",
     "ok": true,
     "detail": ""
   },
@@ -400,6 +580,11 @@
     "detail": ""
   },
   {
+    "name": "report-transactions script 2",
+    "ok": true,
+    "detail": ""
+  },
+  {
     "name": "report-income-statement script 0",
     "ok": true,
     "detail": ""
@@ -410,12 +595,22 @@
     "detail": ""
   },
   {
+    "name": "report-income-statement script 2",
+    "ok": true,
+    "detail": ""
+  },
+  {
     "name": "report-balance-sheet script 0",
     "ok": true,
     "detail": ""
   },
   {
     "name": "report-balance-sheet script 1",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "report-balance-sheet script 2",
     "ok": true,
     "detail": ""
   },
@@ -440,6 +635,11 @@
     "detail": ""
   },
   {
+    "name": "setup-overview script 4",
+    "ok": true,
+    "detail": ""
+  },
+  {
     "name": "setup-organization script 0",
     "ok": true,
     "detail": ""
@@ -456,6 +656,11 @@
   },
   {
     "name": "setup-organization script 3",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "setup-organization script 4",
     "ok": true,
     "detail": ""
   },
@@ -485,6 +690,11 @@
     "detail": ""
   },
   {
+    "name": "setup-users script 5",
+    "ok": true,
+    "detail": ""
+  },
+  {
     "name": "setup-roles script 0",
     "ok": true,
     "detail": ""
@@ -501,6 +711,11 @@
   },
   {
     "name": "setup-roles script 3",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "setup-roles script 4",
     "ok": true,
     "detail": ""
   },
@@ -525,6 +740,11 @@
     "detail": ""
   },
   {
+    "name": "setup-permissions script 4",
+    "ok": true,
+    "detail": ""
+  },
+  {
     "name": "setup-clinical script 0",
     "ok": true,
     "detail": ""
@@ -541,6 +761,11 @@
   },
   {
     "name": "setup-clinical script 3",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "setup-clinical script 4",
     "ok": true,
     "detail": ""
   },
@@ -565,6 +790,11 @@
     "detail": ""
   },
   {
+    "name": "setup-laboratory script 4",
+    "ok": true,
+    "detail": ""
+  },
+  {
     "name": "setup-pharmacy script 0",
     "ok": true,
     "detail": ""
@@ -581,6 +811,11 @@
   },
   {
     "name": "setup-pharmacy script 3",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "setup-pharmacy script 4",
     "ok": true,
     "detail": ""
   },
@@ -605,6 +840,11 @@
     "detail": ""
   },
   {
+    "name": "setup-payment-methods script 4",
+    "ok": true,
+    "detail": ""
+  },
+  {
     "name": "setup-audit script 0",
     "ok": true,
     "detail": ""
@@ -625,6 +865,11 @@
     "detail": ""
   },
   {
+    "name": "setup-audit script 4",
+    "ok": true,
+    "detail": ""
+  },
+  {
     "name": "login script 0",
     "ok": true,
     "detail": ""
@@ -641,6 +886,11 @@
   },
   {
     "name": "patients script 2",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "patients script 3",
     "ok": true,
     "detail": ""
   },
@@ -675,12 +925,32 @@
     "detail": ""
   },
   {
+    "name": "consultations script 3",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "consultations script 4",
+    "ok": true,
+    "detail": ""
+  },
+  {
     "name": "lab-billing script 0",
     "ok": true,
     "detail": ""
   },
   {
     "name": "lab-billing script 1",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "lab-billing script 2",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "lab-billing script 3",
     "ok": true,
     "detail": ""
   },
@@ -695,12 +965,27 @@
     "detail": ""
   },
   {
+    "name": "pharmacy-billing script 2",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "pharmacy-billing script 3",
+    "ok": true,
+    "detail": ""
+  },
+  {
     "name": "prescriptions script 0",
     "ok": true,
     "detail": ""
   },
   {
     "name": "prescriptions script 1",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "prescriptions script 2",
     "ok": true,
     "detail": ""
   },
@@ -715,9 +1000,74 @@
     "detail": ""
   },
   {
+    "name": "accounts script 2",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "accounts-list script 0",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "accounts-list script 1",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "accounts-list script 2",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "account-detail-pay-cash script 0",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "account-detail-pay-cash script 1",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "account-detail-pay-cash script 2",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "account-detail-revenue script 0",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "account-detail-revenue script 1",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "account-detail-revenue script 2",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "account-detail-invalid script 0",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "account-detail-invalid script 1",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "account-detail-invalid script 2",
+    "ok": true,
+    "detail": ""
+  },
+  {
     "name": "dashboard 1920px",
     "ok": true,
-    "detail": "{\"overflow\":false,\"scroll\":1905,\"width\":1920,\"modal\":true,\"primary\":true,\"success\":true}"
+    "detail": "{\"overflow\":false,\"scroll\":1920,\"width\":1920,\"modal\":true,\"primary\":true,\"success\":true}"
   },
   {
     "name": "dashboard 1366px",
@@ -1406,6 +1756,16 @@
   },
   {
     "name": "Permissions dirty Save white text and icon",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "Permissions hover retains white foreground",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "Permissions compact mobile search",
     "ok": true,
     "detail": ""
   },
@@ -2656,6 +3016,126 @@
   },
   {
     "name": "accounts runtime",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "accounts-list 1920px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1905,\"width\":1920,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "accounts-list 1366px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1351,\"width\":1366,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "accounts-list 1080px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1065,\"width\":1080,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "accounts-list 820px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":805,\"width\":820,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "accounts-list 480px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":465,\"width\":480,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "accounts-list runtime",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "account-detail-pay-cash 1920px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1905,\"width\":1920,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "account-detail-pay-cash 1366px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1351,\"width\":1366,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "account-detail-pay-cash 1080px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1065,\"width\":1080,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "account-detail-pay-cash 820px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":805,\"width\":820,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "account-detail-pay-cash 480px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":465,\"width\":480,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "account-detail-pay-cash runtime",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "account-detail-revenue 1920px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1905,\"width\":1920,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "account-detail-revenue 1366px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1351,\"width\":1366,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "account-detail-revenue 1080px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1065,\"width\":1080,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "account-detail-revenue 820px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":805,\"width\":820,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "account-detail-revenue 480px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":465,\"width\":480,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "account-detail-revenue runtime",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "name": "account-detail-invalid 1920px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1905,\"width\":1920,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "account-detail-invalid 1366px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1351,\"width\":1366,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "account-detail-invalid 1080px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":1065,\"width\":1080,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "account-detail-invalid 820px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":805,\"width\":820,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "account-detail-invalid 480px",
+    "ok": true,
+    "detail": "{\"overflow\":false,\"scroll\":465,\"width\":480,\"modal\":true,\"primary\":true,\"success\":true}"
+  },
+  {
+    "name": "account-detail-invalid runtime",
     "ok": true,
     "detail": ""
   }

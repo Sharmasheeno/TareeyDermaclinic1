@@ -43,6 +43,32 @@ if (empty($_SESSION['csrf_token'])) {
 const MAX_ATTEMPTS    = 5;
 const LOCKOUT_SECONDS = 60;
 
+function tdc_login_attempt_key(string $username): string
+{
+    return hash('sha256', strtolower($username) . '|' . (string) ($_SERVER['REMOTE_ADDR'] ?? 'unknown'));
+}
+
+function tdc_login_is_throttled(PDO $pdo, string $key): bool
+{
+    try {
+        $stmt = $pdo->prepare('SELECT BlockedUntil FROM login_attempts WHERE AttemptKey=? AND BlockedUntil > NOW()');
+        $stmt->execute([$key]);
+        return (bool) $stmt->fetchColumn();
+    } catch (PDOException) {
+        return false;
+    }
+}
+
+function tdc_login_record_failure(PDO $pdo, string $key): void
+{
+    try {
+        $stmt = $pdo->prepare("INSERT INTO login_attempts (AttemptKey,FailedCount,FirstAttempt,BlockedUntil) VALUES (?,1,NOW(),NULL) ON DUPLICATE KEY UPDATE FailedCount=IF(FirstAttempt < DATE_SUB(NOW(), INTERVAL 10 MINUTE),1,FailedCount+1),FirstAttempt=IF(FirstAttempt < DATE_SUB(NOW(), INTERVAL 10 MINUTE),NOW(),FirstAttempt),BlockedUntil=IF(FailedCount+1 >= " . MAX_ATTEMPTS . ",DATE_ADD(NOW(), INTERVAL " . LOCKOUT_SECONDS . " SECOND),BlockedUntil)");
+        $stmt->execute([$key]);
+    } catch (PDOException) {
+        // Session throttling below remains the compatibility fallback.
+    }
+}
+
 $error       = '';
 $oldUsername = '';
 
@@ -58,9 +84,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $username    = trim((string)($_POST['username'] ?? ''));
         $password    = (string)($_POST['password'] ?? '');
         $oldUsername = $username;
+        $attemptKey  = tdc_login_attempt_key($username);
 
         if ($username === '' || $password === '') {
             $error = 'Please enter both username and password.';
+        } elseif (tdc_login_is_throttled($pdo, $attemptKey)) {
+            $error = 'Too many failed attempts. Please try again later.';
         } else {
             $stmt = $pdo->prepare(
                 'SELECT id,userlegalname,role,role_id,username,password,is_active,is_root
@@ -78,6 +107,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $_SESSION['is_root']       = $user['is_root'];
                 $_SESSION['userlegalname'] = $user['userlegalname'];
                 $pdo->prepare('UPDATE users SET last_login_at=NOW() WHERE id=?')->execute([$user['id']]);
+                try { $pdo->prepare('DELETE FROM login_attempts WHERE AttemptKey=?')->execute([$attemptKey]); } catch (PDOException) {}
                 unset($_SESSION['login_attempts'], $_SESSION['login_lockout_until']);
 
                 header('Location: pages/home.php');
@@ -86,6 +116,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             // Generic message — never reveal whether username or password was wrong
             $error = 'Invalid username or password.';
+            tdc_login_record_failure($pdo, $attemptKey);
             $_SESSION['login_attempts'] = ($_SESSION['login_attempts'] ?? 0) + 1;
             if ($_SESSION['login_attempts'] >= MAX_ATTEMPTS) {
                 $_SESSION['login_lockout_until'] = time() + LOCKOUT_SECONDS;

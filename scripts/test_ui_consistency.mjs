@@ -58,7 +58,7 @@ try{
   }
   if(['inventory','reception-role','pharmacy-role'].includes(name)){
    await ev(`document.querySelector('#addItemBtn').click()`);
-   record(name+' simple medicine form',await ev(`!document.querySelector('#itemForm details')&&document.querySelector('label[for="if_SalesUnit"]').textContent==='Unit'&&document.querySelector('#medicineSaveLabel').textContent==='Save Medicine'`));
+   record(name+' simple medicine form',await ev(`!document.querySelector('#itemForm details')&&document.querySelector('label[for="if_SalesUnit"]').textContent.trim()==='Base Unit *'&&document.querySelector('#medicineSaveLabel').textContent==='Save Medicine'`));
    await ev(`document.querySelector('#itemModalCancelBtn').click();document.querySelector('.edit-item-btn').click()`);
    record(name+' edit medicine fields populated',await ev(`(()=>{const b=document.querySelector('.edit-item-btn');return document.querySelector('#if_SalesUnit').value===b.dataset.unit&&document.querySelector('#if_QuantityInStock').value===b.dataset.stock&&document.querySelector('#if_SellingPrice').value===b.dataset.price&&document.querySelector('#medicineSaveLabel').textContent==='Update Medicine';})()`));
    await ev(`document.querySelector('#itemModalCancelBtn').click()`);

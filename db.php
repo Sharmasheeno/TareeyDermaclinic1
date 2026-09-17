@@ -2,24 +2,34 @@
 declare(strict_types=1);
 /**
  * db.php — Tarey Derma Clinic database connection (THE ONE CONFIG FILE)
- * ---------------------------------------------------------------------
- * EDIT THE FIVE CONSTANTS BELOW AFTER UPLOADING TO INFINITYFREE.
- *
- * Where to find the values (InfinityFree client area):
- *   DB_HOST -> "MySQL Host Name"      (e.g. sql123.infinityfree.com)
- *   DB_NAME -> "MySQL Database Name"  (e.g. if0_12345678_tareydermaclinic)
- *   DB_USER -> "MySQL User Name"      (e.g. if0_12345678)
- *   DB_PASS -> "MySQL Password"       (the password you set for the DB)
- *
- * Each constant may also be supplied through an environment variable of
- * the same name (getenv), so credentials can live outside this file if
- * your host supports it. Values defined here are used as fallbacks.
- *
- * Never display this file, its contents, or PDO errors to visitors:
- * connection failures are logged server-side and return a generic 500.
- * ---------------------------------------------------------------------
+ * ----------------------------------------------------------------------
+ * Configuration priority:
+ *   1. db.local.php (gitignored, for local/server-specific credentials)
+ *   2. Environment variables (DB_HOST, DB_NAME, DB_USER, DB_PASS, DB_CHARSET)
+ *   3. Safe placeholder defaults (will fail gracefully, never expose secrets)
+ * ----------------------------------------------------------------------
+ * LOCAL DEVELOPMENT:
+ *   Create db.local.php with your XAMPP/MySQL credentials (see db.local.php.example).
+ *   The file is gitignored so credentials never leave your machine.
+ * ----------------------------------------------------------------------
+ * PRODUCTION (InfinityFree):
+ *   Set environment variables in the hosting panel, or create a db.local.php
+ *   on the server (not in Git) with production credentials.
+ * ----------------------------------------------------------------------
+ * SECURITY:
+ *   - Never display this file, its contents, or PDO errors to visitors.
+ *   - Connection failures are logged server-side and return a generic 500.
+ *   - utf8mb4 and secure PDO configuration (real prepared statements).
+ * ----------------------------------------------------------------------
  */
 
+// 1. Load local configuration file if it exists (gitignored)
+$localConfig = __DIR__ . '/db.local.php';
+if (is_file($localConfig)) {
+    require_once $localConfig;
+}
+
+// 2. Fall back to environment variables, then safe placeholders
 if (!defined('DB_HOST')) {
     define('DB_HOST', getenv('DB_HOST') ?: 'sqlXXX.infinityfree.com');
 }

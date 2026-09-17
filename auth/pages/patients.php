@@ -76,6 +76,24 @@ const PATIENT_TYPE_OPTIONS = [
 ];
 
 /**
+ * Single authoritative CSV column contract for patients.
+ *
+ * These exact (lowercase) header names are written by the template
+ * download AND consumed by the importer, so the two always agree.
+ * Header matching tolerates surrounding whitespace, UTF-8 BOM and case
+ * (see tdc_csv_upload_rows), but unrelated columns are never silently mapped.
+ */
+const PATIENT_CSV_HEADERS = [
+    'patient_name', 'phone', 'address', 'gender',
+    'date_of_birth', 'patient_type', 'doctor_id', 'remark',
+];
+
+/** Columns that MUST be present (and non-empty where relevant) for an import row. */
+const PATIENT_CSV_REQUIRED_HEADERS = [
+    'patient_name', 'phone', 'gender', 'date_of_birth', 'patient_type',
+];
+
+/**
  * Primary navigation — single source of truth, shared shape with
  * home.php / reception.php / doctors.php / settings.php.
  */
@@ -265,7 +283,7 @@ function tdc_save_patient(PDO $pdo, array $input, bool $isEdit, int $editId): vo
         'Gender'          => $input['Gender'] !== '' ? $input['Gender'] : null,
         'Age'             => $input['Age'] !== '' ? (int) $input['Age'] : null,
         'DateOfBirth'     => $input['DateOfBirth'] !== '' ? $input['DateOfBirth'] : null,
-        'PatientType'     => $input['PatientType'] !== '' ? $input['PatientType'] : null,
+                            'PatientType'     => $input['PatientType'] !== '' ? $input['PatientType'] : null,
         'AllocatedDoctor' => $input['AllocatedDoctor'] !== '' ? (int) $input['AllocatedDoctor'] : null,
         'Remark'          => $input['Remark'] !== '' ? $input['Remark'] : null,
     ];
@@ -286,10 +304,62 @@ function tdc_save_patient(PDO $pdo, array $input, bool $isEdit, int $editId): vo
     $stmt = $pdo->prepare(
         'INSERT INTO patients (PatientName, PatientPhone, PatientAddress, Gender, Age,
             DateOfBirth, PatientType, AllocatedDoctor, Remark, VisitNumber, DueBalance)
-         VALUES (:PatientName, :PatientPhone, :PatientAddress, :Gender, :Age,
+                  VALUES (:PatientName, :PatientPhone, :PatientAddress, :Gender, :Age,
             :DateOfBirth, :PatientType, :AllocatedDoctor, :Remark, 1, 0.00)'
     );
     $stmt->execute($params);
+}
+
+/**
+ * Read the patient list's filter state from the query string into a clean,
+ * validated array. Centralised here so the list view and the CSV export
+ * apply identical filtering (export honours the active filters).
+ */
+function tdc_patient_filter_state(): array
+{
+    $q      = trim((string) ($_GET['q'] ?? ''));
+    $doctor = isset($_GET['doctor']) && ctype_digit((string) $_GET['doctor']) ? (int) $_GET['doctor'] : 0;
+    $type   = (string) ($_GET['type'] ?? '');
+    $type   = array_key_exists($type, PATIENT_TYPE_OPTIONS) ? $type : '';
+    $reg    = trim((string) ($_GET['registered'] ?? ''));
+    $reg    = $reg !== '' && tdc_is_valid_date($reg) ? $reg : '';
+
+    return [
+        'q'          => $q,
+        'doctor'     => $doctor,
+        'type'       => $type,
+        'registered' => $reg,
+    ];
+}
+
+/**
+ * Build the WHERE clause + bound params for the patient filter state.
+ *
+ * @return array{0:string,1:array<string,mixed>} [whereClause, params]
+ */
+function tdc_patient_filter_where(array $state): array
+{
+    $conditions = [];
+    $params     = [];
+
+    if ($state['q'] !== '') {
+        $conditions[] = '(p.PatientName LIKE :q1 OR p.PatientPhone LIKE :q2)';
+        $params['q1'] = $params['q2'] = '%' . $state['q'] . '%';
+    }
+    if ($state['doctor'] > 0) {
+        $conditions[] = 'p.AllocatedDoctor = :doctor';
+        $params['doctor'] = $state['doctor'];
+    }
+    if ($state['type'] !== '') {
+        $conditions[] = 'p.PatientType = :patient_type';
+        $params['patient_type'] = $state['type'];
+    }
+    if ($state['registered'] !== '') {
+        $conditions[] = 'DATE(p.RegisteredAt) = :registered';
+        $params['registered'] = $state['registered'];
+    }
+
+    return [$conditions !== [] ? 'WHERE ' . implode(' AND ', $conditions) : '', $params];
 }
 
 /**
@@ -344,12 +414,26 @@ $canManage = $canCreate || $canEdit || $canDelete;
 
 if (($_GET['download'] ?? '') === 'patient-template') {
     tdc_require_permission('patients.import');
-    tdc_csv_download('patient-import-example.csv', ['patient_name','phone','address','gender','date_of_birth','patient_type','doctor_id','remark'], [['Example Patient','615000000','Mogadishu','Male','2000-01-15','New Patient','','Example row - remove before importing']]);
+    // One row example; date_of_birth deliberately shown as YYYY-MM-DD so the
+    // template itself documents the required import date format.
+    tdc_csv_download('patient-import-example.csv', PATIENT_CSV_HEADERS, [['Example Patient','615000000','Mogadishu','Male','2000-01-15','New Patient','','Example row - remove before importing']]);
 }
 if (($_GET['download'] ?? '') === 'patients') {
     tdc_require_permission('patients.export');
-    $rows=[];foreach($pdo->query('SELECT PatientID,PatientName,PatientPhone,PatientAddress,Gender,DateOfBirth,PatientType,AllocatedDoctor,VisitNumber,DueBalance,RegisteredAt FROM patients ORDER BY PatientID')->fetchAll() as $row)$rows[]=array_values($row);
-    tdc_csv_download('patients-'.date('Y-m-d').'.csv',['patient_id','patient_name','phone','address','gender','date_of_birth','patient_type','doctor_id','visit_count','due_balance','registered_at'],$rows);
+    // Export honours the active list filters (Search / Type / Doctor / Date).
+    // With no filters active the query is identical to exporting every patient.
+    $exportState = tdc_patient_filter_state();
+    [$exportWhere, $exportParams] = tdc_patient_filter_where($exportState);
+    $stmt = $pdo->prepare(
+        'SELECT PatientID,PatientName,PatientPhone,PatientAddress,Gender,DateOfBirth,PatientType,AllocatedDoctor,VisitNumber,DueBalance,RegisteredAt '
+        . 'FROM patients ' . $exportWhere . ' ORDER BY PatientID'
+    );
+    $stmt->execute($exportParams);
+    $rows = [];
+    foreach ($stmt->fetchAll() as $row) {
+        $rows[] = array_values($row);
+    }
+    tdc_csv_download('patients-' . date('Y-m-d') . '.csv', ['patient_id','patient_name','phone','address','gender','date_of_birth','patient_type','doctor_id','visit_count','due_balance','registered_at'], $rows);
 }
 
 // =======================================================================
@@ -382,13 +466,157 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($formAction === 'import_csv') {
             tdc_require_permission('patients.import');
             try {
-                $rows=tdc_csv_upload_rows($_FILES['csv_file']??[],['patient_name','phone','gender','date_of_birth','patient_type']);
-                if(!$rows)throw new RuntimeException('The CSV file contains no patient rows.');
-                $pdo->beginTransaction();$imported=0;
-                foreach($rows as $index=>$row){$dob=trim((string)($row['date_of_birth']??''));$patient=['PatientID'=>'','PatientName'=>trim((string)($row['patient_name']??'')),'PatientPhone'=>trim((string)($row['phone']??'')),'PatientAddress'=>trim((string)($row['address']??'')),'Gender'=>trim((string)($row['gender']??'')),'Age'=>$dob!==''&&tdc_is_valid_date($dob)?(string)tdc_age_from_birth_date($dob):'','DateOfBirth'=>$dob,'PatientType'=>trim((string)($row['patient_type']??'')),'AllocatedDoctor'=>trim((string)($row['doctor_id']??'')),'Remark'=>trim((string)($row['remark']??''))];$rowErrors=tdc_validate_patient_form($patient);if($patient['PatientPhone']!==''){$stmt=$pdo->prepare("SELECT COUNT(*) FROM patients WHERE REPLACE(REPLACE(REPLACE(PatientPhone,' ',''),'-',''),'+','')=REPLACE(REPLACE(REPLACE(?,' ',''),'-',''),'+','')");$stmt->execute([$patient['PatientPhone']]);if((int)$stmt->fetchColumn())$rowErrors[]='phone already exists';}if($rowErrors)throw new RuntimeException('Row '.($index+2).': '.implode(' ',$rowErrors));tdc_save_patient($pdo,$patient,false,0);$imported++;}
-                tdc_audit($pdo,'patients.imported','Patients',null,"Imported $imported patient records.");$pdo->commit();tdc_redirect('imported');
-            } catch(RuntimeException $e){if($pdo->inTransaction())$pdo->rollBack();$errors[]=$e->getMessage();}
+                $rows = tdc_csv_upload_rows($_FILES['csv_file'] ?? [], PATIENT_CSV_REQUIRED_HEADERS);
+            } catch (RuntimeException $e) {
+                $errors[] = $e->getMessage();
+                $rows = [];
+            }
+
+            if (empty($rows)) {
+                if (empty($errors)) {
+                    $errors[] = 'The CSV file contains no patient rows.';
+                }
+            } else {
+                // Resolve doctors once (by numeric ID or by name) for the doctor_id column.
+                $doctorsStmt    = $pdo->query('SELECT DoctorID, DoctorName FROM doctors ORDER BY DoctorName ASC');
+                $doctorById     = [];
+                $doctorIdByName = [];
+                while ($d = $doctorsStmt->fetch()) {
+                    $doctorById[(string) $d['DoctorID']] = (int) $d['DoctorID'];
+                    $doctorIdByName[mb_strtolower(trim((string) $d['DoctorName']))] = (int) $d['DoctorID'];
+                }
+
+                // Snapshot of existing patient phones (normalized) for duplicate detection.
+                $existingPhones = tdc_existing_phone_keys($pdo);
+                $seenPhones     = [];
+                $imported       = 0;
+                $skipped        = [];
+                $failed         = [];
+
+                // Transactional: valid rows commit together; each row is a single
+                // atomic INSERT, so no half-written record is ever created.
+                $pdo->beginTransaction();
+                try {
+                    foreach ($rows as $index => $row) {
+                        $rowNum = $index + 2; // header is row 1
+                        $rowErrors = [];
+
+                        $rawName   = trim((string) ($row['patient_name'] ?? ''));
+                        $rawPhone  = trim((string) ($row['phone'] ?? ''));
+                        $phone     = trim(ltrim($rawPhone, "'")); // tolerate Excel text marker
+                        $address   = trim((string) ($row['address'] ?? ''));
+                        $gender    = trim((string) ($row['gender'] ?? ''));
+                        $rawDob    = trim((string) ($row['date_of_birth'] ?? ''));
+                        $type      = trim((string) ($row['patient_type'] ?? ''));
+                        $rawDoctor = trim((string) ($row['doctor_id'] ?? ''));
+                        $remark    = trim((string) ($row['remark'] ?? ''));
+
+                        // Case-insensitive normalisation to the canonical labels the
+                        // rest of the app uses (the manual form always sends exact case).
+                        if ($gender !== '') {
+                            $lg = mb_strtolower($gender);
+                            if ($lg === 'male') $gender = 'Male';
+                            elseif ($lg === 'female') $gender = 'Female';
+                        }
+                        if ($type !== '') {
+                            foreach (PATIENT_TYPE_OPTIONS as $v => $l) {
+                                if (mb_strtolower($l) === mb_strtolower($type)) { $type = $l; break; }
+                            }
+                        }
+
+                        // DOB -> canonical YYYY-MM-DD. Unparseable/ambiguous values
+                        // are reported per row rather than silently guessed.
+                        $normDob = $rawDob !== '' ? tdc_normalize_dob($rawDob) : '';
+                        if ($rawDob !== '' && $normDob === '') {
+                            $rowErrors[] = 'DateOfBirth must use YYYY-MM-DD.';
+                        }
+                        $age = ($normDob !== '' && tdc_dob_is_real($normDob))
+                            ? (string) tdc_age_from_birth_date($normDob) : '';
+
+                        // Doctor resolution: numeric DoctorID or a doctor name.
+                        $allocatedDoctor = '';
+                        if ($rawDoctor !== '') {
+                            if (ctype_digit($rawDoctor) && isset($doctorById[$rawDoctor])) {
+                                $allocatedDoctor = $rawDoctor;
+                            } elseif (isset($doctorIdByName[mb_strtolower($rawDoctor)])) {
+                                $allocatedDoctor = (string) $doctorIdByName[mb_strtolower($rawDoctor)];
+                            } else {
+                                $rowErrors[] = 'Doctor "' . $rawDoctor . '" was not found.';
+                            }
+                        }
+
+                        $patient = [
+                            'PatientID'       => '',
+                            'PatientName'     => $rawName,
+                            'PatientPhone'    => $phone,
+                            'PatientAddress'  => $address,
+                            'Gender'          => $gender,
+                            'Age'             => $age,
+                            'DateOfBirth'     => $normDob,
+                            'PatientType'     => $type,
+                            'AllocatedDoctor' => $allocatedDoctor,
+                            'Remark'          => $remark,
+                        ];
+
+                        // Row-level field validation (name length, phone format, gender,
+                        // type, doctor shape, future DOB).
+                        $rowErrors = array_merge($rowErrors, tdc_validate_patient_form($patient));
+
+                        // Duplicate phone policy: existing/seen phone -> SKIP, never overwrite.
+                        $normPhone = $phone !== '' ? tdc_norm_phone($phone) : '';
+                        if ($phone !== '' && $normPhone !== '') {
+                            if (isset($seenPhones[$normPhone])) {
+                                $rowErrors[] = 'skipped - phone ' . $phone . ' already exists (duplicate within this file).';
+                            } elseif (isset($existingPhones[$normPhone])) {
+                                $rowErrors[] = 'skipped - phone ' . $phone . ' already exists.';
+                            }
+                        }
+
+                        if ($rowErrors) {
+                            $skipped[] = ['row' => $rowNum, 'reason' => implode(' ', $rowErrors)];
+                            continue;
+                        }
+
+                        try {
+                            tdc_save_patient($pdo, $patient, false, 0);
+                            $imported++;
+                            if ($normPhone !== '') {
+                                $seenPhones[$normPhone] = true;
+                            }
+                        } catch (PDOException $e) {
+                            error_log('[PATIENTS CSV IMPORT] row ' . $rowNum . ' save failed: ' . $e->getMessage());
+                            $failed[] = ['row' => $rowNum, 'reason' => 'System error while saving this row.'];
+                        }
+                    }
+                    $pdo->commit();
+                } catch (Throwable $e) {
+                    if ($pdo->inTransaction()) {
+                        $pdo->rollBack();
+                    }
+                    error_log('[PATIENTS CSV IMPORT] aborted: ' . $e->getMessage());
+                    $errors[] = 'A system error occurred during import. No records were imported.';
+                }
+
+                if (empty($errors)) {
+                    $_SESSION['tdc_import_result'] = [
+                        'total'    => count($rows),
+                        'imported' => $imported,
+                        'skipped'  => $skipped,
+                        'failed'   => $failed,
+                    ];
+                    try {
+                        tdc_audit($pdo, 'patients.imported', 'Patients', null,
+                            sprintf('CSV import: %d imported, %d skipped, %d failed of %d rows.',
+                                $imported, count($skipped), count($failed), count($rows)));
+                    } catch (Throwable $e) {
+                        // Audit logging is best-effort and must not break the UX.
+                    }
+                    tdc_redirect('imported');
+                }
+            }
         } elseif ($formAction === 'delete') {
+
+
             tdc_require_permission('patients.delete');
             $deleteId = (int) ($_POST['PatientID'] ?? 0);
             $errors   = $deleteId > 0 ? tdc_delete_patient($pdo, $deleteId) : ['Invalid patient selected.'];
@@ -864,9 +1092,9 @@ $justVisited = isset($_GET['visited']);
             </select>
             <input type="date" name="registered" value="<?= tdc_e($patientDateFilter) ?>" aria-label="Registration date">
             <button type="submit" class="btn-primary btn "><?= tdc_icon('search',16) ?><span>Filter</span></button>
-            <?php if ($patientSearch !== '' || $patientTypeFilter !== '' || $doctorFilter > 0 || $patientDateFilter !== ''): ?><a href="patients.php" class="clear-filters">Clear</a><?php endif; ?>
+            <?php if ($patientSearch !== '' || $patientTypeFilter !== '' || $doctorFilter > 0 || $patientDateFilter !== ''): ?><a href="patients.php" class="btn btn-secondary clear-filters">Clear</a><?php endif; ?>
         </form>
-        <div class="table-command-bar"><?php if($canImport):?><button type="button" id="importPatientBtn" class="btn-success btn "><?= tdc_icon('upload',16) ?><span>Import CSV</span></button><a class="btn-info btn " href="patients.php?download=patient-template"><?= tdc_icon('download',16) ?><span>Download CSV Template</span></a><?php endif;?><?php if($canExport):?><a class="btn-info btn " href="patients.php?download=patients"><?= tdc_icon('download',16) ?><span>Export CSV</span></a><button type="button" class="btn-info btn " onclick="window.print()"><?= tdc_icon('printer',16) ?><span>Print / Save PDF</span></button><?php endif;?><?php if ($canCreate): ?><button type="button" id="addPatientBtn" class="btn-success btn "><?= tdc_icon('plus',16) ?><span>Register Patient</span></button><?php endif; ?></div>
+        <div class="table-command-bar"><?php if($canImport):?><button type="button" id="importPatientBtn" class="btn-success btn "><?= tdc_icon('upload',16) ?><span>Import CSV</span></button><a class="btn-secondary btn " href="patients.php?download=patient-template"><?= tdc_icon('download',16) ?><span>Download CSV Template</span></a><?php endif;?><?php if($canExport):?><a class="btn-secondary btn " href="patients.php?download=patients"><?= tdc_icon('download',16) ?><span>Export CSV</span></a><button type="button" class="btn-info btn " onclick="window.print()"><?= tdc_icon('printer',16) ?><span>Print / Save PDF</span></button><?php endif;?><?php if ($canCreate): ?><button type="button" id="addPatientBtn" class="btn-success btn "><?= tdc_icon('plus',16) ?><span>Register Patient</span></button><?php endif; ?></div>
     </div>
 
     <div class="data-table-wrap">

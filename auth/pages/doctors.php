@@ -199,7 +199,7 @@ function tdc_scalar(PDO $pdo, string $sql, array $params = [])
 // SECTION 4 — Validation
 // =======================================================================
 
-/** @param array{DoctorName:string,ConsultationFee:string,Specialty:string,JoinedDate:string} $input */
+/** @param array{DoctorName:string,ConsultationFee:string,Specialty:string,JoinedDate:string,WorkingDays:string,WorkStartTime:string,WorkEndTime:string} $input */
 function tdc_validate_doctor_form(array $input): array
 {
     $errors = [];
@@ -216,6 +216,12 @@ function tdc_validate_doctor_form(array $input): array
     if ($input['JoinedDate'] !== '' && !tdc_is_valid_date($input['JoinedDate'])) {
         $errors[] = 'Joined date is not a valid date.';
     }
+    $days = array_values(array_filter(explode(',', $input['WorkingDays']), static fn(string $day): bool => in_array($day, ['1','2','3','4','5','6','7'], true)));
+    if (!$days) $errors[] = 'Select at least one working day.';
+    foreach (['WorkStartTime', 'WorkEndTime'] as $timeField) {
+        if (!preg_match('/^([01]\d|2[0-3]):[0-5]\d$/', $input[$timeField])) $errors[] = $timeField === 'WorkStartTime' ? 'Enter a valid work start time.' : 'Enter a valid work end time.';
+    }
+    if (!$errors && $input['WorkStartTime'] >= $input['WorkEndTime']) $errors[] = 'Work end time must be later than work start time.';
 
     return $errors;
 }
@@ -231,13 +237,17 @@ function tdc_save_doctor(PDO $pdo, array $input, bool $isEdit, int $editId): voi
         'ConsultationFee' => $input['ConsultationFee'] !== '' ? round((float) $input['ConsultationFee'], 2) : 0.00,
         'Specialty'       => $input['Specialty'] !== '' ? $input['Specialty'] : null,
         'JoinedDate'      => $input['JoinedDate'] !== '' ? $input['JoinedDate'] : null,
+        'WorkingDays'     => $input['WorkingDays'],
+        'WorkStartTime'   => $input['WorkStartTime'] . ':00',
+        'WorkEndTime'     => $input['WorkEndTime'] . ':00',
     ];
 
     if ($isEdit) {
         $params['id'] = $editId;
         $stmt = $pdo->prepare(
             'UPDATE doctors SET DoctorName = :DoctorName, ConsultationFee = :ConsultationFee,
-                Specialty = :Specialty, JoinedDate = :JoinedDate
+                Specialty = :Specialty, JoinedDate = :JoinedDate, WorkingDays = :WorkingDays,
+                WorkStartTime = :WorkStartTime, WorkEndTime = :WorkEndTime
              WHERE DoctorID = :id'
         );
         $stmt->execute($params);
@@ -245,8 +255,8 @@ function tdc_save_doctor(PDO $pdo, array $input, bool $isEdit, int $editId): voi
     }
 
     $stmt = $pdo->prepare(
-        'INSERT INTO doctors (DoctorName, ConsultationFee, Specialty, JoinedDate)
-         VALUES (:DoctorName, :ConsultationFee, :Specialty, :JoinedDate)'
+        'INSERT INTO doctors (DoctorName, ConsultationFee, Specialty, JoinedDate, WorkingDays, WorkStartTime, WorkEndTime)
+         VALUES (:DoctorName, :ConsultationFee, :Specialty, :JoinedDate, :WorkingDays, :WorkStartTime, :WorkEndTime)'
     );
     $stmt->execute($params);
 }
@@ -325,6 +335,9 @@ $old = [
     'ConsultationFee' => '',
     'Specialty'       => '',
     'JoinedDate'      => '',
+    'WorkingDays'     => '1,2,3,4,5',
+    'WorkStartTime'   => '09:00',
+    'WorkEndTime'     => '17:00',
 ];
 
 // =======================================================================
@@ -346,7 +359,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         if ($formAction === 'import_csv') {
             tdc_require_permission('doctors.import');
-            try{$rows=tdc_csv_upload_rows($_FILES['csv_file']??[],['doctor_name','consultation_fee']);if(!$rows)throw new RuntimeException('The CSV file contains no doctor rows.');$pdo->beginTransaction();$imported=0;foreach($rows as $index=>$row){$input=['DoctorName'=>trim((string)($row['doctor_name']??'')),'Specialty'=>trim((string)($row['specialization']??'')),'ConsultationFee'=>trim((string)($row['consultation_fee']??'')),'JoinedDate'=>trim((string)($row['joined_date']??''))];$rowErrors=tdc_validate_doctor_form($input);$stmt=$pdo->prepare('SELECT COUNT(*) FROM doctors WHERE LOWER(TRIM(DoctorName))=LOWER(TRIM(?))');$stmt->execute([$input['DoctorName']]);if((int)$stmt->fetchColumn())$rowErrors[]='doctor name already exists';if($rowErrors)throw new RuntimeException('Row '.($index+2).': '.implode(' ',$rowErrors));tdc_save_doctor($pdo,$input,false,0);$imported++;}tdc_audit($pdo,'doctors.imported','Doctors',null,"Imported $imported doctor records.");$pdo->commit();tdc_redirect('imported');}catch(RuntimeException $e){if($pdo->inTransaction())$pdo->rollBack();$errors[]=$e->getMessage();}
+            try{$rows=tdc_csv_upload_rows($_FILES['csv_file']??[],['doctor_name','consultation_fee']);if(!$rows)throw new RuntimeException('The CSV file contains no doctor rows.');$pdo->beginTransaction();$imported=0;foreach($rows as $index=>$row){$input=['DoctorName'=>trim((string)($row['doctor_name']??'')),'Specialty'=>trim((string)($row['specialization']??'')),'ConsultationFee'=>trim((string)($row['consultation_fee']??'')),'JoinedDate'=>trim((string)($row['joined_date']??'')),'WorkingDays'=>'1,2,3,4,5','WorkStartTime'=>'09:00','WorkEndTime'=>'17:00'];$rowErrors=tdc_validate_doctor_form($input);$stmt=$pdo->prepare('SELECT COUNT(*) FROM doctors WHERE LOWER(TRIM(DoctorName))=LOWER(TRIM(?))');$stmt->execute([$input['DoctorName']]);if((int)$stmt->fetchColumn())$rowErrors[]='doctor name already exists';if($rowErrors)throw new RuntimeException('Row '.($index+2).': '.implode(' ',$rowErrors));tdc_save_doctor($pdo,$input,false,0);$imported++;}tdc_audit($pdo,'doctors.imported','Doctors',null,"Imported $imported doctor records.");$pdo->commit();tdc_redirect('imported');}catch(RuntimeException $e){if($pdo->inTransaction())$pdo->rollBack();$errors[]=$e->getMessage();}
         } elseif ($formAction === 'delete') {
             tdc_require_permission('doctors.manage');
             $deleteId = (int) ($_POST['DoctorID'] ?? 0);
@@ -361,6 +374,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $old['ConsultationFee'] = trim((string) ($_POST['ConsultationFee'] ?? ''));
             $old['Specialty']       = trim((string) ($_POST['Specialty'] ?? ''));
             $old['JoinedDate']      = trim((string) ($_POST['JoinedDate'] ?? ''));
+            $old['WorkingDays']     = implode(',', array_values(array_intersect((array) ($_POST['WorkingDay'] ?? []), ['1','2','3','4','5','6','7'])));
+            $old['WorkStartTime']   = trim((string) ($_POST['WorkStartTime'] ?? ''));
+            $old['WorkEndTime']     = trim((string) ($_POST['WorkEndTime'] ?? ''));
 
             $isEdit = $old['DoctorID'] !== '' && ctype_digit($old['DoctorID']);
             $errors = tdc_validate_doctor_form($old);
@@ -495,7 +511,7 @@ $workspaceUrl      = 'doctors.php?workspace=1' . ($workspaceDoctorId > 0 ? '&doc
             <input type="text" name="q" placeholder="Search by name or specialty..." value="<?= tdc_e($search) ?>">
             <button type="submit" class="btn-primary btn "><?= tdc_icon('search',16) ?><span>Search</span></button>
         </form>
-        <div class="table-command-bar"><?php if($canImport):?><button type="button" id="importDoctorBtn" class="btn-success btn "><?= tdc_icon('upload', 14) ?><span>Import CSV</span></button><a class="btn-info btn " href="doctors.php?download=doctor-template"><?= tdc_icon('download', 14) ?><span>Download CSV Template</span></a><?php endif;?><?php if($canExport):?><a class="btn-info btn " href="doctors.php?download=doctors"><?= tdc_icon('download', 14) ?><span>Export CSV</span></a><button type="button" class="btn-info btn " onclick="window.print()"><?= tdc_icon('printer', 14) ?><span>Print</span></button><?php endif;?><?php if ($canManage): ?><button type="button" id="addDoctorBtn" class="btn-success btn "><?= tdc_icon('plus', 14) ?><span>Add Doctor</span></button><?php endif; ?></div>
+        <div class="table-command-bar"><?php if($canImport):?><button type="button" id="importDoctorBtn" class="btn-secondary btn "><?= tdc_icon('upload', 14) ?><span>Import CSV</span></button><a class="btn-secondary btn " href="doctors.php?download=doctor-template"><?= tdc_icon('download', 14) ?><span>Download CSV Template</span></a><?php endif;?><?php if($canExport):?><a class="btn-secondary btn " href="doctors.php?download=doctors"><?= tdc_icon('download', 14) ?><span>Export CSV</span></a><button type="button" class="btn-primary btn " onclick="window.print()"><?= tdc_icon('printer', 14) ?><span>Print</span></button><?php endif;?><?php if ($canManage): ?><button type="button" id="addDoctorBtn" class="btn-success btn "><?= tdc_icon('plus', 14) ?><span>Add Doctor</span></button><?php endif; ?></div>
     </div>
 
     <div class="data-table-wrap">
@@ -524,7 +540,10 @@ $workspaceUrl      = 'doctors.php?workspace=1' . ($workspaceDoctorId > 0 ? '&doc
                                 data-name="<?= tdc_e($d['DoctorName']) ?>"
                                 data-specialty="<?= tdc_e((string) $d['Specialty']) ?>"
                                 data-fee="<?= tdc_e((string) $d['ConsultationFee']) ?>"
-                                data-joined="<?= tdc_e((string) $d['JoinedDate']) ?>"><?= tdc_icon('pencil', 15) ?></button>
+                                data-joined="<?= tdc_e((string) $d['JoinedDate']) ?>"
+                                data-working-days="<?= tdc_e((string) ($d['WorkingDays'] ?? '1,2,3,4,5')) ?>"
+                                data-work-start="<?= tdc_e(substr((string) ($d['WorkStartTime'] ?? '09:00'), 0, 5)) ?>"
+                                data-work-end="<?= tdc_e(substr((string) ($d['WorkEndTime'] ?? '17:00'), 0, 5)) ?>"><?= tdc_icon('pencil', 15) ?></button>
                             <form method="POST" action="doctors.php" data-confirm="Delete this doctor? This cannot be undone.">
                                 <input type="hidden" name="csrf_token" value="<?= tdc_e($csrfToken) ?>">
                                 <input type="hidden" name="form_action" value="delete">
@@ -568,6 +587,9 @@ $workspaceUrl      = 'doctors.php?workspace=1' . ($workspaceDoctorId > 0 ? '&doc
                         <div class="form-group"><label for="df_JoinedDate">Joined Date</label>
                             <input type="date" id="df_JoinedDate" name="JoinedDate"></div>
                     </div>
+
+                    <div class="form-group"><label>Working Days</label><div class="check-control-group"><?php foreach (['1'=>'Mon','2'=>'Tue','3'=>'Wed','4'=>'Thu','5'=>'Fri','6'=>'Sat','7'=>'Sun'] as $dayValue => $dayLabel): ?><label class="check-control"><input type="checkbox" name="WorkingDay[]" value="<?= $dayValue ?>" <?= in_array($dayValue, explode(',', $old['WorkingDays']), true) ? 'checked' : '' ?>><span><?= $dayLabel ?></span></label><?php endforeach; ?></div></div>
+                    <div class="form-row"><div class="form-group"><label for="df_WorkStartTime">Available From</label><input type="time" id="df_WorkStartTime" name="WorkStartTime" value="<?= tdc_e($old['WorkStartTime']) ?>" required></div><div class="form-group"><label for="df_WorkEndTime">Available Until</label><input type="time" id="df_WorkEndTime" name="WorkEndTime" value="<?= tdc_e($old['WorkEndTime']) ?>" required></div></div>
 
                     <div class="modal-actions">
                         <button type="button" class="btn btn-secondary" id="doctorModalCancelBtn">Cancel</button>
@@ -624,6 +646,9 @@ function showToast(message){
     const fSpecialty = document.getElementById('df_Specialty');
     const fFee = document.getElementById('df_ConsultationFee');
     const fJoined = document.getElementById('df_JoinedDate');
+    const fStart = document.getElementById('df_WorkStartTime');
+    const fEnd = document.getElementById('df_WorkEndTime');
+    const fDays = Array.from(form.querySelectorAll('input[name="WorkingDay[]"]'));
 
     function openModal(){ overlay.classList.add('show'); }
     function closeModal(){ overlay.classList.remove('show'); }
@@ -645,6 +670,9 @@ function showToast(message){
             fSpecialty.value = btn.dataset.specialty;
             fFee.value = btn.dataset.fee;
             fJoined.value = btn.dataset.joined;
+            fDays.forEach(function(day){ day.checked = (btn.dataset.workingDays || '1,2,3,4,5').split(',').includes(day.value); });
+            fStart.value = btn.dataset.workStart || '09:00';
+            fEnd.value = btn.dataset.workEnd || '17:00';
             modalTitle.textContent = 'Edit Doctor';
             openModal();
         });
@@ -661,6 +689,9 @@ function showToast(message){
     fSpecialty.value = <?= json_encode($old['Specialty']) ?>;
     fFee.value = <?= json_encode($old['ConsultationFee']) ?>;
     fJoined.value = <?= json_encode($old['JoinedDate']) ?>;
+    fDays.forEach(function(day){ day.checked = <?= json_encode(explode(',', $old['WorkingDays'])) ?>.includes(day.value); });
+    fStart.value = <?= json_encode($old['WorkStartTime']) ?>;
+    fEnd.value = <?= json_encode($old['WorkEndTime']) ?>;
     modalTitle.textContent = fId.value ? 'Edit Doctor' : 'Add Doctor';
     openModal();
     <?php endif; ?>

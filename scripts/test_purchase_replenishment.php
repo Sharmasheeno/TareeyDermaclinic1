@@ -90,10 +90,12 @@ $cases[] = baseCase('normal purchase replenishes existing medicine', 'superuser'
     ["SELECT COUNT(*) FROM inventory WHERE LOWER(TRIM(ItemName))=LOWER(TRIM('Paracetamol'))", '1'],
     ["SELECT ItemName FROM purchases LIMIT 1", 'Paracetamol'],
     ["SELECT Quantity FROM purchases LIMIT 1", '100'],
-    ["SELECT PurchaseUnit FROM purchases LIMIT 1", ''],
+    ["SELECT PurchaseUnit FROM purchases LIMIT 1", 'Tablet'],
     ["SELECT ConversionFactor FROM purchases LIMIT 1", '1.00'],
     ["SELECT Category FROM inventory WHERE ItemID='ITM000001'", 'Analgesic'],
     ["SELECT SalesUnit FROM inventory WHERE ItemID='ITM000001'", 'Tablet'],
+    ["SELECT LastAcquisitionCostPerUnit FROM inventory WHERE ItemID='ITM000001'", '0.0500'],
+    ["SELECT ExpiryDate FROM purchases LIMIT 1", '2027-12-30'],
 ]);
 
 // 2. Optional package conversion: 2 boxes x 100 tablets = 200 units, exactly once.
@@ -102,6 +104,7 @@ $cases[] = baseCase('package purchase converts once into inventory units', 'supe
     'UnitPrice' => ['2.50'],
     'PurchaseUnit' => ['Box'],
     'ConversionFactor' => ['100'],
+    'ExpiryDate' => [''],
     'AmountPaid' => '5.00',
 ]), 302, [
     ["SELECT QuantityInStock FROM inventory WHERE ItemID='ITM000001'", '250'],
@@ -110,6 +113,8 @@ $cases[] = baseCase('package purchase converts once into inventory units', 'supe
     ["SELECT ConversionFactor FROM purchases LIMIT 1", '100.00'],
     ["SELECT Quantity FROM purchases LIMIT 1", '2'],
     ["SELECT UnitPrice FROM purchases LIMIT 1", '2.50'],
+    ["SELECT ExpiryDate FROM purchases LIMIT 1", ''],
+    ["SELECT LastAcquisitionCostPerUnit FROM inventory WHERE ItemID='ITM000001'", '0.0250'],
 ]);
 
 // 3. Unknown medicine id is rejected; nothing is created or incremented.
@@ -151,7 +156,9 @@ $cases[] = baseCase('two medicine rows save independently', 'superuser', savePos
     ["SELECT ConversionFactor FROM purchases WHERE ItemName='Ibuprofen'", '100.00'],
     ["SELECT PurchaseUnit FROM purchases WHERE ItemName='Ibuprofen'", 'Box'],
     ["SELECT ConversionFactor FROM purchases WHERE ItemName='Paracetamol'", '1.00'],
-    ["SELECT PurchaseUnit FROM purchases WHERE ItemName='Paracetamol'", ''],
+    ["SELECT PurchaseUnit FROM purchases WHERE ItemName='Paracetamol'", 'Tablet'],
+    ["SELECT LastAcquisitionCostPerUnit FROM inventory WHERE ItemID='ITM000001'", '0.5000'],
+    ["SELECT LastAcquisitionCostPerUnit FROM inventory WHERE ItemID='ITM000002'", '0.0200'],
 ]);
 // 4. Non-superuser never reaches the purchase-cost surface.
 $cases[] = [
@@ -167,8 +174,8 @@ $cases[] = [
     'role' => 'superuser',
     'get' => ['section' => 'purchases', 'new' => '1'],
     'status' => 200,
-    'contains' => ['purchase-item-search', 'Purchase by package', 'Units per package', 'Add Item'],
-    'absent' => ['Packaging &amp; units', 'Unit sold / dispensed', 'Units per purchase unit', '+ Add Item'],
+    'contains' => ['purchase-item-search', 'Purchase as', 'Units per package', 'Add Item'],
+    'absent' => ['Unit sold / dispensed', 'Units per purchase unit', '+ Add Item'],
 ];
 
 $failed = 0;
@@ -213,4 +220,3 @@ foreach ($cases as $case) {
 echo $failed === 0 ? 'ALL PURCHASE CASES PASSED' : ($failed . ' CASE(S) FAILED');
 echo PHP_EOL;
 exit($failed === 0 ? 0 : 1);
-

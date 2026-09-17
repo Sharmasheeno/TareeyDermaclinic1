@@ -91,7 +91,7 @@ if ($doctorProfile && $_SERVER['REQUEST_METHOD'] === 'POST') {
                         $id = $base.'-'.str_pad((string)($index + 1),2,'0',STR_PAD_LEFT);
                         $stmt->execute([$id,$visit['PatientID'],$visitId,$visit['PatientName'],$visit['PatientPhone'],$visit['PatientAddress'],$visit['Gender'],$visit['Age'],$visit['VisitNumber'],$doctorProfile['DoctorID'],$line['name'],$line['quantity'],$line['dosage'],$line['frequency'],$line['duration'],$line['instructions']]);
                     }
-                    tdc_workflow_notify($pdo,null,'pharmacyuser','prescription_created','Prescription ready to dispense',$base.' for '.$visit['PatientName'],'pharmacy.php?section=prescriptions');
+                    tdc_workflow_notify_permission($pdo,'pharmacy.prescriptions.view','prescription_created','Prescription ready to dispense',$base.' for '.$visit['PatientName'],'pharmacy.php?section=prescriptions','pharmacyuser');
                     $pdo->commit();
                 } catch (Throwable $e) {
                     $pdo->rollBack();
@@ -119,7 +119,7 @@ if ($doctorProfile && $_SERVER['REQUEST_METHOD'] === 'POST') {
                     $stmt->execute([$labRef,$visit['PatientID'],$visitId,$doctorProfile['DoctorID'],$_SESSION['user_id'],count($services)===1?(int)$services[0]['ServiceID']:null,$testId,$test,trim((string)($_POST['Description'] ?? '')),$price,$price]);
                     $itemStmt=$pdo->prepare('INSERT INTO laborderitems (LaboratoryID,ServiceID,TestName,UnitPrice) VALUES (?,?,?,?)');
                     foreach($services as $service)$itemStmt->execute([$labRef,(int)$service['ServiceID'],$service['ServiceName'],round((float)$service['Price'],2)]);
-                    tdc_workflow_notify($pdo,null,'receptionuser','lab_payment_due','Laboratory payment required',$labRef.' for '.$visit['PatientName'],'reception.php?section=laboratory');
+                    tdc_workflow_notify_permission($pdo,'lab_billing.view','lab_payment_due','Laboratory payment required',$labRef.' for '.$visit['PatientName'],'reception.php?section=laboratory','receptionuser');
                     $pdo->commit();
                 } catch(Throwable $e){if($pdo->inTransaction())$pdo->rollBack();throw $e;}
             }

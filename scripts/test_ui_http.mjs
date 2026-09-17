@@ -38,24 +38,39 @@ try{
  ];
  for(const [path,headers] of templates)await download(path,headers);
  await download('doctors.php?workspace=1&export=csv',['Visit','Patient','Gender','Age','Phone','Date Added','Doctor','Status'],'doctoruser');
- for(const role of ['receptionuser','pharmacyuser']){
+ for(const role of ['pharmacyuser']){
   const {body}=await download('pharmacy.php?section=purchases&export=csv',['PO Ref','Supplier','Phone','Reference','Items','Date'],role);
   check(role+' purchase privacy',!/(cost|total|amount|discount|vat|paid|due)/i.test(csv(body)[0].join(',')));
   const denied=await request('reports.php?section=pharmacy-purchases&export=csv',role);check(role+' purchase report denied',denied.status===403);
  }
  for(const path of ['doctors.php?download=doctors','patients.php?download=patients','setup.php?section=users&download=users']){const r=await request(path,'doctoruser');check('unauthorized '+path,!r.headers.get('content-disposition')&&(r.status===403||(path.startsWith('doctors')&&r.status===200)));}
  for(const section of reportNames){
-  const html=await page('report-'+section,'reports.php?section='+section);
+ const html=await page('report-'+section,'reports.php?section='+section);
+  if(section==='income-statement') check('income statement uses printable paper markup',html.includes('income-statement-preview')&&html.includes('Pharmacy Gross Profit')&&html.includes('Drug Sold')&&html.includes('Drug Cost')&&html.includes('Net Profit or Loss')&&html.includes('window.print()'));
+  if(section==='balance-sheet') check('balance sheet uses printable paper markup',html.includes('income-statement-preview')&&html.includes('aria-label="Balance Sheet"')&&html.includes('Assets')&&html.includes('Liabilities')&&html.includes('Equity')&&html.includes('Total Liabilities &amp; Equity')&&html.includes('income-report-status')&&html.includes('section-toolbar no-print'));
+  if(section==='payments') check('payment report uses confirmed payment ledger',html.includes('Payment Reference')&&html.includes('Payment Method')&&html.includes('PAY'));
+  if(section==='pharmacy-stock'||section==='pharmacy-low-stock'||section==='pharmacy-expiry') check(section+' identifies current snapshot',html.includes('Current inventory snapshot')&&!html.includes('rr_'+section.replaceAll('-','_')+'_from'));
   const headers=[...html.matchAll(/<th\b[^>]*>([\s\S]*?)<\/th>/g)].map(m=>m[1].replace(/<[^>]*>/g,'').trim().replaceAll('&amp;','&'));
   const legacy=['income-statement','balance-sheet'].includes(section);
-  const data=await download('reports.php?section='+section+'&export=csv',legacy?['Type','Account','Amount']:headers,'superuser',legacy?2:1);
-  check(section+' CSV rows match header',legacy||data.rows.slice(1).every(row=>row.length===headers.length));
+ const data=await download('reports.php?section='+section+'&export=csv',legacy?['Type','Account','Amount']:headers,'superuser',legacy?2:1);
+ check(section+' CSV rows match header',legacy||data.rows.slice(1).every(row=>row.length===headers.length));
  }
+ const receptionIncomeCsv=await download('reports.php?section=income-statement&export=csv',['Type','Account','Amount'],'receptionuser',2);
+ check('reception income CSV omits confidential COGS',!/(Drug Cost|Pharmacy Gross Profit|Net Income)/i.test(receptionIncomeCsv.body));
  for(const section of ['','organization','users','roles','permissions','clinical','laboratory','pharmacy','payment-methods','audit'])await page('setup-'+(section||'overview'),'setup.php?section='+section);
  const login=await request('../auth.php','missing-user');const loginHtml=await login.text();
  check('login page',login.status===200&&loginHtml.includes('loginForm'));
  await writeFile(join(tmpdir(),'tdc-ui-login.html'),loginHtml.replaceAll('href="assets/',`href="${pathToFileURL(resolve('auth/assets')).href}/`).replaceAll('src="uploads/',`src="${pathToFileURL(resolve('auth/uploads')).href}/`));snapshots.push('login');
  for(const [name,path,user] of [['patients','patients.php'],['clinical','doctors.php?workspace=1&visit=1','doctoruser'],['consultations','reception.php?section=consultations'],['lab-billing','reception.php?section=laboratory'],['pharmacy-billing','reception.php?section=pharmacy'],['prescriptions','pharmacy.php?section=prescriptions'],['accounts','accounting.php?section=accounts']])await page(name,path,user);
+ const accountList=await page('accounts-list','accounting.php?section=accounts');
+ const accountDetail=await page('account-detail-pay-cash','accounting.php?section=accounts&view=PAY-CASH');
+ check('PAY-CASH view renders account detail',accountDetail.includes('Cash Clearing')&&accountDetail.includes('PAY-CASH')&&accountDetail.includes('Account Activity')&&!accountDetail.includes('Chart of Accounts</div>'));
+ const revenueDetail=await page('account-detail-revenue','accounting.php?section=accounts&view=REV-CONSULT');
+ check('REV-CONSULT view renders account detail',revenueDetail.includes('Consultation Revenue')&&revenueDetail.includes('REV-CONSULT')&&revenueDetail.includes('Account Activity'));
+ const invalidDetail=await page('account-detail-invalid','accounting.php?section=accounts&view=DOES-NOT-EXIST');
+ check('Invalid account view is handled',invalidDetail.includes('Account not found')&&invalidDetail.includes('Back to Chart of Accounts')&&!invalidDetail.includes('No accounts found'));
+ check('Account list remains separate from detail',accountList.includes('Chart of Accounts')&&!accountList.includes('Account Activity'));
+ const accountCsv=await download('accounting.php?section=accounts&view=PAY-CASH&export=csv',['Date','Reference','Description','Book','Debit','Credit','Running Balance','Status']);
  const imports=[
  ['doctors.php','form_action','import_csv','doctor_name,specialization,consultation_fee,joined_date\nHTTP Imported Doctor,Dermatology,25,2026-01-01\n','doctors.php?download=doctors','HTTP Imported Doctor'],
  ['patients.php','form_action','import_csv','patient_name,phone,gender,date_of_birth,patient_type\nHTTP Imported Patient,999000123,Male,2000-01-01,\n','patients.php?download=patients','HTTP Imported Patient'],
@@ -81,6 +96,12 @@ try{
    check(role+' medicine edit persisted',row.includes('data-unit="Custom legacy unit"')&&row.includes('data-price="4.25"')&&row.includes('data-stock="3"'));
   }
  }
+ for(const path of ['pharmacy.php','laboratory.php']){const allowed=await request(path,'receptionuser');check('reception operational '+path,allowed.status===200&&!(await allowed.text()).match(/Fatal error|Warning:|Access denied/));}
+ const posDefault=await request('pharmacy.php?section=pos','superuser');const posDefaultHtml=await posDefault.text();check('POS defaults to New Sale workspace',posDefault.status===200&&posDefaultHtml.includes('Create a new pharmacy sale.')&&posDefaultHtml.includes('Complete Sale')&&posDefaultHtml.includes('Sales History'));
+ const posHistory=await request('pharmacy.php?section=pos&view_mode=history','superuser');const posHistoryHtml=await posHistory.text();check('POS Sales History view works',posHistory.status===200&&posHistoryHtml.includes('Sales History')&&posHistoryHtml.includes('Sale Ref')&&posHistoryHtml.includes('Search by customer or ref'));
+ for(const section of ['consultations','laboratory','pharmacy']){const billing=await request('reception.php?section='+section,'receptionuser');check('reception billing '+section,billing.status===200&&!(await billing.text()).match(/Fatal error|Warning:|Access denied/));}
+ const receptionConsultations=await request('reception.php?section=consultations','receptionuser');check('reception consultation payment uses configured methods',receptionConsultations.status===200&&(await receptionConsultations.text()).includes('EVC Plus'));
+ const receipt=await request('pharmacy.php?section=pos&view=POS999999','superuser');const receiptHtml=await receipt.text();const medicalTable=(receiptHtml.match(/<table class="prescription-table">[\s\S]*?<\/table>/i)||[''])[0];check('POS receipt paper preview loads',receipt.status===200&&receiptHtml.includes('class="receipt-paper"')&&!/Fatal error|Warning:|Access denied/.test(receiptHtml));check('POS receipt uses clinic letterhead',receiptHtml.includes('tareydermacliniclogo.png')&&/Tarey Derma Clinic/i.test(receiptHtml));check('POS receipt uses clinical columns and hides purchase cost',medicalTable.includes('Frequency')&&medicalTable.includes('Route')&&!medicalTable.includes('Unit Price')&&!medicalTable.includes('Amount')&&!receiptHtml.includes('Purchase Price'));check('POS receipt resolves prescription and doctor details',receiptHtml.includes('PNo:')&&receiptHtml.includes('RX999999')&&receiptHtml.includes('BID')&&receiptHtml.includes('Topical'));
  const logout=await request('home.php?logout=1&csrf=http-test-token');check('logout redirect',logout.status===302&&/login|auth|index/i.test(logout.headers.get('location')||''));
  const anon=await request('home.php','missing-user');check('unauthenticated redirect',anon.status===302);
 }finally{

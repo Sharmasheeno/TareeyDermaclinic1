@@ -116,11 +116,16 @@ async function main() {
   const pre = await ev('(function(){return {form:!!document.getElementById(\'purchaseForm\'),supplier:!!document.getElementById(\'pof_SupplierName\'),phone:!!document.getElementById(\'pof_SupplierPhone\'),ref:!!document.getElementById(\'pof_ReferenceNumber\'),date:!!document.getElementById(\'pof_PurchaseDate\'),sub:!!document.getElementById(\'pof_SubtotalDisplay\'),net:!!document.getElementById(\'pof_NetDisplay\'),due:!!document.getElementById(\'pof_DueDisplay\'),disc:!!document.getElementById(\'pof_Discount\'),vat:!!document.getElementById(\'pof_VATAmount\'),paid:!!document.getElementById(\'pof_AmountPaid\'),addItem:!!document.getElementById(\'addLineBtn\'),rows:document.querySelectorAll(\'#lineItemsBody tr\').length,medPicker:document.querySelectorAll(\'#lineItemsBody input[name="ItemName[]"][list]\').length};})()');
   rec('purchase', 'all purchase form fields render', pre && pre.form && pre.supplier && pre.phone && pre.ref && pre.date && pre.disc && pre.vat && pre.paid && pre.sub && pre.net && pre.due && pre.addItem, JSON.stringify(pre));
 
-  const addRow = await ev('(function(){var b=document.getElementById(\'addLineBtn\');var before=document.querySelectorAll(\'#lineItemsBody tr\').length;b.click();var mid=document.querySelectorAll(\'#lineItemsBody tr\').length;var last=document.querySelectorAll(\'#lineItemsBody tr\')[mid-1];last.querySelector(\'.remove-line-btn\').click();var end=document.querySelectorAll(\'#lineItemsBody tr\').length;return {before:before,mid:mid,end:end};})()');
+  const addRow = await ev('(function(){var b=document.getElementById(\'addLineBtn\');var before=document.querySelectorAll(\'#lineItemsBody .line-item-row\').length;b.click();var mid=document.querySelectorAll(\'#lineItemsBody .line-item-row\').length;var last=document.querySelectorAll(\'#lineItemsBody .line-item-row\')[mid-1];last.querySelector(\'.remove-line-btn\').click();var end=document.querySelectorAll(\'#lineItemsBody .line-item-row\').length;return {before:before,mid:mid,end:end};})()');
   rec('purchase', 'Add Item / Remove Item work', addRow && addRow.mid === addRow.before + 1 && addRow.end === addRow.before, JSON.stringify(addRow));
 
   const fill = await ev(`(function(){
-    var row=document.querySelector('#lineItemsBody tr');
+    var row=document.querySelector('#lineItemsBody .line-item-row');
+    var search=row.querySelector('.purchase-item-search');
+    search.value='paractamol';
+    search.dispatchEvent(new Event('input',{bubbles:true}));
+    var option=row.querySelector('.purchase-combo-list li:not(.combo-empty)');
+    if(option) option.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,cancelable:true}));
     document.getElementById('pof_SupplierName').value='QA Supplier E2E';
     document.getElementById('pof_SupplierPhone').value='+2520000000';
     document.getElementById('pof_ReferenceNumber').value='${REF}';
@@ -128,10 +133,18 @@ async function main() {
     var vals={'ItemName[]':'paractamol','Category[]':'Analgesic','Quantity[]':'4','PurchaseUnit[]':'Box','ConversionFactor[]':'1','SalesUnit[]':'Tablet','UnitPrice[]':'3.00','SellingPrice[]':'5.00','ExpiryDate[]':'2028-12-31'};
     Object.keys(vals).forEach(function(n){var el=row.querySelector('input[name="'+n+'"]');if(el){el.value=vals[n];el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}));}});
     [['pof_Discount','2.00'],['pof_VATAmount','1.00'],['pof_AmountPaid','5.00']].forEach(function(p){var el=document.getElementById(p[0]);el.value=p[1];el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}));});
-    return {sub:document.getElementById('pof_SubtotalDisplay').textContent.trim(),net:document.getElementById('pof_NetDisplay').textContent.trim(),due:document.getElementById('pof_DueDisplay').textContent.trim()};
+    return {line:row.querySelector('.purchase-line-amount').textContent.trim(),sub:document.getElementById('pof_SubtotalDisplay').textContent.trim(),net:document.getElementById('pof_NetDisplay').textContent.trim(),due:document.getElementById('pof_DueDisplay').textContent.trim()};
   })()`);
   const num = (s) => parseFloat(String(s).replace(/[^0-9.\-]/g, ''));
   rec('purchase', 'live totals: Subtotal 12, Net 11, Due 6', fill && Math.abs(num(fill.sub) - 12) < 0.01 && Math.abs(num(fill.net) - 11) < 0.01 && Math.abs(num(fill.due) - 6) < 0.01, JSON.stringify(fill));
+  const exact = await ev(`(function(){
+    var row=document.querySelector('#lineItemsBody .line-item-row');
+    var set=function(selector,value){var el=row.querySelector(selector);el.value=value;el.dispatchEvent(new Event('input',{bubbles:true}));};
+    set('.purchase-qty','2'); set('.purchase-unit-price','3');
+    document.getElementById('pof_Discount').value='0'; document.getElementById('pof_VATAmount').value='0'; document.getElementById('pof_AmountPaid').value=''; document.getElementById('pof_AmountPaid').dispatchEvent(new Event('input',{bubbles:true}));
+    return {line:row.querySelector('.purchase-line-amount').textContent.trim(),sub:document.getElementById('pof_SubtotalDisplay').textContent.trim(),net:document.getElementById('pof_NetDisplay').textContent.trim(),due:document.getElementById('pof_DueDisplay').textContent.trim()};
+  })()`);
+  rec('purchase', 'exact browser case 2 x 3 = 6 with blank paid', exact && num(exact.line) === 6 && num(exact.sub) === 6 && num(exact.net) === 6 && num(exact.due) === 6, JSON.stringify(exact));
 
   await ev('document.getElementById(\'purchaseForm\').submit();1');
   await sleep(3000);

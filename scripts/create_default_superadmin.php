@@ -20,9 +20,20 @@ require_once __DIR__ . '/../db.php';
 const DEFAULT_SUPERADMIN_NAME = 'Default Superadmin';
 const DEFAULT_SUPERADMIN_ROLE = 'superuser';
 const DEFAULT_SUPERADMIN_USERNAME = 'superadmin';
-const DEFAULT_SUPERADMIN_PASSWORD = 'SuperAdmin@123';
 
 $resetPassword = in_array('--reset-password', $argv, true);
+$suppliedPassword = getenv('TDC_BOOTSTRAP_PASSWORD');
+$bootstrapPassword = (string) ($suppliedPassword ?: bin2hex(random_bytes(16)));
+if ($suppliedPassword !== false && (
+    mb_strlen($bootstrapPassword) < 12
+    || !preg_match('/[A-Z]/', $bootstrapPassword)
+    || !preg_match('/[a-z]/', $bootstrapPassword)
+    || !preg_match('/[0-9]/', $bootstrapPassword)
+    || !preg_match('/[^A-Za-z0-9]/', $bootstrapPassword)
+)) {
+    fwrite(STDERR, "TDC_BOOTSTRAP_PASSWORD must be at least 12 characters and include upper, lower, number, and symbol characters.\n");
+    exit(1);
+}
 
 try {
     $roleId = (int) $pdo->query("SELECT RoleID FROM roles WHERE RoleKey='superuser' LIMIT 1")->fetchColumn();
@@ -38,7 +49,7 @@ try {
     $stmt->execute(['username' => DEFAULT_SUPERADMIN_USERNAME]);
     $existingUser = $stmt->fetch();
 
-    $passwordHash = password_hash(DEFAULT_SUPERADMIN_PASSWORD, PASSWORD_DEFAULT);
+    $passwordHash = password_hash($bootstrapPassword, PASSWORD_DEFAULT);
 
     if ($existingUser) {
         if ($resetPassword) {
@@ -81,9 +92,9 @@ try {
         echo "Default Superadmin created successfully.\n";
     }
 
-    echo "\nLogin details:\n";
-    echo "Username: " . DEFAULT_SUPERADMIN_USERNAME . "\n";
-    echo "Password: " . DEFAULT_SUPERADMIN_PASSWORD . "\n";
+    echo "\nLogin username: " . DEFAULT_SUPERADMIN_USERNAME . "\n";
+    if ($suppliedPassword === false) echo "Generated password (store securely now): " . $bootstrapPassword . "\n";
+    else echo "Password supplied securely through TDC_BOOTSTRAP_PASSWORD.\n";
     echo "Role: Superadmin\n";
 } catch (Throwable $e) {
     error_log('[CREATE DEFAULT SUPERADMIN ERROR] ' . $e->getMessage());

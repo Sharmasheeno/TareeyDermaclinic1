@@ -191,6 +191,38 @@ function tdc_display_name(string $legalName): string
     return $remaining !== '' ? $remaining : ($legalName !== '' ? $legalName : 'User');
 }
 
+/** Receipt-only person formatting; stored names remain unchanged. */
+function tdc_receipt_person_name(string $name): string
+{
+    $parts = preg_split('/\s+/', trim($name)) ?: [];
+    foreach ($parts as &$part) {
+        $clean = rtrim($part, '.');
+        if (strcasecmp($clean, 'dr') === 0) {
+            $part = 'Dr' . (str_ends_with($part, '.') ? '.' : '');
+        } elseif (preg_match('/^[A-Z]{2,5}$/', $part) !== 1) {
+            $part = ucfirst(strtolower($part));
+        }
+    }
+    unset($part);
+    return implode(' ', $parts);
+}
+
+function tdc_receipt_title_case(string $value): string
+{
+    $parts = preg_split('/\s+/', trim($value)) ?: [];
+    foreach ($parts as &$part) {
+        if (preg_match('/^[A-Z]{2,5}$/', $part) !== 1) $part = ucfirst(strtolower($part));
+    }
+    unset($part);
+    return implode(' ', $parts);
+}
+
+function tdc_receipt_route(string $route): string
+{
+    $route = trim($route);
+    return in_array(strtoupper($route), ['PO', 'IM', 'IV'], true) ? strtoupper($route) : tdc_receipt_title_case($route);
+}
+
 /** Strict Y-m-d date validator (rejects "2026-02-31" style overflow dates). */
 function tdc_is_valid_date(string $date): bool
 {
@@ -324,7 +356,7 @@ function tdc_fetch_stock_map(PDO $pdo, array $itemIds): array
     }
 
     $placeholders = implode(',', array_fill(0, count($itemIds), '?'));
-    $stmt = $pdo->prepare("SELECT ItemID, ItemName, SellingPrice, QuantityInStock FROM inventory WHERE ItemID IN ({$placeholders})");
+    $stmt = $pdo->prepare("SELECT ItemID, ItemName, SellingPrice, QuantityInStock, LastAcquisitionCostPerUnit FROM inventory WHERE ItemID IN ({$placeholders})");
     $stmt->execute(array_values($itemIds));
 
     $map = [];
@@ -333,6 +365,7 @@ function tdc_fetch_stock_map(PDO $pdo, array $itemIds): array
             'name'  => $row['ItemName'],
             'price' => (float) $row['SellingPrice'],
             'stock' => (int) $row['QuantityInStock'],
+            'cost'  => tdc_sale_cost_snapshot($row),
         ];
     }
     return $map;
@@ -641,12 +674,15 @@ function tdc_upsert_inventory_from_purchase(PDO $pdo, array $line, int $supplier
     }
 
     $addQty = (int) round($line['Quantity'] * $line['ConversionFactor']);
+    $costPerUnit = tdc_purchase_cost_per_sales_unit((float) $line['UnitPrice'], (float) $line['ConversionFactor']);
 
     if ($existingId !== false) {
         $upd = $pdo->prepare(
             'UPDATE inventory SET QuantityInStock = QuantityInStock + :addQty, Category = COALESCE(:Category, Category),
                 SalesUnit = COALESCE(:SalesUnit, SalesUnit), SellingPrice = :SellingPrice,
-                SupplierID = :SupplierID, ExpiryDate = COALESCE(:ExpiryDate, ExpiryDate)
+                LastAcquisitionCostPerUnit = :LastAcquisitionCostPerUnit,
+                SupplierID = :SupplierID,
+                ExpiryDate = CASE WHEN ExpiryDate IS NULL THEN :ExpiryDate ELSE ExpiryDate END
              WHERE ItemID = :id'
         );
         $upd->execute([
@@ -654,6 +690,7 @@ function tdc_upsert_inventory_from_purchase(PDO $pdo, array $line, int $supplier
             'Category'     => $line['Category'] !== '' ? $line['Category'] : null,
             'SalesUnit'    => $line['SalesUnit'] !== '' ? $line['SalesUnit'] : null,
             'SellingPrice' => $line['SellingPrice'],
+            'LastAcquisitionCostPerUnit' => $costPerUnit,
             'SupplierID'   => $supplierId,
             'ExpiryDate'   => $line['ExpiryDate'] !== '' ? $line['ExpiryDate'] : null,
             'id'           => $existingId,
@@ -663,8 +700,8 @@ function tdc_upsert_inventory_from_purchase(PDO $pdo, array $line, int $supplier
 
     $itemId = tdc_next_ref($pdo, 'inventory', 'ItemID', 'ITM');
     $ins = $pdo->prepare(
-        'INSERT INTO inventory (ItemID, Category, ItemName, QuantityInStock, SalesUnit, SellingPrice, ReorderLevel, ExpiryDate, SupplierID)
-         VALUES (:ItemID, :Category, :ItemName, :QuantityInStock, :SalesUnit, :SellingPrice, 10, :ExpiryDate, :SupplierID)'
+        'INSERT INTO inventory (ItemID, Category, ItemName, QuantityInStock, SalesUnit, SellingPrice, LastAcquisitionCostPerUnit, ReorderLevel, ExpiryDate, SupplierID)
+         VALUES (:ItemID, :Category, :ItemName, :QuantityInStock, :SalesUnit, :SellingPrice, :LastAcquisitionCostPerUnit, 10, :ExpiryDate, :SupplierID)'
     );
     $ins->execute([
         'ItemID'          => $itemId,
@@ -673,6 +710,7 @@ function tdc_upsert_inventory_from_purchase(PDO $pdo, array $line, int $supplier
         'QuantityInStock' => $addQty,
         'SalesUnit'       => $line['SalesUnit'] !== '' ? $line['SalesUnit'] : null,
         'SellingPrice'    => $line['SellingPrice'],
+        'LastAcquisitionCostPerUnit' => $costPerUnit,
         'ExpiryDate'      => $line['ExpiryDate'] !== '' ? $line['ExpiryDate'] : null,
         'SupplierID'      => $supplierId,
     ]);
@@ -733,11 +771,11 @@ function tdc_save_purchase(PDO $pdo, array $input): string
     $pdo->beginTransaction();
     try {
         $insert = $pdo->prepare(
-            'INSERT INTO purchases (PurchaseID, SupplierID, SupplierName, SupplierPhone, ReferenceNumber, Category, ItemName,
-                Quantity, MinimumQuantity, PurchaseUnit, ConversionFactor, SalesUnit, UnitPrice, SellingPrice,
+            'INSERT INTO purchases (PurchaseID, SupplierID, ItemID, SupplierName, SupplierPhone, ReferenceNumber, Category, ItemName,
+                Quantity, MinimumQuantity, PurchaseUnit, ConversionFactor, SalesUnit, UnitPrice, SellingPrice, ExpiryDate,
                 TotalAmount, AmountPaid, DueBalance, Discount, VATAmount, PurchaseDate)
-             VALUES (:PurchaseID, :SupplierID, :SupplierName, :SupplierPhone, :ReferenceNumber, :Category, :ItemName,
-                :Quantity, 10, :PurchaseUnit, :ConversionFactor, :SalesUnit, :UnitPrice, :SellingPrice,
+             VALUES (:PurchaseID, :SupplierID, :ItemID, :SupplierName, :SupplierPhone, :ReferenceNumber, :Category, :ItemName,
+                :Quantity, 10, :PurchaseUnit, :ConversionFactor, :SalesUnit, :UnitPrice, :SellingPrice, :ExpiryDate,
                 :TotalAmount, :AmountPaid, :DueBalance, :Discount, :VATAmount, :PurchaseDate)'
         );
 
@@ -747,6 +785,7 @@ function tdc_save_purchase(PDO $pdo, array $input): string
             $insert->execute([
                 'PurchaseID'       => $base . '-' . str_pad((string) $line, 2, '0', STR_PAD_LEFT),
                 'SupplierID'       => $supplierId,
+                'ItemID'           => $l['ItemID'] !== '' ? $l['ItemID'] : null,
                 'SupplierName'     => $input['SupplierName'],
                 'SupplierPhone'    => $input['SupplierPhone'] !== '' ? $input['SupplierPhone'] : null,
                 'ReferenceNumber'  => $reference !== '' ? $reference : null,
@@ -758,6 +797,7 @@ function tdc_save_purchase(PDO $pdo, array $input): string
                 'SalesUnit'        => $l['SalesUnit'] !== '' ? $l['SalesUnit'] : null,
                 'UnitPrice'        => $l['UnitPrice'],
                 'SellingPrice'     => $l['SellingPrice'],
+                'ExpiryDate'       => $l['ExpiryDate'] !== '' ? $l['ExpiryDate'] : null,
                 'TotalAmount'      => $netAmount,
                 'AmountPaid'       => $amountPaid,
                 'DueBalance'       => $dueBalance,
@@ -834,6 +874,32 @@ function tdc_void_purchase(PDO $pdo, string $base): array
  */
 function tdc_save_sale(PDO $pdo, array $input, array $stockByItemId): string
 {
+    $patientId = null;
+    $visitId = null;
+    $customerName = trim((string) ($input['CustomerName'] ?? ''));
+    $customerPhone = trim((string) ($input['CustomerPhone'] ?? ''));
+    $selectedPatientId = (int) ($input['PatientID'] ?? 0);
+    if ($selectedPatientId > 0) {
+        $patientStmt = $pdo->prepare('SELECT PatientID, PatientName, PatientPhone FROM patients WHERE PatientID=? LIMIT 1');
+        $patientStmt->execute([$selectedPatientId]);
+        $patient = $patientStmt->fetch();
+        if (!$patient) throw new RuntimeException('The selected registered patient was not found.');
+        $patientId = (int) $patient['PatientID'];
+        $customerName = (string) $patient['PatientName'];
+        $customerPhone = (string) ($patient['PatientPhone'] ?? '');
+        $selectedVisitId = (int) ($input['VisitID'] ?? 0);
+        if ($selectedVisitId > 0) {
+            $visitStmt = $pdo->prepare('SELECT VisitID FROM visits WHERE VisitID=? AND PatientID=? AND QueueStatus<>\'Cancelled\' LIMIT 1');
+            $visitStmt->execute([$selectedVisitId, $patientId]);
+            if (!$visitStmt->fetchColumn()) throw new RuntimeException('The selected visit does not belong to the registered patient.');
+            $visitId = $selectedVisitId;
+        }
+    } elseif ((int) ($input['VisitID'] ?? 0) > 0) {
+        throw new RuntimeException('Select a registered patient before linking a visit.');
+    }
+    $paymentMethod = trim((string) ($input['PaymentMethod'] ?? ''));
+    if ($paymentMethod === '') throw new RuntimeException('Select a payment method for a POS payment.');
+
     $base = tdc_next_bill_base($pdo, 'pharmacysales', 'SaleID', 'POS');
 
     $lines       = [];
@@ -857,6 +923,8 @@ function tdc_save_sale(PDO $pdo, array $input, array $stockByItemId): string
             'Quantity'  => $qty,
             'UnitPrice' => $unitPrice,
             'LineTotal' => $lineTotal,
+            'CostPerUnitSnapshot' => $stockByItemId[$itemId]['cost'],
+            'LineCost' => $stockByItemId[$itemId]['cost'] === null ? null : round($qty * $stockByItemId[$itemId]['cost'], 2),
         ];
     }
 
@@ -867,9 +935,9 @@ function tdc_save_sale(PDO $pdo, array $input, array $stockByItemId): string
     $pdo->beginTransaction();
     try {
         $insert = $pdo->prepare(
-            'INSERT INTO pharmacysales (SaleID, ItemID, ItemName, Quantity, UnitPrice, LineTotal,
+            'INSERT INTO pharmacysales (SaleID, ItemID, ItemName, Quantity, UnitPrice, LineTotal, CostPerUnitSnapshot, LineCost,
                 TotalAmount, AmountPaid, DueBalance, PaymentStatus, CustomerName, CustomerPhone, SoldBy)
-             VALUES (:SaleID, :ItemID, :ItemName, :Quantity, :UnitPrice, :LineTotal,
+             VALUES (:SaleID, :ItemID, :ItemName, :Quantity, :UnitPrice, :LineTotal, :CostPerUnitSnapshot, :LineCost,
                 :TotalAmount, :AmountPaid, :DueBalance, :PaymentStatus, :CustomerName, :CustomerPhone, :SoldBy)'
         );
 
@@ -892,12 +960,14 @@ function tdc_save_sale(PDO $pdo, array $input, array $stockByItemId): string
                 'Quantity'      => $l['Quantity'],
                 'UnitPrice'     => $l['UnitPrice'],
                 'LineTotal'     => $l['LineTotal'],
+                'CostPerUnitSnapshot' => $l['CostPerUnitSnapshot'],
+                'LineCost'      => $l['LineCost'],
                 'TotalAmount'   => $totalAmount,
                 'AmountPaid'    => $amountPaid,
                 'DueBalance'    => $dueBalance,
                 'PaymentStatus' => $paymentStatus,
-                'CustomerName'  => $input['CustomerName'] !== '' ? $input['CustomerName'] : null,
-                'CustomerPhone' => $input['CustomerPhone'] !== '' ? $input['CustomerPhone'] : null,
+                'CustomerName'  => $customerName !== '' ? $customerName : null,
+                'CustomerPhone' => $customerPhone !== '' ? $customerPhone : null,
                 'SoldBy'        => $_SESSION['user_id'] ?? null,
             ]);
 
@@ -907,7 +977,16 @@ function tdc_save_sale(PDO $pdo, array $input, array $stockByItemId): string
             }
         }
 
-        tdc_workflow_post_revenue($pdo, 'REV-PHARM', 'Pharmacy Revenue', $base, 'Point of sale collection ' . $base, $amountPaid);
+        if ($patientId !== null) {
+            $pdo->prepare('UPDATE pharmacysales SET PatientID=?, VisitID=? WHERE SaleID LIKE ?')->execute([$patientId, $visitId, $base . '-%']);
+        }
+        $paymentReference = tdc_workflow_record_payment($pdo, $patientId ?? 0, 'POS', $amountPaid, (int) ($_SESSION['user_id'] ?? 0), [
+            'SaleReference' => $base,
+            'VisitID' => $visitId,
+            'PaymentMethod' => $paymentMethod,
+        ]);
+
+        if ($paymentReference) tdc_workflow_post_revenue($pdo, 'REV-PHARM', 'Pharmacy Revenue', $base, 'Point of sale collection ' . $base, $amountPaid, $paymentMethod);
 
         $pdo->commit();
     } catch (Throwable $e) {
@@ -939,8 +1018,13 @@ function tdc_void_sale(PDO $pdo, string $base): array
         $del = $pdo->prepare('DELETE FROM pharmacysales WHERE SaleID LIKE :pattern');
         $del->execute(['pattern' => $base . '-%']);
 
-        $delAccounting = $pdo->prepare("DELETE FROM accounting WHERE ReferenceID=? AND AccountID='REV-PHARM'");
-        $delAccounting->execute([$base]);
+        $original = $pdo->prepare('SELECT AccountID,AccountName,AccountType,BookType,Description,Debit,Credit FROM accounting WHERE ReferenceID=?');
+        $original->execute([$base]);
+        $reverse = $pdo->prepare('INSERT INTO accounting (EntryID,AccountID,AccountName,AccountType,BookType,ReferenceID,Description,Debit,Credit,Balance) VALUES (?,?,?,?,?,?,?,?,?,?)');
+        foreach ($original->fetchAll() as $entry) {
+            $entryId = tdc_workflow_next_reference($pdo, 'accounting', 'EntryID', 'JRN');
+            $reverse->execute([$entryId,$entry['AccountID'],$entry['AccountName'],$entry['AccountType'],$entry['BookType'],$base . '-VOID','Reversal of ' . $base,$entry['Credit'],$entry['Debit'],$entry['Credit'] - $entry['Debit']]);
+        }
 
         $pdo->commit();
     } catch (Throwable $e) {
@@ -968,10 +1052,23 @@ tdc_require_permission('pharmacy.view');
 
 require_once __DIR__ . '/../../db.php';
 require_once __DIR__ . '/../includes/workflow.php';
+require_once __DIR__ . '/../includes/pharmacy-costing.php';
 require_once __DIR__ . '/../includes/ui.php';
 require_once __DIR__ . '/../includes/data-transfer.php';
+require_once __DIR__ . '/../includes/legacy-pos.php';
 $paymentMethods = tdc_payment_methods($pdo);
 $paymentMethodNames = array_column($paymentMethods, 'MethodName');
+$clinicSettings = [];
+try {
+    foreach ($pdo->query('SELECT SettingKey, SettingValue FROM clinicsettings')->fetchAll() as $setting) {
+        $clinicSettings[(string) $setting['SettingKey']] = (string) ($setting['SettingValue'] ?? '');
+    }
+} catch (Throwable $e) {
+    // The fallback identity keeps receipts usable on older schemas.
+}
+$receiptClinicName = trim($clinicSettings['clinic_name'] ?? ($clinicSettings['ClinicName'] ?? '')) ?: 'Tarey Derma Clinic';
+$receiptClinicAddress = trim($clinicSettings['address'] ?? ($clinicSettings['ClinicAddress'] ?? '')) ?: 'Degmada Hodan, Isgoyska Al-barako';
+$receiptClinicPhone = trim($clinicSettings['phone'] ?? ($clinicSettings['PhoneNumbers'] ?? '')) ?: '615019253';
 
 if (empty($_SESSION['csrf_token'])) {
     $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
@@ -993,7 +1090,7 @@ if ($section === 'purchases' && !$canViewPurchaseCost && ($_SERVER['REQUEST_METH
 $errors = [];
 
 $oldSale = [
-    'CustomerName' => '', 'CustomerPhone' => '', 'AmountPaid' => '',
+    'CustomerName' => '', 'CustomerPhone' => '', 'PatientID' => 0, 'VisitID' => 0, 'AmountPaid' => '', 'PaymentMethod' => 'Cash',
     'ItemID' => [], 'Quantity' => [], 'UnitPrice' => [],
 ];
 
@@ -1011,6 +1108,7 @@ $oldInventory = [
 ];
 
 $posShowForm      = false;
+$posHistory       = ($section === 'pos' && (string) ($_GET['view_mode'] ?? '') === 'history');
 $purchaseShowForm = false;
 
 // =======================================================================
@@ -1041,13 +1139,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($section, ALLOWED_SECTIONS
                     $qty=max(1,(int)$line['Quantity']);
                     if(!$item) throw new RuntimeException('No inventory item matches '.$line['MedicationName'].'.');
                     if((int)$item['QuantityInStock']<$qty) throw new RuntimeException('Insufficient stock for '.$line['MedicationName'].'.');
-                    $lineTotal=round($qty*(float)$item['SellingPrice'],2);$total+=$lineTotal;$saleLines[]=[$line,$item,$qty,$lineTotal];
+                    $lineTotal=round($qty*(float)$item['SellingPrice'],2);$total+=$lineTotal;$saleLines[]=[$line,$item,$qty,$lineTotal,tdc_sale_cost_snapshot($item)];
                 }
                 if($amountPaid<0||$amountPaid>$total) throw new RuntimeException('Amount paid must be between zero and the bill total.');
                 $saleBase=tdc_next_bill_base($pdo,'pharmacysales','SaleID','POS');$status=tdc_workflow_payment_status($total,$amountPaid);$n=0;
-                $insert=$pdo->prepare('INSERT INTO pharmacysales (SaleID,ItemID,ItemName,Quantity,UnitPrice,LineTotal,TotalAmount,AmountPaid,DueBalance,PaymentStatus,CustomerName,CustomerPhone,SoldBy) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)');
+                $insert=$pdo->prepare('INSERT INTO pharmacysales (SaleID,ItemID,ItemName,Quantity,UnitPrice,LineTotal,CostPerUnitSnapshot,LineCost,TotalAmount,AmountPaid,DueBalance,PaymentStatus,CustomerName,CustomerPhone,PatientID,VisitID,SoldBy) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)');
                 $stock=$pdo->prepare('UPDATE inventory SET QuantityInStock=QuantityInStock-? WHERE ItemID=? AND QuantityInStock>=?');
-                foreach($saleLines as [$line,$item,$qty,$lineTotal]){$n++;$insert->execute([$saleBase.'-'.str_pad((string)$n,2,'0',STR_PAD_LEFT),$item['ItemID'],$item['ItemName'],$qty,$item['SellingPrice'],$lineTotal,$total,$amountPaid,max(0,$total-$amountPaid),$status,$line['PatientName'],$line['PatientPhone'],$_SESSION['user_id']]);$stock->execute([$qty,$item['ItemID'],$qty]);if(!$stock->rowCount())throw new RuntimeException('Stock changed while dispensing. Please retry.');}
+                foreach($saleLines as [$line,$item,$qty,$lineTotal,$costPerUnit]){$n++;$insert->execute([$saleBase.'-'.str_pad((string)$n,2,'0',STR_PAD_LEFT),$item['ItemID'],$item['ItemName'],$qty,$item['SellingPrice'],$lineTotal,$costPerUnit,$costPerUnit===null?null:round($qty*$costPerUnit,2),$total,$amountPaid,max(0,$total-$amountPaid),$status,$line['PatientName'],$line['PatientPhone'],$line['PatientID'],$line['VisitID'],$_SESSION['user_id']]);$stock->execute([$qty,$item['ItemID'],$qty]);if(!$stock->rowCount())throw new RuntimeException('Stock changed while dispensing. Please retry.');}
                 $stmt=$pdo->prepare("UPDATE prescriptions SET Status='Dispensed',DispensedAt=NOW(),DispensedBy=?,PharmacySaleReference=?,TotalAmount=?,AmountPaid=?,DueBalance=? WHERE PrescriptionID LIKE ?");$stmt->execute([$_SESSION['user_id'],$saleBase,$total,$amountPaid,max(0,$total-$amountPaid),$base.'-%']);
                 $patientId=(int)$lines[0]['PatientID'];$payRef=tdc_workflow_record_payment($pdo,$patientId,'Pharmacy',$amountPaid,(int)$_SESSION['user_id'],['PrescriptionReference'=>$base,'PaymentMethod'=>$paymentMethod]);if($payRef)tdc_workflow_post_revenue($pdo,'REV-PHARM','Pharmacy Revenue',$payRef,'Dispensing payment for '.$base,$amountPaid);
                 $stmt=$pdo->prepare('SELECT UserID FROM doctors WHERE DoctorID=?');$stmt->execute([$lines[0]['DoctorID']]);tdc_workflow_notify($pdo,(int)$stmt->fetchColumn(),'doctoruser','prescription_dispensed','Prescription dispensed',$base.' was dispensed as '.$saleBase,'doctors.php?visit='.(int)$lines[0]['VisitID']);
@@ -1057,7 +1155,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($section, ALLOWED_SECTIONS
         // --- Point of Sale ------------------------------------------
         } elseif ($section === 'pos') {
             tdc_require_permission('pharmacy.pos');
-            if ($formAction === 'void') {
+            if ($formAction === 'reconcile_legacy_payment_method') {
+                if (($_SESSION['role'] ?? '') !== 'superuser') {
+                    tdc_forbidden();
+                }
+                $base = preg_replace('/[^A-Za-z0-9]/', '', (string) ($_POST['SaleRef'] ?? ''));
+                try {
+                    tdc_reconcile_legacy_pos_payment(
+                        $pdo,
+                        $base,
+                        (string) ($_POST['PaymentMethod'] ?? ''),
+                        (string) ($_POST['Reason'] ?? ''),
+                        (int) ($_SESSION['user_id'] ?? 0)
+                    );
+                    header('Location: pharmacy.php?section=pos&view=' . urlencode($base) . '&legacy_payment_reconciled=1');
+                    exit;
+                } catch (Throwable $e) {
+                    error_log('[PHARMACY][POS] legacy payment reconciliation failed: ' . $e->getMessage());
+                    $errors[] = $e instanceof RuntimeException ? $e->getMessage() : 'The historical payment method could not be recorded.';
+                }
+            } elseif ($formAction === 'void') {
                 $base = preg_replace('/[^A-Za-z0-9]/', '', (string) ($_POST['SaleRef'] ?? ''));
                 if ($base === '') {
                     $errors[] = 'Invalid sale selected.';
@@ -1074,9 +1191,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($section, ALLOWED_SECTIONS
                     }
                 }
             } else {
+                if (!in_array($oldSale['PaymentMethod'], $paymentMethodNames, true)) tdc_forbidden();
                 $oldSale['CustomerName']  = trim((string) ($_POST['CustomerName'] ?? ''));
                 $oldSale['CustomerPhone'] = trim((string) ($_POST['CustomerPhone'] ?? ''));
+                $oldSale['PatientID']     = (int) ($_POST['PatientID'] ?? 0);
+                $oldSale['VisitID']       = (int) ($_POST['VisitID'] ?? 0);
                 $oldSale['AmountPaid']    = trim((string) ($_POST['AmountPaid'] ?? ''));
+                $oldSale['PaymentMethod'] = trim((string) ($_POST['PaymentMethod'] ?? 'Cash'));
                 $oldSale['ItemID']        = $_POST['ItemID'] ?? [];
                 $oldSale['Quantity']      = $_POST['Quantity'] ?? [];
                 $oldSale['UnitPrice']     = $_POST['UnitPrice'] ?? [];
@@ -1172,7 +1293,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($section, ALLOWED_SECTIONS
                     $unitStmt->execute([(string)$itemName]);
                     $unitDefaults = $unitStmt->fetch() ?: [];
                     foreach (['SalesUnit','Category','PurchaseUnit','ConversionFactor'] as $field) {
-                        if (trim((string)($oldPurchase[$field][$i] ?? '')) === '') $oldPurchase[$field][$i] = (string)($unitDefaults[$field] ?? ($field === 'ConversionFactor' ? '1' : ''));
+                        if (trim((string)($oldPurchase[$field][$i] ?? '')) === '') {
+                            $fallback = $field === 'ConversionFactor' ? '1' : '';
+                            if ($field === 'PurchaseUnit' && trim((string) ($unitDefaults['PurchaseUnit'] ?? '')) === '') {
+                                $fallback = (string) ($oldPurchase['SalesUnit'][$i] ?? '');
+                            }
+                            $oldPurchase[$field][$i] = (string)($unitDefaults[$field] ?? $fallback);
+                        }
                     }
                 }
                 $errors            = array_merge($errors, tdc_validate_purchase_form($oldPurchase));
@@ -1241,8 +1368,21 @@ $saleSearch         = '';
 $pharmacySales      = [];
 $viewSaleRef        = '';
 $viewSaleLines      = [];
+$viewSalePaid       = 0.0;
+$viewSaleHasLedgerPayment = false;
+$viewSalePaymentMethods = [];
+$viewSalePatient = null;
+$viewSaleVisit = null;
+$viewSalePrescriptionRows = [];
+$viewSalePrescriptionReference = '';
+$viewSaleHasAccounting = false;
+$viewSaleLegacyRepairEligible = false;
+$posPatients = [];
+$posVisits = [];
 
 if ($section === 'pos') {
+    $posPatients = $pdo->query('SELECT PatientID, PatientName, PatientPhone, Gender, Age, DateOfBirth FROM patients ORDER BY PatientName ASC LIMIT 500')->fetchAll();
+    $posVisits = $pdo->query("SELECT v.VisitID, v.VisitReference, v.PatientID, v.VisitDate, d.DoctorName, p.PatientName FROM visits v JOIN patients p ON p.PatientID=v.PatientID LEFT JOIN doctors d ON d.DoctorID=v.DoctorID WHERE v.QueueStatus <> 'Cancelled' ORDER BY v.VisitDate DESC LIMIT 500")->fetchAll();
     $inventoryForCombo = $pdo->query(
         'SELECT ItemID, ItemName, SellingPrice, QuantityInStock, SalesUnit FROM inventory
          WHERE QuantityInStock > 0 ORDER BY ItemName ASC LIMIT 500'
@@ -1274,8 +1414,44 @@ if ($section === 'pos') {
             $viewSaleLines = $stmt->fetchAll();
             if (empty($viewSaleLines)) {
                 $viewSaleRef = ''; // Unknown / stale ref — fall back to the list.
+            } else {
+                $paymentStmt = $pdo->prepare("SELECT PaymentMethod, COALESCE(SUM(Amount), 0) AS NetAmount
+                    FROM payments WHERE SaleReference = ? AND PaymentStatus = 'Confirmed'
+                    GROUP BY PaymentMethod HAVING COALESCE(SUM(Amount), 0) > 0 ORDER BY MIN(PaidAt), PaymentMethod");
+                $paymentStmt->execute([$viewSaleRef]);
+                $viewSalePaymentMethods = $paymentStmt->fetchAll();
+                $ledgerStmt = $pdo->prepare("SELECT COUNT(*), COALESCE(SUM(Amount), 0) FROM payments WHERE SaleReference = ? AND PaymentStatus = 'Confirmed'");
+                $ledgerStmt->execute([$viewSaleRef]);
+                $ledgerRow = $ledgerStmt->fetch(PDO::FETCH_NUM) ?: [0, 0];
+                $viewSaleHasLedgerPayment = (int) $ledgerRow[0] > 0;
+                $viewSalePaid = round((float) $ledgerRow[1], 2);
+                $accountingStmt = $pdo->prepare('SELECT COUNT(*) FROM accounting WHERE ReferenceID=?');
+                $accountingStmt->execute([$viewSaleRef]);
+                $viewSaleHasAccounting = (int) $accountingStmt->fetchColumn() > 0;
+                $salePatientId = (int) ($viewSaleLines[0]['PatientID'] ?? 0);
+                $saleVisitId = (int) ($viewSaleLines[0]['VisitID'] ?? 0);
+                $prescriptionStmt = $pdo->prepare('SELECT * FROM prescriptions WHERE PharmacySaleReference=? ORDER BY PrescriptionID ASC');
+                $prescriptionStmt->execute([$viewSaleRef]);
+                $viewSalePrescriptionRows = $prescriptionStmt->fetchAll();
+                if ($viewSalePrescriptionRows) {
+                    $viewSalePrescriptionReference = (string) (preg_replace('/-[^-]+$/', '', (string) $viewSalePrescriptionRows[0]['PrescriptionID']) ?: '');
+                }
+                if ($salePatientId > 0) {
+                    $patientStmt = $pdo->prepare('SELECT PatientID, PatientName, PatientPhone, Gender, Age, DateOfBirth FROM patients WHERE PatientID=? LIMIT 1');
+                    $patientStmt->execute([$salePatientId]);
+                    $viewSalePatient = $patientStmt->fetch() ?: null;
+                }
+                if ($saleVisitId > 0) {
+                    $visitStmt = $pdo->prepare('SELECT v.VisitID, v.VisitReference, d.DoctorName, d.Specialty FROM visits v LEFT JOIN doctors d ON d.DoctorID=v.DoctorID WHERE v.VisitID=? LIMIT 1');
+                    $visitStmt->execute([$saleVisitId]);
+                    $viewSaleVisit = $visitStmt->fetch() ?: null;
+                }
+                $viewSaleLegacyRepairEligible = ($_SESSION['role'] ?? '') === 'superuser'
+                    && !$viewSaleHasLedgerPayment
+                    && (float) ($viewSaleLines[0]['AmountPaid'] ?? 0) > 0
+                    && !$viewSalePaymentMethods;
             }
-        } elseif (isset($_GET['new'])) {
+        } elseif (isset($_GET['new']) || !$posHistory) {
             $posShowForm = true;
         }
     }
@@ -1294,7 +1470,7 @@ $viewPORef            = '';
 $viewPOLines          = [];
 
 if ($section === 'purchases') {
-    $purchaseUnitOptions = $pdo->query('SELECT ItemID, ItemName, Category, SalesUnit, SellingPrice, QuantityInStock, DefaultPurchaseUnit, UnitsPerPackage FROM inventory ORDER BY ItemName')->fetchAll();
+    $purchaseUnitOptions = $pdo->query('SELECT ItemID, ItemName, Category, SalesUnit, SellingPrice, QuantityInStock, ExpiryDate, DefaultPurchaseUnit, UnitsPerPackage FROM inventory ORDER BY ItemName')->fetchAll();
     foreach ($purchaseUnitOptions as $key => $row) {
         $purchaseUnitOptions[$key]['SalesUnit']          = tdc_norm_unit($row['SalesUnit'] ?? null);
         $purchaseUnitOptions[$key]['DefaultPurchaseUnit'] = tdc_norm_unit($row['DefaultPurchaseUnit'] ?? null);
@@ -1398,7 +1574,7 @@ if ($section === 'purchases') {
     if (empty($errors)) {
         if (isset($_GET['view'])) {
             $viewPORef = preg_replace('/[^A-Za-z0-9]/', '', (string) $_GET['view']);
-            $stmt = $pdo->prepare('SELECT ' . ($canViewPurchaseCost ? '*' : 'PurchaseID,SupplierName,SupplierPhone,ReferenceNumber,ItemName,Category,Quantity,PurchaseUnit,SalesUnit,SellingPrice,PurchaseDate') . ' FROM purchases WHERE PurchaseID LIKE :pattern ORDER BY PurchaseID ASC');
+            $stmt = $pdo->prepare('SELECT ' . ($canViewPurchaseCost ? '*' : 'PurchaseID,SupplierName,SupplierPhone,ReferenceNumber,ItemName,Category,Quantity,PurchaseUnit,SalesUnit,SellingPrice,ExpiryDate,PurchaseDate') . ' FROM purchases WHERE PurchaseID LIKE :pattern ORDER BY PurchaseID ASC');
             $stmt->execute(['pattern' => $viewPORef . '-%']);
             $viewPOLines = $stmt->fetchAll();
             if (empty($viewPOLines)) {
@@ -1463,6 +1639,7 @@ $currentPage   = basename((string) ($_SERVER['SCRIPT_NAME'] ?? 'pharmacy.php'));
 $justSaved   = isset($_GET['success']);
 $justDeleted = isset($_GET['deleted']);
 $justVoided  = isset($_GET['voided']);
+$legacyPaymentReconciled = isset($_GET['legacy_payment_reconciled']);
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -1591,7 +1768,7 @@ $justVoided  = isset($_GET['voided']);
     .line-items input{ width:100%; padding:7px 8px; border:1.5px solid rgba(46,49,146,0.3); font-size:13px; font-family:'Google Sans',sans-serif; color:var(--navy); }
     .line-items input:focus{ outline:none; border-color:var(--orange); }
     .remove-line-btn{ background:none; border:none; color:#c0392b; cursor:pointer; font-size:20px; line-height:1; padding:4px; }
-    .purchase-qty-hint, .purchase-cost-hint, .purchase-selling-hint{ display:block; margin-top:4px; font-size:11.5px; color:var(--navy-55); }
+    .purchase-qty-hint, .purchase-cost-hint, .purchase-selling-hint, .purchase-expiry-hint{ display:block; margin-top:4px; font-size:11.5px; color:var(--navy-55); }
     .col-medicine{ min-width:220px; width:26%; }
     .col-actions{ width:56px; min-width:56px; text-align:center; }
     .purchase-pkg-unavailable{ display:block; margin-top:6px; font-size:11.5px; color:var(--navy-55); }
@@ -1606,6 +1783,54 @@ $justVoided  = isset($_GET['voided']);
     .info-field .info-label{ font-size:11px; font-weight:700; letter-spacing:0.06em; text-transform:uppercase; color:var(--navy-55); margin-bottom:4px; }
     .info-field .info-value{ font-size:14.5px; font-weight:600; color:var(--navy); word-break:break-word; }
     .subsection-title{ font-size:16px; font-weight:700; color:var(--navy); margin-bottom:12px; }
+
+    .receipt-preview-shell{ background:#eef0f4; margin:0 -24px -40px; padding:24px; overflow-x:auto; }
+    .receipt-toolbar{ display:flex; justify-content:space-between; align-items:center; gap:12px; max-width:210mm; margin:0 auto 16px; }
+    .receipt-paper{ box-sizing:border-box; width:210mm; min-height:297mm; margin:0 auto; padding:12mm 11mm; background:#fff; border:1px solid #222; box-shadow:0 8px 24px rgba(0,0,0,.12); color:#111; font-family:"Times New Roman", Times, Georgia, serif; }
+    .receipt-paper{ display:flex; flex-direction:column; }
+    .receipt-letterhead{ order:1; }
+    .prescription-meta{ order:2; }
+    .prescription-table{ order:3; }
+    .receipt-payment-note,.receipt-signature{ order:4; }
+    .receipt-paper > .receipt-table,.receipt-paper > .receipt-financials,.receipt-paper > .receipt-legacy-content{ display:none; }
+    .receipt-letterhead{ display:grid; grid-template-columns:155px 1fr 155px; align-items:center; gap:10px; padding-bottom:8px; border-bottom:1px solid #333; }
+    .receipt-letterhead::after{ content:""; display:block; }
+    .receipt-logo{ display:block; width:155px; height:100px; object-fit:contain; object-position:left center; }
+    .receipt-clinic-identity{ text-align:center; }
+    .receipt-clinic-name{ font-size:24px; line-height:1.1; font-weight:700; letter-spacing:.3px; text-transform:uppercase; }
+    .receipt-clinic-address{ margin-top:3px; font-size:15px; font-weight:600; line-height:1.15; }
+    .receipt-clinic-phone{ margin-top:2px; font-size:14px; font-weight:600; }
+    .receipt-meta{ display:grid; grid-template-columns:1fr 1fr; gap:3px 38px; margin:13px 0 16px; font-size:14px; line-height:1.35; }
+    .receipt-meta-column{ display:grid; gap:3px; }
+    .receipt-meta-line{ display:grid; grid-template-columns:105px 1fr; min-width:0; }
+    .receipt-meta-label{ font-weight:700; }
+    .receipt-meta-value{ overflow-wrap:anywhere; }
+    .receipt-paper > .receipt-meta:not(.prescription-meta){ display:none; }
+    .prescription-meta{ display:grid; grid-template-columns:60% 40%; gap:3px 28px; margin:7px 0 8px; font-size:13px; line-height:1.2; }
+    .prescription-meta .receipt-meta-column{ gap:2px; }
+    .prescription-meta .receipt-meta-line{ grid-template-columns:105px 1fr; min-height:18px; }
+    .receipt-doctor-detail{ font-size:12px; }
+    .prescription-table{ width:100%; border-collapse:collapse; table-layout:fixed; font-size:12px; }
+    .prescription-table th,.prescription-table td{ border:1px solid #444; padding:3px 6px; color:#111; line-height:1.15; }
+    .prescription-table th{ background:#fff; font-weight:700; text-align:center; }
+    .prescription-table th:nth-child(1),.prescription-table td:nth-child(1){ width:8%; text-align:center; }
+    .prescription-table th:nth-child(2),.prescription-table td:nth-child(2){ width:42%; text-align:left; }
+    .prescription-table th:nth-child(3),.prescription-table td:nth-child(3){ width:17%; text-align:center; }
+    .prescription-table th:nth-child(4),.prescription-table td:nth-child(4){ width:18%; text-align:center; }
+    .prescription-table th:nth-child(5),.prescription-table td:nth-child(5){ width:15%; text-align:center; }
+    .receipt-payment-note{ margin-top:8px; font-size:12px; }
+    .receipt-table th,.receipt-table td{ border:1px solid #222; padding:6px 7px; color:#111; }
+    .receipt-table th{ font-weight:700; text-align:left; }
+    .receipt-table th:first-child,.receipt-table td:first-child,.receipt-table th:nth-child(3),.receipt-table td:nth-child(3){ text-align:center; }
+    .receipt-table th:nth-child(n+4),.receipt-table td:nth-child(n+4){ text-align:right; }
+    .receipt-financials{ display:grid; grid-template-columns:1fr 190px; gap:22px; margin-top:15px; font-size:14px; line-height:1.5; }
+    .receipt-finance-left{ align-self:start; }
+    .receipt-totals{ display:grid; grid-template-columns:1fr auto; gap:2px 12px; text-align:right; }
+    .receipt-totals .receipt-total-label{ font-weight:700; }
+    .receipt-signature{ margin-top:14px; font-size:13px; }
+    .receipt-signature-line{ display:inline-block; min-width:290px; border-bottom:1px solid #222; height:1em; vertical-align:bottom; }
+    .receipt-legacy-content{ display:none; }
+    .receipt-paper > .receipt-meta:not(.prescription-meta){ display:none; }
 
 
     #js-toast{ position:fixed; bottom:28px; left:50%; transform:translateX(-50%) translateY(20px); display:flex; align-items:center; gap:8px; background:var(--white); border:2px solid var(--navy); color:var(--navy); font-size:13px; font-weight:500; padding:10px 18px; white-space:nowrap; z-index:9999; opacity:0; pointer-events:none; transition:opacity 0.2s ease, transform 0.2s ease; }
@@ -1624,7 +1849,13 @@ $justVoided  = isset($_GET['voided']);
         .app-header, .logout-fab, #js-toast, .no-print{ display:none !important; }
         .page-body{ padding:0; }
         .info-grid, .data-table-wrap{ max-width:100%; }
+        body{ background:#fff !important; }
+        .receipt-preview-shell{ margin:0; padding:0; overflow:visible; background:#fff; }
+        .receipt-toolbar{ display:none !important; }
+        .receipt-paper{ width:100%; min-height:auto; margin:0; padding:12mm 11mm; border:1px solid #222; box-shadow:none; }
+        .prescription-table tr{ break-inside:avoid; page-break-inside:avoid; }
     }
+    @media (max-width:700px){ .receipt-preview-shell{ margin:0 -16px -32px; padding:16px; } .receipt-paper{ padding:12mm 10mm 14mm; } .receipt-letterhead{ grid-template-columns:105px 1fr; gap:10px; } .receipt-letterhead::after{ display:none; } .receipt-logo{ width:105px; height:82px; } .receipt-clinic-name{ font-size:21px; } .receipt-meta{ gap:3px 16px; } .receipt-meta-line{ grid-template-columns:88px 1fr; } }
 </style>
 <link rel="stylesheet" href="../assets/clinic.css">
 <script src="../assets/clinic.js" defer></script>
@@ -1736,7 +1967,33 @@ $justVoided  = isset($_GET['voided']);
     <?php elseif ($section === 'pos'): ?>
 
         <?php if ($viewSaleRef !== ''): ?>
-        <?php $head = $viewSaleLines[0]; ?>
+        <?php $receiptAge = $viewSalePatient ? (($viewSalePatient['DateOfBirth'] ?? '') !== '' ? (string) tdc_age_from_birth_date((string) $viewSalePatient['DateOfBirth']) : (string) ($viewSalePatient['Age'] ?? '')) : ''; $receiptPatientId = $viewSalePatient ? (string) $viewSalePatient['PatientID'] : ''; $receiptPatientName = $viewSalePatient ? (string) $viewSalePatient['PatientName'] : (string) ($viewSaleLines[0]['CustomerName'] ?? ''); $receiptPhone = $viewSalePatient ? (string) ($viewSalePatient['PatientPhone'] ?? '') : (string) ($viewSaleLines[0]['CustomerPhone'] ?? ''); $receiptGender = $viewSalePatient ? (string) ($viewSalePatient['Gender'] ?? '') : ''; $receiptDoctor = $viewSaleVisit ? (string) ($viewSaleVisit['DoctorName'] ?? '') : ''; $receiptVisitNumber = $viewSaleVisit ? (string) ($viewSaleVisit['VisitReference'] ?? ($viewSaleVisit['VisitNumber'] ?? '')) : ''; ?>
+        <?php $head = $viewSaleLines[0]; $receiptTotal = (float) $head['TotalAmount']; $receiptPaid = $viewSalePaymentMethods ? $viewSalePaid : (float) $head['AmountPaid']; $receiptDue = max(0, round($receiptTotal - $receiptPaid, 2)); $receiptMethods = $viewSalePaymentMethods ? implode(' / ', array_map(static fn(array $m): string => (string) $m['PaymentMethod'], $viewSalePaymentMethods)) : '—'; ?>
+        <?php $receiptPaid = $viewSaleHasLedgerPayment ? $viewSalePaid : (float) $head['AmountPaid']; $receiptDue = max(0, round((float) $head['TotalAmount'] - $receiptPaid, 2)); $receiptMethods = $viewSalePaymentMethods ? implode(' / ', array_map(static fn(array $m): string => (string) $m['PaymentMethod'], $viewSalePaymentMethods)) : '—'; ?>
+        <?php $receiptSpecialty = $viewSaleVisit ? (string) ($viewSaleVisit['Specialty'] ?? '') : ''; $receiptDate = $viewSalePrescriptionRows ? (string) ($viewSalePrescriptionRows[0]['PrescriptionDate'] ?? $head['SaleDate']) : (string) $head['SaleDate']; $medicalRows = $viewSalePrescriptionRows ?: array_map(static fn(array $line): array => ['MedicationName' => $line['ItemName'] ?? '', 'Quantity' => $line['Quantity'] ?? '', 'Frequency' => '', 'Route' => ''], $viewSaleLines); ?>
+        <?php
+        $receiptPatientName = $receiptPatientName !== '' ? strtoupper($receiptPatientName) : '';
+        $receiptDoctor = $receiptDoctor !== '' ? tdc_receipt_person_name($receiptDoctor) : '';
+        $receiptSpecialty = $receiptSpecialty !== '' ? tdc_receipt_title_case($receiptSpecialty) : '';
+        $receiptGender = $receiptGender !== '' ? tdc_receipt_title_case($receiptGender) : '';
+        $medicalRows = array_map(static function (array $medicine): array {
+            $medicine['MedicationName'] = tdc_receipt_title_case((string) ($medicine['MedicationName'] ?? ''));
+            $medicine['Route'] = tdc_receipt_route((string) ($medicine['Route'] ?? ''));
+            return $medicine;
+        }, $medicalRows);
+        ?>
+        <div class="receipt-preview-shell">
+            <div class="receipt-toolbar no-print"><a href="pharmacy.php?section=pos" class="back-link">&larr; Back to Point of Sale</a><div class="row-actions"><button type="button" class="btn-primary btn" onclick="window.print()"><?= tdc_icon('printer',16) ?><span>Print Receipt</span></button><form method="POST" action="pharmacy.php?section=pos" data-confirm="Void this sale? Stock will be restored. This cannot be undone."><input type="hidden" name="csrf_token" value="<?= tdc_e($csrfToken) ?>"><input type="hidden" name="form_action" value="void"><input type="hidden" name="SaleRef" value="<?= tdc_e($viewSaleRef) ?>"><button type="submit" class="btn-danger btn-sm danger">Void Sale</button></form></div></div>
+            <article class="receipt-paper" aria-label="Medical prescription <?= tdc_e($viewSaleRef) ?>">
+                <section class="receipt-meta prescription-meta" aria-label="Patient and visit information"><div class="receipt-meta-column"><div class="receipt-meta-line"><span class="receipt-meta-label">Patient ID:</span><span class="receipt-meta-value"><?= tdc_e($receiptPatientId !== '' ? $receiptPatientId : '—') ?></span></div><div class="receipt-meta-line"><span class="receipt-meta-label">Patient Name:</span><span class="receipt-meta-value"><?= tdc_e($receiptPatientName !== '' ? $receiptPatientName : '—') ?></span></div><div class="receipt-meta-line"><span class="receipt-meta-label">Doctor:</span><span class="receipt-meta-value"><?= tdc_e($receiptDoctor !== '' ? $receiptDoctor : '—') ?><?php if ($receiptSpecialty !== ''): ?><br><span class="receipt-doctor-detail"><?= tdc_e($receiptSpecialty) ?></span><?php endif; ?></span></div><div class="receipt-meta-line"><span class="receipt-meta-label">Phone:</span><span class="receipt-meta-value"><?= tdc_e($receiptPhone !== '' ? $receiptPhone : '—') ?></span></div></div><div class="receipt-meta-column"><div class="receipt-meta-line"><span class="receipt-meta-label">Visit Number:</span><span class="receipt-meta-value"><?= tdc_e($receiptVisitNumber !== '' ? $receiptVisitNumber : '—') ?></span></div><div class="receipt-meta-line"><span class="receipt-meta-label">PNo:</span><span class="receipt-meta-value"><?= tdc_e($viewSalePrescriptionReference !== '' ? $viewSalePrescriptionReference : '—') ?></span></div><div class="receipt-meta-line"><span class="receipt-meta-label">Gender:</span><span class="receipt-meta-value"><?= tdc_e($receiptGender !== '' ? $receiptGender : '—') ?></span></div><div class="receipt-meta-line"><span class="receipt-meta-label">Age:</span><span class="receipt-meta-value"><?= tdc_e($receiptAge !== '' ? $receiptAge : '—') ?></span></div><div class="receipt-meta-line"><span class="receipt-meta-label">Date:</span><span class="receipt-meta-value"><?= tdc_e(date('d/m/Y', strtotime($receiptDate))) ?></span></div></div></section>
+                <header class="receipt-letterhead"><img class="receipt-logo" src="../uploads/tareydermacliniclogo.png" alt="Tarey Derma Clinic"><div class="receipt-clinic-identity"><div class="receipt-clinic-name"><?= tdc_e($receiptClinicName) ?></div><div class="receipt-clinic-address"><?= tdc_e($receiptClinicAddress) ?></div><div class="receipt-clinic-phone">TEL: <?= tdc_e($receiptClinicPhone) ?></div></div></header>
+                <section class="receipt-meta" aria-label="Customer and receipt information"><div class="receipt-meta-column"><div class="receipt-meta-line"><span class="receipt-meta-label">Patient ID:</span><span class="receipt-meta-value">—</span></div><div class="receipt-meta-line"><span class="receipt-meta-label">Patient Name:</span><span class="receipt-meta-value"><?= tdc_e($head['CustomerName'] ?: 'Walk-in') ?></span></div><div class="receipt-meta-line"><span class="receipt-meta-label">Doctor:</span><span class="receipt-meta-value">—</span></div><div class="receipt-meta-line"><span class="receipt-meta-label">Phone:</span><span class="receipt-meta-value"><?= tdc_e($head['CustomerPhone'] ?: '—') ?></span></div></div><div class="receipt-meta-column"><div class="receipt-meta-line"><span class="receipt-meta-label">Receipt No:</span><span class="receipt-meta-value"><?= tdc_e($viewSaleRef) ?></span></div><div class="receipt-meta-line"><span class="receipt-meta-label">Visit Number:</span><span class="receipt-meta-value">—</span></div><div class="receipt-meta-line"><span class="receipt-meta-label">Gender:</span><span class="receipt-meta-value">—</span></div><div class="receipt-meta-line"><span class="receipt-meta-label">Age:</span><span class="receipt-meta-value">—</span></div><div class="receipt-meta-line"><span class="receipt-meta-label">Date:</span><span class="receipt-meta-value"><?= tdc_e(date('d/m/Y', strtotime((string) $head['SaleDate']))) ?></span></div></div></section>
+                <section class="receipt-meta receipt-linked-meta" aria-label="Customer and receipt information"><div class="receipt-meta-column"><div class="receipt-meta-line"><span class="receipt-meta-label">Patient ID:</span><span class="receipt-meta-value"><?= tdc_e($receiptPatientId !== '' ? $receiptPatientId : '—') ?></span></div><div class="receipt-meta-line"><span class="receipt-meta-label">Patient Name:</span><span class="receipt-meta-value"><?= tdc_e($receiptPatientName !== '' ? $receiptPatientName : 'Walk-in') ?></span></div><div class="receipt-meta-line"><span class="receipt-meta-label">Doctor:</span><span class="receipt-meta-value"><?= tdc_e($receiptDoctor !== '' ? $receiptDoctor : '—') ?></span></div><div class="receipt-meta-line"><span class="receipt-meta-label">Phone:</span><span class="receipt-meta-value"><?= tdc_e($receiptPhone !== '' ? $receiptPhone : '—') ?></span></div></div><div class="receipt-meta-column"><div class="receipt-meta-line"><span class="receipt-meta-label">Receipt No:</span><span class="receipt-meta-value"><?= tdc_e($viewSaleRef) ?></span></div><div class="receipt-meta-line"><span class="receipt-meta-label">Visit Number:</span><span class="receipt-meta-value"><?= tdc_e($receiptVisitNumber !== '' ? $receiptVisitNumber : '—') ?></span></div><div class="receipt-meta-line"><span class="receipt-meta-label">Gender:</span><span class="receipt-meta-value"><?= tdc_e($receiptGender !== '' ? $receiptGender : '—') ?></span></div><div class="receipt-meta-line"><span class="receipt-meta-label">Age:</span><span class="receipt-meta-value"><?= tdc_e($receiptAge !== '' ? $receiptAge : '—') ?></span></div><div class="receipt-meta-line"><span class="receipt-meta-label">Date:</span><span class="receipt-meta-value"><?= tdc_e(date('d/m/Y', strtotime((string) $head['SaleDate']))) ?></span></div></div></section>
+                <table class="receipt-table"><thead><tr><th>No</th><th>Drug</th><th>Quantity</th><th>Unit Price</th><th>Amount</th></tr></thead><tbody><?php foreach ($viewSaleLines as $index => $l): ?><tr><td><?= $index + 1 ?></td><td><?= tdc_e($l['ItemName']) ?></td><td><?= (int) $l['Quantity'] ?></td><td><?= number_format((float) $l['UnitPrice'], 2) ?></td><td><?= number_format((float) $l['LineTotal'], 2) ?></td></tr><?php endforeach; ?></tbody></table>
+                <section class="receipt-financials" aria-label="Payment summary"><div class="receipt-finance-left"><div><strong>Payment Method:</strong> <?= tdc_e($receiptMethods) ?></div><div><strong>Payment Status:</strong> <?= tdc_e((string) $head['PaymentStatus']) ?></div></div><div class="receipt-totals"><span class="receipt-total-label">Total:</span><span><?= number_format($receiptTotal, 2) ?></span><span class="receipt-total-label">Paid:</span><span><?= number_format($receiptPaid, 2) ?></span><span class="receipt-total-label">Due:</span><span><?= number_format($receiptDue, 2) ?></span></div></section>
+                <table class="prescription-table"><thead><tr><th>No</th><th>Drug</th><th>Quantity</th><th>Frequency</th><th>Route</th></tr></thead><tbody><?php foreach ($medicalRows as $index => $medicine): ?><tr><td><?= $index + 1 ?></td><td><?= tdc_e((string) (($medicine['MedicationName'] ?? '') !== '' ? $medicine['MedicationName'] : '—')) ?></td><td><?= tdc_e((string) (($medicine['Quantity'] ?? '') !== '' ? $medicine['Quantity'] : '—')) ?></td><td><?= tdc_e((string) (($medicine['Frequency'] ?? '') !== '' ? $medicine['Frequency'] : '—')) ?></td><td><?= tdc_e((string) (($medicine['Route'] ?? '') !== '' ? $medicine['Route'] : '—')) ?></td></tr><?php endforeach; ?></tbody></table><?php if ($receiptMethods !== '—'): ?><div class="receipt-payment-note">Payment Method: <?= tdc_e($receiptMethods) ?></div><?php endif; ?>
+                <div class="receipt-signature">Signature: <span class="receipt-signature-line"></span></div>
+                <div class="receipt-legacy-content">
         <div class="welcome-title">Sale Receipt — <?= tdc_e($viewSaleRef) ?></div>
         <div class="welcome-sub"><?= tdc_e(date('Y-m-d H:i', strtotime((string) $head['SaleDate']))) ?></div>
 
@@ -1767,7 +2024,7 @@ $justVoided  = isset($_GET['voided']);
         </div>
 
         <div class="row-actions no-print">
-            <button type="button" class="btn-info  btn " onclick="window.print()"><?= tdc_icon('printer',16) ?><span>Print Receipt</span></button>
+            <button type="button" class="btn-primary  btn " onclick="window.print()"><?= tdc_icon('printer',16) ?><span>Print Receipt</span></button>
             <form method="POST" action="pharmacy.php?section=pos" data-confirm="Void this sale? Stock will be restored. This cannot be undone.">
                 <input type="hidden" name="csrf_token" value="<?= tdc_e($csrfToken) ?>">
                 <input type="hidden" name="form_action" value="void">
@@ -1776,10 +2033,37 @@ $justVoided  = isset($_GET['voided']);
             </form>
         </div>
 
+                </div>
+            </article>
+            <?php if ($viewSaleLegacyRepairEligible): ?>
+            <details class="no-print" style="margin-top:16px;max-width:720px;background:#fff;border:1px solid #cfd4dc;padding:12px;">
+                <summary style="cursor:pointer;font-weight:600;">Set Historical Payment Method</summary>
+                <form method="post" action="pharmacy.php?section=pos&amp;view=<?= urlencode($viewSaleRef) ?>" style="margin-top:12px;">
+                    <input type="hidden" name="csrf_token" value="<?= tdc_e($csrfToken) ?>">
+                    <input type="hidden" name="form_action" value="reconcile_legacy_payment_method">
+                    <input type="hidden" name="SaleRef" value="<?= tdc_e($viewSaleRef) ?>">
+                    <div class="form-row">
+                        <div class="form-group"><label>Sale Reference</label><div><?= tdc_e($viewSaleRef) ?></div></div>
+                        <div class="form-group"><label>Existing Total</label><div><?= number_format($receiptTotal, 2) ?></div></div>
+                        <div class="form-group"><label>Existing Paid</label><div><?= number_format($receiptPaid, 2) ?></div></div>
+                        <div class="form-group"><label>Existing Due</label><div><?= number_format($receiptDue, 2) ?></div></div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group"><label for="legacyPaymentMethod">Payment Method</label><select id="legacyPaymentMethod" name="PaymentMethod" required><?php foreach ($paymentMethods as $method): ?><option value="<?= tdc_e($method['MethodName']) ?>"><?= tdc_e($method['MethodName']) ?></option><?php endforeach; ?></select></div>
+                        <div class="form-group" style="flex:2"><label for="legacyPaymentReason">Reason / Note</label><textarea id="legacyPaymentReason" name="Reason" maxlength="500" required></textarea></div>
+                    </div>
+                    <button type="submit" class="btn-success btn">Save Historical Method</button>
+                </form>
+            </details>
+            <?php endif; ?>
+        </div>
+
         <?php elseif ($posShowForm): ?>
 
+        <nav class="setup-section-nav" aria-label="Point of Sale views"><a href="pharmacy.php?section=pos" class="active" aria-current="page">New Sale</a><a href="pharmacy.php?section=pos&amp;view_mode=history">Sales History</a></nav>
+
         <div class="welcome-title">New Sale</div>
-        <div class="welcome-sub">Search for items, set quantities, and take payment.</div>
+        <div class="welcome-sub">Create a new pharmacy sale.</div>
 
         <form id="saleForm" method="POST" action="pharmacy.php?section=pos">
             <input type="hidden" name="csrf_token" value="<?= tdc_e($csrfToken) ?>">
@@ -1790,6 +2074,10 @@ $justVoided  = isset($_GET['voided']);
                     <input type="text" id="sf_CustomerName" name="CustomerName" value="<?= tdc_e($oldSale['CustomerName']) ?>" placeholder="Walk-in"></div>
                 <div class="form-group"><label for="sf_CustomerPhone">Customer Phone (optional)</label>
                     <input type="text" id="sf_CustomerPhone" name="CustomerPhone" value="<?= tdc_e($oldSale['CustomerPhone']) ?>"></div>
+                <div class="form-group"><label for="sf_PatientID">Registered Patient (optional)</label>
+                    <select id="sf_PatientID" name="PatientID"><option value="0">Walk-in / no patient</option><?php foreach ($posPatients as $patient): ?><option value="<?= (int) $patient['PatientID'] ?>" data-name="<?= tdc_e($patient['PatientName']) ?>" data-phone="<?= tdc_e((string) ($patient['PatientPhone'] ?? '')) ?>"<?= (int) $oldSale['PatientID'] === (int) $patient['PatientID'] ? ' selected' : '' ?>><?= tdc_e($patient['PatientID'] . ' — ' . $patient['PatientName'] . ($patient['PatientPhone'] ? ' — ' . $patient['PatientPhone'] : '')) ?></option><?php endforeach; ?></select></div>
+                <div class="form-group"><label for="sf_VisitID">Linked Visit (optional)</label>
+                    <select id="sf_VisitID" name="VisitID"><option value="0">No linked visit</option><?php foreach ($posVisits as $visit): ?><option value="<?= (int) $visit['VisitID'] ?>" data-patient-id="<?= (int) $visit['PatientID'] ?>"<?= (int) $oldSale['VisitID'] === (int) $visit['VisitID'] ? ' selected' : '' ?>><?= tdc_e($visit['VisitReference'] . ' — ' . date('d/m/Y', strtotime((string) $visit['VisitDate'])) . ($visit['DoctorName'] ? ' — ' . $visit['DoctorName'] : '')) ?></option><?php endforeach; ?></select></div>
             </div>
 
             <div class="line-items-wrap">
@@ -1832,6 +2120,7 @@ $justVoided  = isset($_GET['voided']);
                 <div class="form-group"><label>Total</label><div class="due-display" id="sf_TotalDisplay">0.00</div></div>
                 <div class="form-group"><label for="sf_AmountPaid">Amount Paid</label>
                     <input type="number" step="0.01" min="0" id="sf_AmountPaid" name="AmountPaid" value="<?= tdc_e($oldSale['AmountPaid']) ?>" placeholder="Defaults to full total"></div>
+                <div class="form-group"><label for="sf_PaymentMethod">Payment Method</label><select id="sf_PaymentMethod" name="PaymentMethod" required><?php foreach ($paymentMethods as $method): ?><option value="<?= tdc_e($method['MethodName']) ?>"<?= $oldSale['PaymentMethod'] === $method['MethodName'] ? ' selected' : '' ?>><?= tdc_e($method['MethodName']) ?></option><?php endforeach; ?></select></div>
                 <div class="form-group"><label>Due</label><div class="due-display" id="sf_DueDisplay">0.00</div></div>
             </div>
 
@@ -1840,11 +2129,16 @@ $justVoided  = isset($_GET['voided']);
                 <button type="submit" class="btn-success btn ">Complete Sale</button>
             </div>
         </form>
+        <script>
+        (function(){const patient=document.getElementById('sf_PatientID'),visit=document.getElementById('sf_VisitID'),name=document.getElementById('sf_CustomerName'),phone=document.getElementById('sf_CustomerPhone');if(!patient||!visit)return;function sync(){const id=patient.value;Array.from(visit.options).forEach(function(o){if(!o.value)return;o.hidden=id==='0'||o.dataset.patientId!==id;o.disabled=o.hidden;});const selected=visit.options[visit.selectedIndex];if(selected&&selected.disabled)visit.value='0';const p=patient.options[patient.selectedIndex];if(id!=='0'&&p){name.value=p.dataset.name||'';phone.value=p.dataset.phone||'';name.readOnly=true;phone.readOnly=true;}else{name.readOnly=false;phone.readOnly=false;}}patient.addEventListener('change',sync);sync();})();
+        </script>
 
         <?php else: ?>
 
-        <div class="welcome-title">Point of Sale</div>
-        <div class="welcome-sub">Over-the-counter sales, drawn directly from Inventory stock.</div>
+        <nav class="setup-section-nav" aria-label="Point of Sale views"><a href="pharmacy.php?section=pos"<?= !$posHistory ? ' class="active" aria-current="page"' : '' ?>>New Sale</a><a href="pharmacy.php?section=pos&amp;view_mode=history"<?= $posHistory ? ' class="active" aria-current="page"' : '' ?>>Sales History</a></nav>
+
+        <div class="welcome-title">Sales History</div>
+        <div class="welcome-sub">Review previous pharmacy sales, balances and receipts.</div>
 
         <div class="section-toolbar">
             <form method="GET" action="pharmacy.php" class="filter-box">
@@ -1852,7 +2146,6 @@ $justVoided  = isset($_GET['voided']);
                 <input type="text" name="q" placeholder="Search by customer or ref..." value="<?= tdc_e($saleSearch) ?>">
                 <button type="submit" class="btn-primary btn "><?= tdc_icon('search',16) ?><span>Search</span></button>
             </form>
-            <a href="pharmacy.php?section=pos&new=1" class="btn-success btn ">+ New Sale</a>
         </div>
 
         <div class="data-table-wrap">
@@ -1932,7 +2225,7 @@ $justVoided  = isset($_GET['voided']);
         </div>
 
         <div class="row-actions no-print">
-            <button type="button" class="btn-info  btn " onclick="window.print()"><?= tdc_icon('printer',16) ?><span>Print</span></button>
+            <button type="button" class="btn-primary  btn " onclick="window.print()"><?= tdc_icon('printer',16) ?><span>Print</span></button>
             <?php if ($canViewPurchaseCost): ?><form method="POST" action="pharmacy.php?section=purchases" data-confirm="Void this purchase order? Stock added by it will be reversed. This cannot be undone.">
                 <input type="hidden" name="csrf_token" value="<?= tdc_e($csrfToken) ?>">
                 <input type="hidden" name="form_action" value="void">
@@ -1949,6 +2242,7 @@ $justVoided  = isset($_GET['voided']);
         <div class="modal-head"><h3 id="purchaseTitle">New Purchase</h3><button type="button" class="modal-close" data-close-purchase aria-label="Close">&times;</button></div><div class="modal-body">
         <?php if ($errors): ?><div class="error-msg" role="alert"><?= tdc_e(implode(' ', $errors)) ?></div><?php endif; ?>
         <div class="welcome-sub">Receiving stock from a supplier updates Inventory automatically.</div>
+        <div class="form-section-label">Packaging &amp; units</div>
 
         <datalist id="purchasePackUnits">
             <?php foreach (['Box', 'Pack', 'Carton', 'Strip', 'Bottle', 'Vial', 'Tube', 'Sachet', 'Roll', 'Bundle'] as $packUnitOption): ?><option value="<?= tdc_e($packUnitOption) ?>"><?php endforeach; ?>
@@ -1989,7 +2283,7 @@ $justVoided  = isset($_GET['voided']);
                                 </div>
                                 <div class="purchase-item-meta"><?php $metaCat = (string) ($oldPurchase['Category'][$i] ?? ''); $metaUnit = (string) ($oldPurchase['SalesUnit'][$i] ?? ''); ?><?php if ($metaCat !== ''): ?><span><?= tdc_e($metaCat) ?></span><?php endif; ?><?php if ($metaCat !== '' && $metaUnit !== ''): ?><span class="purchase-meta-sep">&bull;</span><?php endif; ?><?php if ($metaUnit !== ''): ?><span><?= tdc_e($metaUnit) ?></span><?php endif; ?></div>
                             </td>
-                            <td><input type="date" name="ExpiryDate[]" value="<?= tdc_e($oldPurchase['ExpiryDate'][$i] ?? '') ?>" aria-label="Expiry"></td>
+                            <td><input type="date" name="ExpiryDate[]" value="<?= tdc_e($oldPurchase['ExpiryDate'][$i] ?? '') ?>" aria-label="Expiry"><small class="purchase-expiry-hint"></small></td>
                             <td><input type="number" min="1" required name="Quantity[]" class="purchase-qty" value="<?= tdc_e($oldPurchase['Quantity'][$i] ?? '') ?>" aria-label="Quantity"><small class="purchase-qty-hint"></small></td>
                             <td><input type="number" step="0.01" min="0" required name="UnitPrice[]" class="purchase-unit-price" value="<?= tdc_e($oldPurchase['UnitPrice'][$i] ?? '') ?>" aria-label="Purchase Price"><small class="purchase-cost-hint"></small></td>
                             <td><input type="number" step="0.01" min="0" required name="SellingPrice[]" class="purchase-selling-price" value="<?= tdc_e($oldPurchase['SellingPrice'][$i] ?? '') ?>" aria-label="Selling Price"><small class="purchase-selling-hint"></small></td>
@@ -2001,10 +2295,11 @@ $justVoided  = isset($_GET['voided']);
                                 <?php
                                 $commonPacks  = ['Box', 'Pack', 'Bottle', 'Carton', 'Strip', 'Bag'];
                                 $selectedPack = tdc_norm_unit((string) ($oldPurchase['PurchaseUnit'][$i] ?? ''));
+                                if ($selectedPack === '') $selectedPack = tdc_norm_unit((string) ($oldPurchase['SalesUnit'][$i] ?? ''));
                                 $selectedSize = (string) ($oldPurchase['ConversionFactor'][$i] ?? '1');
                                 $isCustomPack = $selectedPack !== '' && !in_array($selectedPack, $commonPacks, true);
                                 $hasPack      = $selectedPack !== '' && (float) $selectedSize > 1;
-                                $sellUnitName = tdc_norm_unit((string) ($oldPurchase['SalesUnit'][$i] ?? ''), 'Unit');
+                                $sellUnitName = tdc_norm_unit((string) ($oldPurchase['SalesUnit'][$i] ?? ''), '');
                                 $sellUnitPlural = tdc_plural_unit($sellUnitName);
                                 $packValue    = $hasPack ? $selectedPack . ' (' . (int) $selectedSize . ' ' . $sellUnitPlural . ')' : '';
                                 ?>
@@ -2022,7 +2317,7 @@ $justVoided  = isset($_GET['voided']);
                                     </span>
                                     <span class="purchase-pkg-value"></span>
                                 </div>
-                                <div class="purchase-pkg-unavailable"<?= $hasPack ? ' hidden' : '' ?>>No package configured</div>
+                                <div class="purchase-pkg-unavailable"<?= $hasPack ? ' hidden' : '' ?>><?= $sellUnitName !== '' ? 'Purchased in base unit: ' . tdc_e($sellUnitName) : 'Select a medicine to see its purchase unit.' ?></div>
                                 <div class="purchase-pkg-editor" hidden>
                                     <label class="purchase-pkg-field">Package
                                         <select class="purchase-pack-unit-select" aria-label="Purchase package">
@@ -2057,9 +2352,9 @@ $justVoided  = isset($_GET['voided']);
             <div class="totals-row">
                 <div class="purchase-summary">
                     <div class="purchase-summary-row"><span>Subtotal</span><span id="pof_SubtotalDisplay">0.00</span></div>
-                    <div class="purchase-summary-row"><label for="pof_Discount">Discount</label>
+                    <div class="purchase-summary-row"><label for="pof_Discount">Discount Amount</label>
                         <input type="number" step="0.01" min="0" id="pof_Discount" name="Discount" value="<?= tdc_e($oldPurchase['Discount']) ?>" placeholder="0.00"></div>
-                    <div class="purchase-summary-row"><label for="pof_VATAmount">VAT</label>
+                    <div class="purchase-summary-row"><label for="pof_VATAmount">VAT Amount</label>
                         <input type="number" step="0.01" min="0" id="pof_VATAmount" name="VATAmount" value="<?= tdc_e($oldPurchase['VATAmount']) ?>" placeholder="0.00"></div>
                     <div class="purchase-summary-row is-divider"><span>Net Amount</span><span id="pof_NetDisplay">0.00</span></div>
                     <div class="purchase-summary-row"><label for="pof_AmountPaid">Amount Paid</label>
@@ -2248,7 +2543,7 @@ $justVoided  = isset($_GET['voided']);
                             <div class="form-group"><label for="if_ExpiryDate">Expiry Date</label><input type="date" id="if_ExpiryDate" name="ExpiryDate"></div>
                             <div class="form-group"><label for="if_ReorderLevel">Reorder Level</label><input type="number" min="0" step="1" id="if_ReorderLevel" name="ReorderLevel" value="10"></div>
                         </div>
-                        <div class="form-section-label">Purchase Packaging</div>
+                        <div class="form-section-label">Packaging &amp; units</div>
                         <p class="form-hint">Optional, but requires a Base Unit first. Set this once if the medicine is normally bought in a larger pack.</p>
                         <div class="form-row">
                             <div class="form-group"><label for="if_DefaultPurchaseUnit">Default Purchase Package</label>
@@ -2513,6 +2808,7 @@ function initComboBox(hiddenIdInput, searchInput, listEl, options, onSelect){
             Category: it.Category,
             SalesUnit: it.SalesUnit,
             SellingPrice: it.SellingPrice,
+            ExpiryDate: it.ExpiryDate,
             DefaultPurchaseUnit: it.DefaultPurchaseUnit,
             UnitsPerPackage: it.UnitsPerPackage
         };
@@ -2540,6 +2836,8 @@ function initComboBox(hiddenIdInput, searchInput, listEl, options, onSelect){
         const packRadio = pkgQuery(row, '.purchase-mode-package');
         const unitOpt = pkgQuery(row, '.purchase-mode-opt-unit');
         const packOpt = pkgQuery(row, '.purchase-mode-opt-package');
+        const hiddenPurchaseUnit = pkgQuery(row, '.purchase-pack-unit');
+        const unavailable = pkgQuery(row, '.purchase-pkg-unavailable');
         const editor = pkgQuery(row, '.purchase-pkg-editor');
         const hasPack = packRadio && !packRadio.disabled;
         if (mode === 'package' && !hasPack) mode = 'unit';
@@ -2579,6 +2877,10 @@ function initComboBox(hiddenIdInput, searchInput, listEl, options, onSelect){
         if (/^[0-9]+s$/i.test(unit)) return fallback;
         return unit;
     }
+    function formatExpiry(value){
+        const match = String(value || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+        return match ? match[3] + '/' + match[2] + '/' + match[1] : '';
+    }
     function pluralUnit(unit){
         if (unit === '') return '';
         if (/[^aeiou]y$/i.test(unit)) return unit.slice(0, -1) + 'ies';
@@ -2591,7 +2893,8 @@ function initComboBox(hiddenIdInput, searchInput, listEl, options, onSelect){
         const sizeInput = pkgQuery(row, '.purchase-pack-size');
         const packSize = sizeInput ? (parseFloat(sizeInput.value) || 1) : 1;
         const salesUnit = row.querySelector('.purchase-item-salesunit').value || '';
-        const unitName = normUnit(salesUnit, 'Unit');
+        const unitName = normUnit(salesUnit, '');
+        const displayUnit = unitName || 'unit';
         const plural = pluralUnit(unitName);
         const packPlural = pluralUnit(packUnit);
         const valueEl = pkgQuery(row, '.purchase-pkg-value');
@@ -2599,6 +2902,8 @@ function initComboBox(hiddenIdInput, searchInput, listEl, options, onSelect){
         const packLabel = pkgQuery(row, '.purchase-mode-pack-label');
         const packOpt = pkgQuery(row, '.purchase-mode-opt-package');
         const unitNameEl = pkgQuery(row, '.purchase-pkg-unit-name');
+        const hiddenPurchaseUnit = pkgQuery(row, '.purchase-pack-unit');
+        const unavailable = pkgQuery(row, '.purchase-pkg-unavailable');
         const qtyHint = row.querySelector('.purchase-qty-hint');
         const costHint = row.querySelector('.purchase-cost-hint');
         const hint = pkgQuery(row, '.purchase-pack-hint');
@@ -2610,20 +2915,28 @@ function initComboBox(hiddenIdInput, searchInput, listEl, options, onSelect){
         if (packOpt) packOpt.hidden = !hasPack;
         if (modeRow) modeRow.hidden = !hasPack;
         if (packLabel) packLabel.textContent = hasPack ? (packUnit + ' (' + packSize + ' ' + plural + ')') : '';
-        if (unitNameEl) unitNameEl.textContent = unitName;
-        if (costHint) costHint.textContent = 'per ' + unitName;
-        if (sellingHint) sellingHint.textContent = 'current per ' + unitName;
+        if (unitNameEl) unitNameEl.textContent = displayUnit;
+        if (costHint) costHint.textContent = 'per ' + displayUnit;
+        if (sellingHint) sellingHint.textContent = 'current per ' + displayUnit;
         const mode = hasPack ? currentMode(row) : 'unit';
         if (mode === 'package' && hasPack){
+            if (hiddenPurchaseUnit) hiddenPurchaseUnit.value = packUnit;
+            if (sizeInput) sizeInput.value = packSize;
             if (valueEl) valueEl.textContent = packUnit + ' \u00d7 ' + packSize + ' ' + plural;
             if (qtyHint) qtyHint.textContent = packPlural;
             if (costHint) costHint.textContent = 'per ' + packUnit;
             if (hint) hint.textContent = qty + ' ' + packPlural + ' \u00d7 ' + packSize + ' ' + plural + ' = ' + Math.round(qty * packSize) + ' ' + plural + ' added to inventory';
         } else {
+            if (hiddenPurchaseUnit) hiddenPurchaseUnit.value = unitName;
+            if (sizeInput) sizeInput.value = '1';
             if (valueEl) valueEl.textContent = '';
             if (qtyHint) qtyHint.textContent = plural;
             if (hint) hint.textContent = hasPack ? ('Package available: 1 ' + packUnit + ' = ' + packSize + ' ' + plural) : '';
             if (hasPack) setMode(row, 'unit');
+        }
+        if (unavailable) {
+            unavailable.textContent = hasPack ? '' : (unitName === '' ? 'Select a medicine to see its purchase unit.' : 'Purchased in base unit: ' + unitName);
+            unavailable.hidden = hasPack;
         }
     }
 
@@ -2638,8 +2951,17 @@ function initComboBox(hiddenIdInput, searchInput, listEl, options, onSelect){
             nameInput.value = opt.ItemName;
             row.querySelector('.purchase-item-category').value = opt.Category || '';
             row.querySelector('.purchase-item-salesunit').value = opt.SalesUnit || '';
+            const expiryInput = row.querySelector('input[name="ExpiryDate[]"]');
+            if (expiryInput) expiryInput.value = opt.ExpiryDate || '';
+            const expiryHint = row.querySelector('.purchase-expiry-hint');
+            if (expiryHint) {
+                const formattedExpiry = formatExpiry(opt.ExpiryDate);
+                expiryHint.textContent = formattedExpiry
+                    ? 'Current stock expiry: ' + formattedExpiry + ' — change this if the received batch has a different expiry.'
+                    : 'Enter the expiry date shown on the received medicine batch.';
+            }
             row.querySelector('.purchase-selling-price').value = (opt.SellingPrice !== null && opt.SellingPrice !== undefined && opt.SellingPrice !== '') ? parseFloat(opt.SellingPrice).toFixed(2) : '';
-            const defUnit = opt.DefaultPurchaseUnit || '';
+            const defUnit = opt.DefaultPurchaseUnit || opt.SalesUnit || '';
             const defSize = parseFloat(opt.UnitsPerPackage) > 1 ? parseFloat(opt.UnitsPerPackage) : 1;
             loadPackage(row, defUnit, defSize);
             setMode(row, 'unit');
@@ -2833,6 +3155,7 @@ function initComboBox(hiddenIdInput, searchInput, listEl, options, onSelect){
     <?php if ($justDeleted): ?>message = 'Item deleted successfully.';<?php endif; ?>
     <?php if ($justVoided): ?>message = <?= $section === 'purchases' ? json_encode('Purchase order voided successfully.') : json_encode('Sale voided successfully.') ?>;<?php endif; ?>
     <?php if ($justSaved): ?>message = <?= $section === 'pos' ? json_encode('Sale completed successfully.') : ($section === 'purchases' ? json_encode('Purchase order saved successfully.') : json_encode('Item saved successfully.')) ?>;<?php endif; ?>
+    <?php if ($legacyPaymentReconciled): ?>message = 'Historical POS payment method reconciled successfully.';<?php endif; ?>
     showToast(message);
 })();
 <?php endif; ?>

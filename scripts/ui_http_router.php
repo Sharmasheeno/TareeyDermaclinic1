@@ -8,6 +8,15 @@ if (PHP_SAPI !== 'cli-server' || !preg_match('/^tdc_role_test_[a-f0-9]{12}$/', $
     || !in_array($_SERVER['REMOTE_ADDR'] ?? '', ['127.0.0.1', '::1'], true)) {
     http_response_code(404); exit;
 }
+// Only these fixed static assets are exposed to the authenticated local test browser.
+$assetPath = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
+$assets = ['/auth/assets/clinic.css' => 'text/css', '/auth/assets/clinic.js' => 'text/javascript', '/auth/uploads/tareydermacliniclogo.png' => 'image/png'];
+if (isset($assets[$assetPath])) {
+    header('Content-Type: ' . $assets[$assetPath]);
+    readfile(__DIR__ . '/..' . $assetPath);
+    exit;
+}
+
 $path = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
 if ($path !== '/auth/auth.php' && !preg_match('#^/auth/pages/(home|reception|patients|doctors|laboratory|pharmacy|accounting|reports|setup)\.php$#', $path)) {
     http_response_code(404); exit;

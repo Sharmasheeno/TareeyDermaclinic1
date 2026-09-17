@@ -39,6 +39,9 @@ function add_column(PDO $pdo, string $table, string $column, string $definition)
 $pdo->exec('ALTER TABLE users MODIFY role VARCHAR(100) NOT NULL');
 
 add_column($pdo, 'Doctors', 'UserID', 'INT NULL AFTER DoctorID');
+add_column($pdo, 'Doctors', 'WorkingDays', "VARCHAR(20) NOT NULL DEFAULT '1,2,3,4,5' AFTER JoinedDate");
+add_column($pdo, 'Doctors', 'WorkStartTime', "TIME NOT NULL DEFAULT '09:00:00' AFTER WorkingDays");
+add_column($pdo, 'Doctors', 'WorkEndTime', "TIME NOT NULL DEFAULT '17:00:00' AFTER WorkStartTime");
 if (!index_exists($pdo, 'Doctors', 'uq_doctors_user')) {
     $pdo->exec('ALTER TABLE doctors ADD UNIQUE KEY uq_doctors_user (UserID)');
 }
@@ -114,9 +117,24 @@ $pdo->exec(
         KEY idx_payments_type_date (PaymentType, PaidAt)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
 );
+$pdo->exec("ALTER TABLE payments MODIFY PaymentMethod VARCHAR(80) NOT NULL DEFAULT 'Cash'");
+$pdo->exec("CREATE TABLE IF NOT EXISTS reference_sequences (
+    SequenceKey VARCHAR(80) NOT NULL,
+    NextValue BIGINT NOT NULL DEFAULT 0,
+    PRIMARY KEY (SequenceKey)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
+$pdo->exec("CREATE TABLE IF NOT EXISTS login_attempts (
+    AttemptKey VARCHAR(191) NOT NULL,
+    FailedCount INT NOT NULL DEFAULT 0,
+    FirstAttempt DATETIME NOT NULL,
+    BlockedUntil DATETIME NULL,
+    UpdatedAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (AttemptKey), KEY idx_login_attempts_blocked (BlockedUntil)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
 
 add_column($pdo, 'Prescriptions', 'VisitID', 'INT NULL AFTER PatientID');
 add_column($pdo, 'Prescriptions', 'Quantity', 'INT NOT NULL DEFAULT 1 AFTER MedicationName');
+add_column($pdo, 'Prescriptions', 'Route', 'VARCHAR(50) NULL AFTER Quantity');
 add_column($pdo, 'Prescriptions', 'Status', "ENUM('Pending','Dispensed','Cancelled') NOT NULL DEFAULT 'Pending' AFTER Instructions");
 add_column($pdo, 'Prescriptions', 'DispensedAt', 'DATETIME NULL AFTER Status');
 add_column($pdo, 'Prescriptions', 'DispensedBy', 'INT NULL AFTER DispensedAt');
@@ -135,6 +153,11 @@ add_column($pdo, 'Laboratory', 'ServiceID', 'INT NULL AFTER RequestedByUserID');
 add_column($pdo, 'Laboratory', 'WorkflowStatus', "ENUM('Requested','Awaiting Payment','Ready','In Progress','Completed','Cancelled') NOT NULL DEFAULT 'Awaiting Payment' AFTER PaymentStatus");
 add_column($pdo, 'Laboratory', 'ClinicalResult', 'TEXT NULL AFTER Result');
 add_column($pdo, 'Laboratory', 'ReviewedAt', 'DATETIME NULL AFTER ResultDate');
+add_column($pdo, 'Inventory', 'DefaultPurchaseUnit', 'VARCHAR(50) NULL DEFAULT NULL');
+add_column($pdo, 'Inventory', 'UnitsPerPackage', 'INT NULL DEFAULT NULL');
+add_column($pdo, 'Purchases', 'ReferenceNumber', 'VARCHAR(100) NULL DEFAULT NULL');
+add_column($pdo, 'Purchases', 'Discount', 'DECIMAL(10,2) NOT NULL DEFAULT 0.00');
+add_column($pdo, 'Purchases', 'VATAmount', 'DECIMAL(10,2) NOT NULL DEFAULT 0.00');
 if (!index_exists($pdo, 'Laboratory', 'idx_laboratory_visit')) {
     $pdo->exec('ALTER TABLE laboratory ADD KEY idx_laboratory_visit (VisitID)');
 }

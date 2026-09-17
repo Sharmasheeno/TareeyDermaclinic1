@@ -255,6 +255,7 @@ if (!function_exists('tdc_rc_money_union')) {
 
         $where = tdc_rc_date('v.VisitDate', $from, $to, $params, 'mv');
         $where = array_merge($where, tdc_rc_like(['p.PatientName', 'v.VisitReference'], $search, $params, 'mv'));
+        $where[] = "v.QueueStatus <> 'Cancelled'";
         if ($status !== '') {
             $where[] = 'v.PaymentStatus = :mv_st';
             $params['mv_st'] = $status;
@@ -267,6 +268,7 @@ if (!function_exists('tdc_rc_money_union')) {
 
         $where = tdc_rc_date('l.OrderDate', $from, $to, $params, 'ml');
         $where = array_merge($where, tdc_rc_like(['p.PatientName', 'l.LaboratoryID', 'l.TestName'], $search, $params, 'ml'));
+        $where[] = "l.WorkflowStatus <> 'Cancelled'";
         if ($status !== '') {
             $where[] = 'l.PaymentStatus = :ml_st';
             $params['ml_st'] = $status;
@@ -327,7 +329,7 @@ if (!function_exists('tdc_rc_build')) {
                     ['registered', 'Registered', 'date'],
                 ];
                 $where = tdc_rc_date('p.RegisteredAt', $from, $to, $params, 'pa');
-                $where = array_merge($where, tdc_rc_like(['p.PatientName', 'p.PatientPhone'], $search, $params, 'pa'));
+                $where = array_merge($where, tdc_rc_like(['p.PatientID', 'p.PatientName', 'p.PatientPhone'], $search, $params, 'pa'));
                 $rows = $run(
                     "SELECT p.PatientID AS id, p.PatientName AS name, p.Gender AS gender, p.Age AS age,"
                     . " p.PatientPhone AS phone, p.PatientType AS ptype, p.RegisteredAt AS registered,"
@@ -371,6 +373,7 @@ if (!function_exists('tdc_rc_build')) {
                     ['collected', 'Collected', 'money'], ['due', 'Outstanding', 'money'],
                 ];
                 $on = tdc_rc_date('v.VisitDate', $from, $to, $params, 'dc');
+                $on[] = "v.QueueStatus <> 'Cancelled'";
                 $where = tdc_rc_like(['d.DoctorName', 'd.Specialty'], $search, $params, 'dc');
                 $rows = $run(
                     "SELECT d.DoctorName AS doctor, d.Specialty AS specialty,"
@@ -388,8 +391,56 @@ if (!function_exists('tdc_rc_build')) {
                 );
                 break;
 
-            case 'billing':
             case 'payments':
+                $cols = [
+                    ['payment_ref', 'Payment Reference', 'text'],
+                    ['service', 'Service', 'text'],
+                    ['source', 'Source', 'text'],
+                    ['party', 'Patient / Supplier', 'text'],
+                    ['method', 'Payment Method', 'text'],
+                    ['dt', 'Date', 'date'],
+                    ['amount', 'Amount', 'money'],
+                    ['status', 'Status', 'badge'],
+                ];
+                $where = ["p.PaymentStatus = 'Confirmed'"];
+                $where = array_merge($where, tdc_rc_date('p.PaidAt', $from, $to, $params, 'py'));
+                $where = array_merge($where, tdc_rc_like([
+                    'p.PaymentReference', 'p.PaymentType', 'p.PaymentMethod',
+                    'p.VisitID', 'p.LaboratoryID', 'p.PrescriptionReference',
+                    'p.SaleReference', 'p.PurchaseReference', 'pt.PatientName',
+                ], $search, $params, 'py'));
+                if ($status !== '') {
+                    $where = array_filter($where, static fn(string $clause): bool => $clause !== "p.PaymentStatus = 'Confirmed'");
+                    $where[] = 'p.PaymentStatus = :py_st';
+                    $params['py_st'] = $status;
+                }
+                $rows = $run(
+                    "SELECT p.PaymentReference AS payment_ref, p.PaymentType AS service,
+                            p.VisitID, v.VisitReference, p.LaboratoryID,
+                            p.PrescriptionReference, p.SaleReference, p.PurchaseReference,
+                            COALESCE(NULLIF(pt.PatientName, ''),
+                                CASE
+                                    WHEN p.PaymentType = 'POS' THEN (SELECT MIN(CustomerName) FROM pharmacysales ps WHERE ps.SaleID LIKE CONCAT(p.SaleReference, '-%'))
+                                    WHEN p.PaymentType = 'Supplier' THEN (SELECT MIN(SupplierName) FROM purchases pu WHERE pu.PurchaseID LIKE CONCAT(p.PurchaseReference, '-%'))
+                                    ELSE NULL
+                                END) AS party,
+                            p.PaymentMethod AS method, p.PaidAt AS dt,
+                            p.Amount AS amount, p.PaymentStatus AS status
+                     FROM payments p
+                     LEFT JOIN patients pt ON pt.PatientID = p.PatientID
+                     LEFT JOIN visits v ON v.VisitID = p.VisitID
+                     WHERE " . implode(' AND ', $where) .
+                    " ORDER BY p.PaidAt DESC, p.PaymentID DESC LIMIT 500",
+                    $params
+                );
+                foreach ($rows as &$paymentRow) {
+                    $paymentRow['source'] = tdc_payment_source_label($paymentRow);
+                    unset($paymentRow['VisitID'], $paymentRow['VisitReference'], $paymentRow['LaboratoryID'], $paymentRow['PrescriptionReference'], $paymentRow['SaleReference'], $paymentRow['PurchaseReference']);
+                }
+                unset($paymentRow);
+                break;
+
+            case 'billing':
             case 'outstanding':
                 $union = tdc_rc_money_union($from, $to, $search, $status);
                 $params = $union['params'];
@@ -397,13 +448,7 @@ if (!function_exists('tdc_rc_build')) {
                 if ($key === 'outstanding') $inner .= ' WHERE t.Due > 0';
                 $inner .= ' ORDER BY t.Dt DESC LIMIT 500';
                 $rows = $run($inner, $params);
-                if ($key === 'payments') {
-                    $cols = [
-                        ['Service', 'Service', 'text'], ['Ref', 'Reference', 'text'],
-                        ['Party', 'Patient / Customer', 'text'], ['Dt', 'Date', 'date'],
-                        ['Paid', 'Amount Paid', 'money'], ['Status', 'Status', 'badge'],
-                    ];
-                } elseif ($key === 'outstanding') {
+                if ($key === 'outstanding') {
                     $cols = [
                         ['Service', 'Service', 'text'], ['Ref', 'Reference', 'text'],
                         ['Party', 'Patient / Customer', 'text'], ['Dt', 'Date', 'date'],
@@ -616,7 +661,8 @@ if (!function_exists('tdc_rc_status_options')) {
     function tdc_rc_status_options(string $key): array
     {
         return match ($key) {
-            'visits', 'billing', 'payments', 'pharmacy-sales' => ['Paid', 'Partial', 'Unpaid'],
+            'visits', 'billing', 'pharmacy-sales' => ['Paid', 'Partial', 'Unpaid'],
+            'payments' => ['Confirmed', 'Voided'],
             'lab-orders', 'lab-completed', 'lab-pending' => ['Paid', 'Partial', 'Unpaid'],
             'transactions' => ['Asset', 'Liability', 'Equity', 'Revenue', 'Expense'],
             default => [],
@@ -725,29 +771,35 @@ if (!function_exists('tdc_rc_render_report')) {
 
         $statusOptions = tdc_rc_status_options($key);
         $html .= '<div class="report-toolbar no-print">';
-        $html .= tdc_date_range([
-            'from'     => (string) ($filters['from'] ?? ''),
-            'to'       => (string) ($filters['to'] ?? ''),
-            'error'    => (string) ($filters['error'] ?? ''),
-            'preserve' => ['section' => $key, 'search' => (string) ($filters['search'] ?? ''), 'status' => (string) ($filters['status'] ?? '')],
-            'action'   => 'reports.php',
-            'id'       => 'rr_' . preg_replace('/[^a-z0-9_]/i', '_', $key),
-        ]);
+        if (in_array($key, ['pharmacy-stock', 'pharmacy-low-stock', 'pharmacy-expiry'], true)) {
+            $html .= '<span class="report-context">Current inventory snapshot</span>';
+        } else {
+            $html .= tdc_date_range([
+                'from'     => (string) ($filters['from'] ?? ''),
+                'to'       => (string) ($filters['to'] ?? ''),
+                'error'    => (string) ($filters['error'] ?? ''),
+                'preserve' => ['section' => $key, 'search' => (string) ($filters['search'] ?? ''), 'status' => (string) ($filters['status'] ?? '')],
+                'action'   => 'reports.php',
+                'id'       => 'rr_' . preg_replace('/[^a-z0-9_]/i', '_', $key),
+            ]);
+        }
         $html .= '<form class="report-filters" method="get" action="reports.php">'
             . '<input type="hidden" name="section" value="' . tdc_ui_h($key) . '">'
             . '<input type="hidden" name="from_date" value="' . tdc_ui_h((string) ($filters['from'] ?? '')) . '">'
             . '<input type="hidden" name="to_date" value="' . tdc_ui_h((string) ($filters['to'] ?? '')) . '">'
             . tdc_search_field('search', (string) ($filters['search'] ?? ''), 'Search this report...');
         if ($statusOptions) {
-            $html .= '<label class="table-filter"><select name="status" aria-label="Filter by status">'
-                . '<option value="">All statuses</option>';
+            $filterLabel = $key === 'transactions' ? 'Filter by account type' : 'Filter by status';
+            $allLabel = $key === 'transactions' ? 'All account types' : 'All statuses';
+            $html .= '<label class="table-filter"><select name="status" aria-label="' . tdc_ui_h($filterLabel) . '">'
+                . '<option value="">' . tdc_ui_h($allLabel) . '</option>';
             foreach ($statusOptions as $opt) {
                 $html .= '<option value="' . tdc_ui_h($opt) . '"'
                     . ((string) ($filters['status'] ?? '') === $opt ? ' selected' : '') . '>' . tdc_ui_h($opt) . '</option>';
             }
             $html .= '</select></label>';
         }
-        $html .= '<button type="submit" class="btn btn-secondary btn-sm">' . tdc_icon('filter', 14) . '<span>Filter</span></button>'
+        $html .= '<button type="submit" class="btn btn-primary btn-sm">' . tdc_icon('filter', 14) . '<span>Filter</span></button>'
             . '</form>';
         $html .= tdc_export_buttons($exportLinks);
         $html .= '</div>';
