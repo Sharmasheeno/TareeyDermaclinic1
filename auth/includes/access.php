@@ -1,6 +1,19 @@
 <?php
 declare(strict_types=1);
 
+if (!function_exists('tdc_has_column')) {
+    function tdc_has_column(PDO $pdo, string $table, string $column): bool
+    {
+        static $cache = [];
+        $key = $table . '.' . $column;
+        if (array_key_exists($key, $cache)) return $cache[$key];
+        if (!preg_match('/^[A-Za-z0-9_]+$/', $table . $column)) return false;
+        $stmt = $pdo->prepare('SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=? AND COLUMN_NAME=?');
+        $stmt->execute([$table, $column]);
+        return $cache[$key] = (int) $stmt->fetchColumn() > 0;
+    }
+}
+
 const TDC_ROLES = [
     'superuser' => 'SuperAdmin',
     'receptionuser' => 'Receptionist',
@@ -106,6 +119,10 @@ function tdc_can_access(string $page, ?string $role = null): bool
         'patients.php' => ['patients.view'],
         'laboratory.php' => ['laboratory.view'],
         'pharmacy.php' => ['pharmacy.view'],
+        'pharmacy_receipt.php' => ['pharmacy.view'],
+    'services.php' => ['setup.view'],
+    'print_service_receipt.php' => ['reception.view', 'setup.view'],
+        'print_laboratory.php' => ['lab_billing.view','laboratory.view','patients.view','patients.history','laboratory.results.view'],
         'accounting.php' => ['accounting.view'],
         'reports.php' => ['reports.view'],
         'setup.php' => ['setup.view'],
@@ -116,14 +133,24 @@ function tdc_can_access(string $page, ?string $role = null): bool
 
 function tdc_navigation(array $items): array
 {
+    $currentScript = basename((string) ($_SERVER['SCRIPT_NAME'] ?? ''));
+    if (!array_filter($items, static fn(array $item): bool => preg_replace('/\?.*$/', '', (string) ($item['href'] ?? '')) === 'services.php')) {
+        $serviceItem = ['href' => 'services.php', 'label' => 'Services', 'icon' => '<path d="M4 5h16M4 12h16M4 19h16"/>'];
+        $insertAt = 1;
+        foreach ($items as $index => $item) {
+            if (preg_replace('/\?.*$/', '', (string) ($item['href'] ?? '')) === 'reception.php') { $insertAt = $index + 1; break; }
+        }
+        array_splice($items, $insertAt, 0, [$serviceItem]);
+    }
     $items = array_values(array_filter($items, static function (array $item): bool {
         // Patient registration stays inside Reception for reception staff.
-        return tdc_can_access($item['href'])
-            && !(($_SESSION['role'] ?? '') === 'receptionuser' && $item['href'] === 'patients.php');
+        $hrefPage = preg_replace('/\?.*$/', '', (string) ($item['href'] ?? ''));
+        return tdc_can_access($hrefPage)
+            && !(($_SESSION['role'] ?? '') === 'receptionuser' && $hrefPage === 'patients.php');
     }));
     if (($_SESSION['role'] ?? '') === 'doctoruser') {
         foreach ($items as &$item) {
-            if ($item['href'] === 'doctors.php') $item['label'] = 'Doctor Workspace';
+            if (preg_replace('/\?.*$/', '', (string) ($item['href'] ?? '')) === 'doctors.php') $item['label'] = 'Doctor Workspace';
         }
         unset($item);
     }

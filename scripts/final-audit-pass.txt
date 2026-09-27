@@ -1,0 +1,127 @@
+PASS Register patient A sharing mobile
+PASS Register patient B sharing mobile
+PASS Shared mobile returns both patients
+PASS Overpayment rejected with no visit or payment
+PASS Book partial credit consultation
+PASS Pending Payment cannot complete
+PASS Forged PatientID rejected
+PASS Bad CSRF rejected
+PASS Call partial visit
+PASS Save clinical notes while partial
+PASS Lab add category
+PASS Lab deactivate category
+PASS Lab activate category
+PASS Lab add type
+PASS Lab deactivate type
+PASS Lab activate type
+PASS Lab add unit
+PASS Lab deactivate unit
+PASS Lab activate unit
+PASS Lab add flag
+PASS Lab deactivate flag
+PASS Lab activate flag
+PASS Lab add test
+PASS Lab deactivate test
+PASS Lab activate test
+PASS Lab add parameter
+PASS Lab deactivate parameter
+PASS Lab activate parameter
+PASS Lab add center
+PASS Lab deactivate center
+PASS Lab activate center
+PASS Modern request authoritative price
+PASS Lab queue reads actual local schema
+PASS Create doctor test selection
+PASS Duplicate selection rejected
+PASS Update selection availability 0
+PASS Update selection availability 1
+PASS Upsert center test mapping 1
+PASS Upsert center test mapping 0
+PASS Upsert center test mapping 1
+PASS Collect unpaid modern multi-test order
+PASS Required modern results block completion atomically
+PASS Forged parameter rejected atomically
+PASS Invalid numeric rejected
+PASS Save both modern result drafts
+PASS Reopen modern draft values
+PASS Complete modern results preserves debt and identities
+PASS Finalized modern result cannot be overwritten
+PASS Doctor reads completed modern result via bridge
+PASS Prescription reaches pharmacy with no stock change
+PASS Pharmacy receives authoritative prescription
+PASS Price prescription without stock movement
+PASS Collect partial prescription payment without stock movement
+PASS Repricing preserves confirmed payment and debt
+PASS Prescription overpayment rejected
+PASS Settle prescription payment without stock movement
+PASS Dispense exactly once without synthetic POS
+PASS Repeated dispense does not move stock
+PASS Collect completed lab debt without reopening clinical work
+PASS Lab overpayment rejected
+PASS Complete consultation preserves credit debt
+PASS Create Unpaid credit prescription
+PASS Price Unpaid credit prescription
+PASS Unpaid queue exposes Dispense Medicine
+PASS Unpaid dispensing retains debt without fake payment or POS
+PASS Repeated Unpaid dispense cannot deduct twice
+PASS Later payment settles dispensed Unpaid prescription and AccR
+PASS Create Partial credit prescription
+PASS Price Partial credit prescription
+PASS Collect before partial dispense
+PASS Partial queue exposes Dispense Medicine
+PASS Partial dispensing retains debt without fake payment or POS
+PASS Repeated Partial dispense cannot deduct twice
+PASS Later payment settles dispensed Partial prescription and AccR
+PASS Consultation reversal excludes lab payments sharing VisitID
+PASS Accounting entries balance after linked payments and reversal
+PASS Prescription COGS is explicitly incomplete without cost snapshots
+PASS FINAL create editable lab order
+PASS FINAL edit lab adds test on same order
+PASS FINAL lab modal prefilled with same context
+PASS FINAL lab edit removes test without duplicate request
+PASS FINAL collect lab partial payment before edit
+PASS FINAL lab re-add preserves payment and bridge identity
+PASS FINAL lab rejects total below payment
+PASS FINAL lab edit rejects foreign patient
+PASS FINAL review incomplete order rejected
+PASS FINAL collect edited lab
+PASS FINAL lab structural edit blocked after sample collection
+PASS FINAL unfinished modern result print blocked
+PASS FINAL append result review 1
+PASS FINAL append result review 2
+PASS FINAL Doctor displays latest review
+PASS FINAL laboratory displays review history
+PASS FINAL modern result print includes snapshots and reviews
+PASS FINAL create editable prescription
+PASS FINAL Rx adds item and changes instructions without stock
+PASS FINAL Rx modal retains reference and values
+PASS FINAL partial Rx payment before edit
+PASS FINAL Rx removes item preserving paid amount
+PASS FINAL Rx rejects lower total than payment
+PASS FINAL Rx rejects foreign line identity
+PASS FINAL partial dispensing captures cost without fake payment or POS
+PASS FINAL repeated dispensing preserves stock and original snapshots
+PASS FINAL Rx structural edit blocked after dispense
+PASS FINAL partial prescription receipt uses confirmed source payments
+PASS FINAL RX000006 unpaid no-POS receipt works read-only
+PASS FINAL RX000007 unpriced financial printing disabled
+PASS FINAL wrong receipt source rejected
+PASS FINAL invalid receipt source rejected
+PASS FINAL receipt rejects unauthorized doctor role
+PASS FINAL create real direct POS
+PASS FINAL create POS000002 receipt case
+PASS FINAL POS000002 A4 source payments and cashier
+PASS FINAL legacy RX000005 traceability does not borrow POS payments
+PASS FINAL legacy linked POS routes to prescription
+PASS FINAL prescription-linked POS cannot be voided
+PASS FINAL source-aware history buttons
+PASS FINAL dispensed queue receipt link needs no POS
+PASS FINAL snapshot COGS and billed gross profit runtime
+PASS FINAL known-cost report separates billed 20 cost 6 profit 14 cash 0
+PASS FINAL direct POS void remains supported once
+PASS FINAL repeated POS void cannot restore twice
+PASS FINAL void receipt shows void state
+PASS FINAL POS void preserves ledger and reverses cash once
+PASS FINAL new POS does not reuse deleted historical ledger reference
+Disposable database retained for browser verification: tdc_role_test_5a0e535a5db6
+125 checks; 0 failed.

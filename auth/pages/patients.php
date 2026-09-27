@@ -222,7 +222,9 @@ function tdc_handle_logout(): void
 /** Redirects (Post/Redirect/Get) back to the list with a one-shot flash flag. */
 function tdc_redirect(string $flag): void
 {
-    header('Location: patients.php?' . $flag . '=1');
+    $statusFlags = ['saved', 'updated', 'booked', 'booked_new', 'updated_booked', 'updated_appointment'];
+    $query = in_array($flag, $statusFlags, true) ? 'status=' . urlencode($flag) : $flag . '=1';
+    header('Location: patients.php?' . $query);
     exit;
 }
 
@@ -239,18 +241,23 @@ function tdc_scalar(PDO $pdo, string $sql, array $params = [])
 // =======================================================================
 
 /** @param array{PatientName:string,PatientPhone:string,Gender:string,Age:string,DateOfBirth:string,PatientType:string,AllocatedDoctor:string} $input */
-function tdc_validate_patient_form(array $input): array
+function tdc_validate_patient_form(array $input, bool $requireCoreFields = true): array
 {
     $errors = [];
 
     if ($input['PatientName'] === '' || mb_strlen($input['PatientName']) < 2 || mb_strlen($input['PatientName']) > 150) {
         $errors[] = 'Patient name is required (2-150 characters).';
     }
-    if ($input['PatientPhone'] !== '' && !preg_match('/^[0-9+\-\s()]{6,20}$/', $input['PatientPhone'])) {
+    if ($requireCoreFields && $input['PatientPhone'] === '') {
+        $errors[] = 'Mobile number is required.';
+    } elseif ($input['PatientPhone'] !== '' && !preg_match('/^[0-9+\-\s()]{6,20}$/', $input['PatientPhone'])) {
         $errors[] = 'Phone number format is invalid.';
     }
-    if ($input['Gender'] !== '' && !array_key_exists($input['Gender'], GENDER_OPTIONS)) {
-        $errors[] = 'Please select a valid gender.';
+    if (($requireCoreFields && $input['Gender'] === '') || ($input['Gender'] !== '' && !array_key_exists($input['Gender'], GENDER_OPTIONS))) {
+        $errors[] = 'Gender is required.';
+    }
+    if ($requireCoreFields && $input['DateOfBirth'] === '' && $input['Age'] === '') {
+        $errors[] = 'Age or Date of Birth is required.';
     }
     if ($input['Age'] !== '' && (!ctype_digit($input['Age']) || (int) $input['Age'] > 150)) {
         $errors[] = 'Age must be a whole number between 0 and 150.';
@@ -260,8 +267,8 @@ function tdc_validate_patient_form(array $input): array
     } elseif ($input['DateOfBirth'] !== '' && $input['DateOfBirth'] > date('Y-m-d')) {
         $errors[] = 'Date of birth cannot be in the future.';
     }
-    if ($input['PatientType'] !== '' && !array_key_exists($input['PatientType'], PATIENT_TYPE_OPTIONS)) {
-        $errors[] = 'Please select a valid patient type.';
+    if (($requireCoreFields && $input['PatientType'] === '') || ($input['PatientType'] !== '' && !array_key_exists($input['PatientType'], PATIENT_TYPE_OPTIONS))) {
+        $errors[] = 'Patient type is required.';
     }
     if ($input['AllocatedDoctor'] !== '' && !ctype_digit($input['AllocatedDoctor'])) {
         $errors[] = 'Please select a valid doctor.';
@@ -274,7 +281,7 @@ function tdc_validate_patient_form(array $input): array
 // SECTION 5 — Persistence
 // =======================================================================
 
-function tdc_save_patient(PDO $pdo, array $input, bool $isEdit, int $editId): void
+function tdc_save_patient(PDO $pdo, array $input, bool $isEdit, int $editId): int
 {
     $params = [
         'PatientName'     => $input['PatientName'],
@@ -298,7 +305,7 @@ function tdc_save_patient(PDO $pdo, array $input, bool $isEdit, int $editId): vo
              WHERE PatientID = :id'
         );
         $stmt->execute($params);
-        return;
+        return $editId;
     }
 
     $stmt = $pdo->prepare(
@@ -308,6 +315,7 @@ function tdc_save_patient(PDO $pdo, array $input, bool $isEdit, int $editId): vo
             :DateOfBirth, :PatientType, :AllocatedDoctor, :Remark, 1, 0.00)'
     );
     $stmt->execute($params);
+    return (int) $pdo->lastInsertId();
 }
 
 /**
@@ -363,25 +371,90 @@ function tdc_patient_filter_where(array $state): array
 }
 
 /**
- * App-level referential guard: the schema has no FK constraints, so we
- * check dependents ourselves before allowing a delete.
+ * Transactional cascade: the schema has no FK constraints, so linked
+ * clinical, pharmacy, payment, and ledger rows are cleared explicitly.
  *
  * @return string[] error messages; empty on success
  */
 function tdc_delete_patient(PDO $pdo, int $id): array
 {
-    $labCount = (int) tdc_scalar($pdo, 'SELECT COUNT(*) FROM laboratory WHERE PatientID = :id', ['id' => $id]);
-    $rxCount  = (int) tdc_scalar($pdo, 'SELECT COUNT(*) FROM prescriptions WHERE PatientID = :id', ['id' => $id]);
-    $visitCount = (int) tdc_scalar($pdo, 'SELECT COUNT(*) FROM visits WHERE PatientID = :id', ['id' => $id]);
-    $paymentCount = (int) tdc_scalar($pdo, 'SELECT COUNT(*) FROM payments WHERE PatientID = :id', ['id' => $id]);
+    $pdo->beginTransaction();
+    try {
+        $visits = $pdo->prepare('SELECT VisitID, VisitReference FROM visits WHERE PatientID = :id');
+        $visits->execute(['id' => $id]);
+        $visitRows = $visits->fetchAll();
+        $visitIds = array_map(static fn($r) => (int) $r['VisitID'], $visitRows);
+        $visitRefs = array_values(array_filter(array_map(static fn($r) => (string) $r['VisitReference'], $visitRows)));
+        $labs = $pdo->prepare('SELECT LaboratoryID FROM laboratory WHERE PatientID = :id');
+        $labs->execute(['id' => $id]);
+        $labIds = array_map('strval', $labs->fetchAll(PDO::FETCH_COLUMN));
+        $rx = $pdo->prepare('SELECT PrescriptionID, PharmacySaleReference FROM prescriptions WHERE PatientID = :id');
+        $rx->execute(['id' => $id]);
+        $rxRows = $rx->fetchAll();
+        $rxRefs = array_map(static fn($r) => (string) $r['PrescriptionID'], $rxRows);
+        $saleRefs = array_values(array_filter(array_map(static fn($r) => (string) ($r['PharmacySaleReference'] ?? ''), $rxRows)));
+        $sales = $pdo->prepare('SELECT SaleID FROM pharmacysales WHERE PatientID = :id');
+        $sales->execute(['id' => $id]);
+        $saleRefs = array_values(array_unique(array_merge($saleRefs, array_map('strval', $sales->fetchAll(PDO::FETCH_COLUMN)))));
+        $paymentRefs = [];
+        $p = $pdo->prepare('SELECT PaymentReference FROM payments WHERE PatientID = :id');
+        $p->execute(['id' => $id]);
+        $paymentRefs = array_map('strval', $p->fetchAll(PDO::FETCH_COLUMN));
 
-    if ($labCount > 0 || $rxCount > 0 || $visitCount > 0 || $paymentCount > 0) {
-        return ['This patient has clinical or financial history and cannot be deleted.'];
+        // Remove dependent rows first because this installation uses app-level
+        // relationships rather than database foreign keys.
+        if ($labIds) {
+            $in = implode(',', array_fill(0, count($labIds), '?'));
+            // Both laboratory child tables must be cleared before laboratory
+            // rows because the catalog bridge has a foreign-key constraint.
+            $pdo->prepare("DELETE FROM laborderitems WHERE LaboratoryID IN ($in)")->execute($labIds);
+            $bridge = $pdo->prepare("SELECT BridgeID FROM lab_order_catalog_bridge WHERE LaboratoryID IN ($in)");
+            $bridge->execute($labIds);
+            $bridgeIds = array_map('strval', $bridge->fetchAll(PDO::FETCH_COLUMN));
+            if ($bridgeIds) {
+                $bin = implode(',', array_fill(0, count($bridgeIds), '?'));
+                $results = $pdo->prepare("SELECT LabResultID FROM lab_results WHERE BridgeID IN ($bin)");
+                $results->execute($bridgeIds);
+                $resultIds = array_map('strval', $results->fetchAll(PDO::FETCH_COLUMN));
+                if ($resultIds) {
+                    $rin = implode(',', array_fill(0, count($resultIds), '?'));
+                    $pdo->prepare("DELETE FROM lab_result_attachments WHERE LabResultID IN ($rin)")->execute($resultIds);
+                    $pdo->prepare("DELETE FROM lab_result_parameters WHERE LabResultID IN ($rin)")->execute($resultIds);
+                    $pdo->prepare("DELETE FROM lab_result_review WHERE LabResultID IN ($rin)")->execute($resultIds);
+                    $pdo->prepare("DELETE FROM lab_results WHERE LabResultID IN ($rin)")->execute($resultIds);
+                }
+            }
+            $pdo->prepare("DELETE FROM lab_order_catalog_bridge WHERE LaboratoryID IN ($in)")->execute($labIds);
+        }
+        if ($visitIds) { $in = implode(',', array_fill(0, count($visitIds), '?')); $pdo->prepare("DELETE FROM laboratory WHERE VisitID IN ($in)")->execute($visitIds); }
+        if ($labIds) { $in = implode(',', array_fill(0, count($labIds), '?')); $pdo->prepare("DELETE FROM laboratory WHERE LaboratoryID IN ($in)")->execute($labIds); }
+        if ($rxRefs) { $in = implode(',', array_fill(0, count($rxRefs), '?')); $pdo->prepare("DELETE FROM prescriptionsheader WHERE PrescriptionID IN ($in)")->execute($rxRefs); }
+        if ($saleRefs) { $in = implode(',', array_fill(0, count($saleRefs), '?')); $pdo->prepare("DELETE FROM pharmacysales WHERE SaleID IN ($in)")->execute($saleRefs); }
+        if ($visitRefs || $labIds || $rxRefs || $saleRefs || $paymentRefs) {
+            $refs = array_values(array_unique(array_merge($visitRefs, $labIds, $rxRefs, $saleRefs, $paymentRefs)));
+            $in = implode(',', array_fill(0, count($refs), '?'));
+            $pdo->prepare("DELETE FROM accounting WHERE ReferenceID IN ($in)")->execute($refs);
+        }
+        $pdo->prepare('DELETE FROM payments WHERE PatientID = ?')->execute([$id]);
+        $pdo->prepare('DELETE FROM prescriptions WHERE PatientID = ?')->execute([$id]);
+        $pdo->prepare('DELETE FROM laboratory WHERE PatientID = ?')->execute([$id]);
+        $pdo->prepare('DELETE FROM visits WHERE PatientID = ?')->execute([$id]);
+        $pdo->prepare('DELETE FROM patients WHERE PatientID = ?')->execute([$id]);
+        $pdo->commit();
+        // Audit logging must never make an already-completed cleanup fail.
+        try {
+            if (function_exists('tdc_audit')) {
+                tdc_audit($pdo, 'patients.cascade_deleted', 'Patients', (string) $id, 'Patient and linked clinical, pharmacy, payment, and ledger history were permanently cleared.');
+            }
+        } catch (Throwable $auditError) {
+            error_log('[PATIENT DELETE AUDIT] ' . $auditError->getMessage());
+        }
+        return [];
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
+        error_log('[PATIENT DELETE] ' . $e->getMessage());
+        return ['The patient and linked history could not be cleared. No records were changed.'];
     }
-
-    $stmt = $pdo->prepare('DELETE FROM patients WHERE PatientID = :id');
-    $stmt->execute(['id' => $id]);
-    return [];
 }
 
 // =======================================================================
@@ -399,6 +472,7 @@ if (empty($_SESSION['user_id'])) {
 
 require_once __DIR__ . '/../../db.php';
 require_once __DIR__ . '/../includes/data-transfer.php';
+require_once __DIR__ . '/../includes/workflow.php';
 
 if (empty($_SESSION['csrf_token'])) {
     $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
@@ -435,15 +509,35 @@ if (($_GET['download'] ?? '') === 'patients') {
     }
     tdc_csv_download('patients-' . date('Y-m-d') . '.csv', ['patient_id','patient_name','phone','address','gender','date_of_birth','patient_type','doctor_id','visit_count','due_balance','registered_at'], $rows);
 }
+if (($_GET['download'] ?? '') === 'patients-xlsx') {
+    tdc_require_permission('patients.export');
+    $exportState = tdc_patient_filter_state();
+    [$exportWhere, $exportParams] = tdc_patient_filter_where($exportState);
+    $stmt = $pdo->prepare(
+        'SELECT PatientID,PatientName,PatientPhone,PatientAddress,Gender,DateOfBirth,PatientType,AllocatedDoctor,VisitNumber,DueBalance,RegisteredAt '
+        . 'FROM patients ' . $exportWhere . ' ORDER BY PatientID'
+    );
+    $stmt->execute($exportParams);
+    $rows = [];
+    foreach ($stmt->fetchAll() as $row) {
+        $rows[] = array_values($row);
+    }
+    tdc_xlsx_download('patients-' . date('Y-m-d') . '.xlsx', ['patient_id','patient_name','phone','address','gender','date_of_birth','patient_type','doctor_id','visit_count','due_balance','registered_at'], $rows);
+}
 
 // =======================================================================
 // SECTION 8 — Request-scoped state
 // =======================================================================
 $errors = [];
+$importResult = $_SESSION['tdc_import_result'] ?? null;
+unset($_SESSION['tdc_import_result']);
 $old = [
     'PatientID' => '', 'PatientName' => '', 'PatientPhone' => '', 'PatientAddress' => '',
     'Gender' => '', 'Age' => '', 'DateOfBirth' => '', 'PatientType' => '',
     'AllocatedDoctor' => '', 'Remark' => '',
+    'BookAppointment' => '', 'AppointmentOnly' => '', 'AppointmentDoctorID' => '', 'AppointmentDate' => '',
+    'AppointmentFreeConsultation' => '', 'AppointmentDiscountType' => 'None', 'AppointmentDiscountValue' => '0', 'AppointmentDiscountReason' => '', 'AppointmentTaxRate' => '0',
+    'AppointmentReason' => '', 'AppointmentAmountPaid' => '0', 'AppointmentPaymentMethod' => '', 'AppointmentVisitID' => '',
 ];
 
 // =======================================================================
@@ -466,7 +560,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($formAction === 'import_csv') {
             tdc_require_permission('patients.import');
             try {
-                $rows = tdc_csv_upload_rows($_FILES['csv_file'] ?? [], PATIENT_CSV_REQUIRED_HEADERS);
+                $upload = $_FILES['csv_file'] ?? [];
+                $uploadExtension = strtolower(pathinfo((string) ($upload['name'] ?? ''), PATHINFO_EXTENSION));
+                $uploadReader = $uploadExtension === 'xlsx' ? 'tdc_xlsx_upload_rows' : 'tdc_csv_upload_rows';
+                $rows = $uploadReader($upload, ['patient_name'], [
+                    'patient_id', 'patient_name', 'phone', 'address', 'gender', 'date_of_birth', 'patient_type',
+                    'doctor_id', 'remark', 'visit_count', 'due_balance', 'registered_at',
+                ]);
             } catch (RuntimeException $e) {
                 $errors[] = $e->getMessage();
                 $rows = [];
@@ -474,7 +574,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             if (empty($rows)) {
                 if (empty($errors)) {
-                    $errors[] = 'The CSV file contains no patient rows.';
+                    $errors[] = 'The uploaded CSV/XLSX file contains no patient rows.';
                 }
             } else {
                 // Resolve doctors once (by numeric ID or by name) for the doctor_id column.
@@ -486,12 +586,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $doctorIdByName[mb_strtolower(trim((string) $d['DoctorName']))] = (int) $d['DoctorID'];
                 }
 
-                // Snapshot of existing patient phones (normalized) for duplicate detection.
-                $existingPhones = tdc_existing_phone_keys($pdo);
-                $seenPhones     = [];
                 $imported       = 0;
+                $created        = 0;
+                $updated        = 0;
                 $skipped        = [];
                 $failed         = [];
+                $validatedPatients = [];
 
                 // Transactional: valid rows commit together; each row is a single
                 // atomic INSERT, so no half-written record is ever created.
@@ -510,6 +610,37 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         $type      = trim((string) ($row['patient_type'] ?? ''));
                         $rawDoctor = trim((string) ($row['doctor_id'] ?? ''));
                         $remark    = trim((string) ($row['remark'] ?? ''));
+                        $patientId = ctype_digit(trim((string) ($row['patient_id'] ?? ''))) ? (int) $row['patient_id'] : 0;
+                        $existingPatient = null;
+                        if ($patientId > 0) {
+                            $existingStmt = $pdo->prepare('SELECT * FROM patients WHERE PatientID=? LIMIT 1');
+                            $existingStmt->execute([$patientId]);
+                            $existingPatient = $existingStmt->fetch() ?: null;
+                            if (!$existingPatient) {
+                                $rowErrors[] = 'patient_id does not exist';
+                            }
+                        }
+                        // Preserve export/import round-trips even if a spreadsheet
+                        // editor drops the patient_id cell. Name + phone must both
+                        // match, so a shared phone number cannot update the wrong row.
+                        if (!$existingPatient && $patientId === 0 && $rawName !== '' && $phone !== '') {
+                            $existingStmt = $pdo->prepare('SELECT * FROM patients WHERE PatientName=? AND PatientPhone=? LIMIT 1');
+                            $existingStmt->execute([$rawName, $phone]);
+                            $existingPatient = $existingStmt->fetch() ?: null;
+                            if ($existingPatient) {
+                                $patientId = (int) $existingPatient['PatientID'];
+                            }
+                        }
+                        if ($existingPatient) {
+                            $rawName = $rawName !== '' ? $rawName : (string) ($existingPatient['PatientName'] ?? '');
+                            $phone = $phone !== '' ? $phone : (string) ($existingPatient['PatientPhone'] ?? '');
+                            $address = $address !== '' ? $address : (string) ($existingPatient['PatientAddress'] ?? '');
+                            $gender = $gender !== '' ? $gender : (string) ($existingPatient['Gender'] ?? '');
+                            $rawDob = $rawDob !== '' ? $rawDob : (string) ($existingPatient['DateOfBirth'] ?? '');
+                            $type = $type !== '' ? $type : (string) ($existingPatient['PatientType'] ?? '');
+                            $rawDoctor = $rawDoctor !== '' ? $rawDoctor : (string) ($existingPatient['AllocatedDoctor'] ?? '');
+                            $remark = $remark !== '' ? $remark : (string) ($existingPatient['Remark'] ?? '');
+                        }
 
                         // Case-insensitive normalisation to the canonical labels the
                         // rest of the app uses (the manual form always sends exact case).
@@ -532,6 +663,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         }
                         $age = ($normDob !== '' && tdc_dob_is_real($normDob))
                             ? (string) tdc_age_from_birth_date($normDob) : '';
+                        if ($age === '' && $existingPatient) {
+                            $age = (string) ($existingPatient['Age'] ?? '');
+                        }
 
                         // Doctor resolution: numeric DoctorID or a doctor name.
                         $allocatedDoctor = '';
@@ -546,7 +680,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         }
 
                         $patient = [
-                            'PatientID'       => '',
+                            'PatientID'       => $patientId > 0 ? (string) $patientId : '',
                             'PatientName'     => $rawName,
                             'PatientPhone'    => $phone,
                             'PatientAddress'  => $address,
@@ -560,35 +694,38 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                         // Row-level field validation (name length, phone format, gender,
                         // type, doctor shape, future DOB).
-                        $rowErrors = array_merge($rowErrors, tdc_validate_patient_form($patient));
-
-                        // Duplicate phone policy: existing/seen phone -> SKIP, never overwrite.
-                        $normPhone = $phone !== '' ? tdc_norm_phone($phone) : '';
-                        if ($phone !== '' && $normPhone !== '') {
-                            if (isset($seenPhones[$normPhone])) {
-                                $rowErrors[] = 'skipped - phone ' . $phone . ' already exists (duplicate within this file).';
-                            } elseif (isset($existingPhones[$normPhone])) {
-                                $rowErrors[] = 'skipped - phone ' . $phone . ' already exists.';
+                        $rowErrors = array_merge($rowErrors, tdc_validate_patient_form($patient, !$existingPatient));
+                        if (!$existingPatient) {
+                            foreach (['Gender' => 'gender', 'DateOfBirth' => 'date_of_birth', 'PatientType' => 'patient_type'] as $field => $header) {
+                                if ($patient[$field] === '') $rowErrors[] = $header . ' is required for new patients.';
                             }
                         }
 
                         if ($rowErrors) {
-                            $skipped[] = ['row' => $rowNum, 'reason' => implode(' ', $rowErrors)];
-                            continue;
+                            throw new RuntimeException('Import failed. Row ' . $rowNum . ': ' . implode(' ', $rowErrors));
                         }
-
-                        try {
-                            tdc_save_patient($pdo, $patient, false, 0);
-                            $imported++;
-                            if ($normPhone !== '') {
-                                $seenPhones[$normPhone] = true;
-                            }
-                        } catch (PDOException $e) {
-                            error_log('[PATIENTS CSV IMPORT] row ' . $rowNum . ' save failed: ' . $e->getMessage());
-                            $failed[] = ['row' => $rowNum, 'reason' => 'System error while saving this row.'];
-                        }
+                        $validatedPatients[] = [
+                            'input' => $patient,
+                            'is_edit' => $existingPatient !== null,
+                            'id' => $patientId,
+                        ];
+                    }
+                    foreach ($validatedPatients as $validatedPatient) {
+                        tdc_save_patient(
+                            $pdo,
+                            $validatedPatient['input'],
+                            $validatedPatient['is_edit'],
+                            $validatedPatient['id']
+                        );
+                        $imported++;
+                        if ($validatedPatient['is_edit']) $updated++; else $created++;
                     }
                     $pdo->commit();
+                } catch (RuntimeException $e) {
+                    if ($pdo->inTransaction()) {
+                        $pdo->rollBack();
+                    }
+                    $errors[] = $e->getMessage();
                 } catch (Throwable $e) {
                     if ($pdo->inTransaction()) {
                         $pdo->rollBack();
@@ -601,12 +738,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $_SESSION['tdc_import_result'] = [
                         'total'    => count($rows),
                         'imported' => $imported,
+                        'created'  => $created,
+                        'updated'  => $updated,
                         'skipped'  => $skipped,
                         'failed'   => $failed,
                     ];
                     try {
-                        tdc_audit($pdo, 'patients.imported', 'Patients', null,
-                            sprintf('CSV import: %d imported, %d skipped, %d failed of %d rows.',
+                            tdc_audit($pdo, 'patients.imported', 'Patients', null,
+                            sprintf('%s import: %d imported, %d skipped, %d failed of %d rows.',
+                                strtoupper($uploadExtension === 'xlsx' ? 'xlsx' : 'csv'),
                                 $imported, count($skipped), count($failed), count($rows)));
                     } catch (Throwable $e) {
                         // Audit logging is best-effort and must not break the UX.
@@ -640,32 +780,52 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $old['PatientType']     = (string) ($_POST['PatientType'] ?? '');
             $old['AllocatedDoctor'] = trim((string) ($_POST['AllocatedDoctor'] ?? ''));
             $old['Remark']          = trim((string) ($_POST['Remark'] ?? ''));
+            $old['BookAppointment'] = (string) ($_POST['BookAppointment'] ?? '');
+            $old['AppointmentOnly'] = (string) ($_POST['AppointmentOnly'] ?? '');
+            $old['AppointmentDoctorID'] = trim((string) ($_POST['AppointmentDoctorID'] ?? ''));
+            $old['AppointmentDate'] = trim((string) ($_POST['AppointmentDate'] ?? ''));
+            $old['AppointmentReason'] = trim((string) ($_POST['AppointmentReason'] ?? ''));
+            $old['AppointmentAmountPaid'] = trim((string) ($_POST['AppointmentAmountPaid'] ?? '0'));
+            $old['AppointmentPaymentMethod'] = trim((string) ($_POST['AppointmentPaymentMethod'] ?? ''));
+            $old['AppointmentVisitID'] = trim((string) ($_POST['AppointmentVisitID'] ?? ''));
+                $old['AppointmentFreeConsultation'] = !empty($_POST['AppointmentFreeConsultation']) ? '1' : '';
+                $old['AppointmentDiscountType'] = trim((string) ($_POST['AppointmentDiscountType'] ?? 'None'));
+                $old['AppointmentDiscountValue'] = trim((string) ($_POST['AppointmentDiscountValue'] ?? '0'));
+                $old['AppointmentDiscountReason'] = trim((string) ($_POST['AppointmentDiscountReason'] ?? ''));
+                $old['AppointmentTaxRate'] = trim((string) ($_POST['AppointmentTaxRate'] ?? '0'));
 
             $isEdit = $old['PatientID'] !== '' && ctype_digit($old['PatientID']);
             tdc_require_permission($isEdit ? 'patients.edit' : 'patients.create');
             $errors = tdc_validate_patient_form($old);
-            if (!$isEdit && $old['PatientPhone'] !== '') {
-                $stmt = $pdo->prepare('SELECT PatientID,PatientName FROM patients WHERE REPLACE(REPLACE(REPLACE(PatientPhone,\' \',\'\'),\'-\',\'\'),\'+\',\'\') = REPLACE(REPLACE(REPLACE(?,\' \',\'\'),\'-\',\'\'),\'+\',\'\') LIMIT 1');
-                $stmt->execute([$old['PatientPhone']]);
-                if ($duplicate = $stmt->fetch()) {
-                    $errors[] = 'Possible existing patient found: '.$duplicate['PatientName'].' (#'.$duplicate['PatientID'].'). Open the existing record and create a new visit instead.';
-                }
-            }
-
             if (empty($errors)) {
                 try {
-                    tdc_save_patient($pdo, $old, $isEdit, (int) $old['PatientID']);
-                    tdc_redirect('success');
-                } catch (PDOException $e) {
+                    if ($old['BookAppointment'] === '1' && empty($errors)) {
+                        $pdo->beginTransaction();
+                        $patientId = tdc_save_patient($pdo, $old, $isEdit, (int) $old['PatientID']);
+                        if (($old['AppointmentOnly'] ?? '') === '1' && ctype_digit($old['AppointmentVisitID'] ?? '') && (int) $old['AppointmentVisitID'] > 0) {
+                            tdc_update_patient_appointment($pdo, $patientId, (int) $old['AppointmentVisitID'], $old);
+                        } else {
+                            tdc_create_patient_appointment($pdo, $patientId, $old, (int) $_SESSION['user_id']);
+                        }
+                        $pdo->commit();
+                    } elseif (empty($errors)) {
+                        tdc_save_patient($pdo, $old, $isEdit, (int) $old['PatientID']);
+                    }
+                    if (!empty($errors)) throw new RuntimeException(implode(' ', $errors));
+                    $successFlag = $old['BookAppointment'] === '1'
+                        ? (($old['AppointmentOnly'] ?? '') === '1' ? ((ctype_digit($old['AppointmentVisitID'] ?? '') && (int) $old['AppointmentVisitID'] > 0) ? 'updated_appointment' : 'booked') : ($isEdit ? 'updated_booked' : 'booked_new'))
+                        : ($isEdit ? 'updated' : 'saved');
+                    tdc_redirect($successFlag);
+                } catch (Throwable $e) {
+                    if ($pdo->inTransaction()) $pdo->rollBack();
                     error_log('[PATIENTS] save failed: ' . $e->getMessage());
-                    $errors[] = 'A system error occurred while saving the patient. Please try again.';
+                    if (empty($errors)) $errors[] = $e instanceof RuntimeException ? $e->getMessage() : 'A system error occurred while saving the patient. Please try again.';
                 }
             }
         }
     }
 
-    // Rotate CSRF token after every POST (success paths already rotated + exited above via header()).
-    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+    // Keep the session CSRF token stable for other open authenticated forms.
 }
 
 // =======================================================================
@@ -673,12 +833,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 // =======================================================================
 
 // --- 10A. Doctors (used by the Add/Edit dropdown and the detail view) --
-$doctors = $pdo->query('SELECT DoctorID, DoctorName, Specialty FROM doctors ORDER BY DoctorName ASC')->fetchAll();
+$doctors = $pdo->query('SELECT DoctorID,DoctorName,Specialty,UserID,ConsultationFee,WorkingDays,WorkStartTime,WorkEndTime FROM doctors ORDER BY DoctorName ASC')->fetchAll();
+$appointmentBookingsByDoctor = [];
+$bookingStmt = $pdo->query("SELECT DoctorID, DATE_FORMAT(VisitDate, '%Y-%m-%dT%H:%i') AS Slot FROM visits WHERE QueueStatus <> 'Cancelled' AND VisitDate >= DATE_SUB(NOW(), INTERVAL 30 MINUTE)");
+foreach ($bookingStmt->fetchAll() as $booking) $appointmentBookingsByDoctor[(int) $booking['DoctorID']][] = $booking['Slot'];
+$paymentMethods = $pdo->query('SELECT MethodName FROM paymentmethods WHERE IsActive=1 ORDER BY DisplayOrder,MethodName')->fetchAll();
 $doctorNameById = array_column($doctors, 'DoctorName', 'DoctorID');
 
 // --- 10B. Detail view (?view=<PatientID>) -------------------------------
 $viewId            = isset($_GET['view']) && ctype_digit((string) $_GET['view']) ? (int) $_GET['view'] : 0;
 $viewPatient       = null;
+$bookId            = isset($_GET['book']) && ctype_digit((string) $_GET['book']) ? (int) $_GET['book'] : 0;
+$bookPatient       = null;
+$bookVisit         = null;
 $viewLabBills      = [];
 $viewPharmacyBills = [];
 $viewVisits        = [];
@@ -715,6 +882,17 @@ if ($viewId > 0) {
         $viewPayments = $stmt->fetchAll();
     } else {
         $viewId = 0; // Unknown / stale id — fall back to the list view.
+    }
+}
+
+if ($bookId > 0) {
+    $stmt = $pdo->prepare('SELECT * FROM patients WHERE PatientID = :id');
+    $stmt->execute(['id' => $bookId]);
+    $bookPatient = $stmt->fetch() ?: null;
+    if ($bookPatient) {
+        $stmt = $pdo->prepare("SELECT v.*, (SELECT PaymentMethod FROM payments p WHERE p.VisitID=v.VisitID AND p.PaymentStatus='Confirmed' ORDER BY p.PaidAt DESC LIMIT 1) AS AppointmentPaymentMethod FROM visits v WHERE v.PatientID=? AND v.QueueStatus IN ('Pending Payment','Waiting','In Consultation') ORDER BY v.VisitDate DESC LIMIT 1");
+        $stmt->execute([$bookId]);
+        $bookVisit = $stmt->fetch() ?: null;
     }
 }
 
@@ -755,7 +933,9 @@ if ($viewId === 0) {
 
     $where = $conditions !== [] ? 'WHERE ' . implode(' AND ', $conditions) : '';
     $stmt  = $pdo->prepare(
-        "SELECT p.*, d.DoctorName FROM patients p LEFT JOIN doctors d ON d.DoctorID = p.AllocatedDoctor
+        "SELECT p.*, d.DoctorName,
+                (SELECT v.VisitID FROM visits v WHERE v.PatientID=p.PatientID AND v.QueueStatus IN ('Pending Payment','Waiting','In Consultation') ORDER BY v.VisitDate DESC LIMIT 1) AS ActiveVisitID
+         FROM patients p LEFT JOIN doctors d ON d.DoctorID = p.AllocatedDoctor
          {$where} ORDER BY p.RegisteredAt DESC LIMIT 200"
     );
     $stmt->execute($params);
@@ -771,9 +951,20 @@ $avatarLetters = strtoupper(substr($displayName, 0, 2));
 $csrfToken     = (string) ($_SESSION['csrf_token'] ?? '');
 $currentPage   = basename((string) ($_SERVER['SCRIPT_NAME'] ?? 'patients.php'));
 
-$justSaved   = isset($_GET['success']);
-$justDeleted = isset($_GET['deleted']);
+$patientStatus = (string) ($_GET['status'] ?? '');
+$justSaved   = $patientStatus === 'saved' || isset($_GET['success']);
+$justDeleted = $patientStatus === 'deleted' || isset($_GET['deleted']);
 $justVisited = isset($_GET['visited']);
+$patientToast = match ($patientStatus) {
+    'booked' => 'Appointment booked successfully.',
+    'updated_appointment' => 'Appointment updated successfully. Existing payment and financial records were preserved.',
+    'booked_new' => 'Patient and appointment booked successfully.',
+    'updated_booked' => 'Patient updated and appointment booked successfully.',
+    'updated' => 'Patient updated successfully.',
+    'deleted' => 'Patient deleted successfully.',
+    default => $justSaved ? 'Patient saved successfully.' : ($justDeleted ? 'Patient deleted successfully.' : ($justVisited ? 'Visit recorded successfully.' : '')),
+};
+$hasPatientToast = $patientToast !== '';
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -899,8 +1090,9 @@ $justVisited = isset($_GET['visited']);
     .logout-fab::after{ content:'Log Out'; position:absolute; bottom:calc(100% + 8px); right:0; background:var(--navy); color:var(--white); font-family:'Google Sans', sans-serif; font-size:12px; font-weight:600; padding:6px 10px; white-space:nowrap; opacity:0; visibility:hidden; transform:translateY(4px); transition:opacity 0.15s ease, transform 0.15s ease, visibility 0.15s ease; pointer-events:none; }
     .logout-fab:hover::after, .logout-fab:focus-visible::after{ opacity:1; visibility:visible; transform:translateY(0); }
 </style>
-<link rel="stylesheet" href="../assets/clinic.css">
-<script src="../assets/clinic.js" defer></script>
+<link rel="stylesheet" href="../assets/clinic.css?v=<?= rawurlencode((string) @filemtime(__DIR__ . '/../assets/clinic.css')) ?>">
+<script src="../assets/appointment-calendar.js?v=<?= filemtime(__DIR__ . '/../assets/appointment-calendar.js') ?>"></script>
+<script src="../assets/clinic.js?v=<?= rawurlencode((string) @filemtime(__DIR__ . '/../assets/clinic.js')) ?>" defer></script>
 </head>
 <body>
 
@@ -955,6 +1147,10 @@ $justVisited = isset($_GET['visited']);
 </div>
 <?php endif; ?>
 
+<?php if (is_array($importResult)): ?>
+<div class="setup-notice" role="status">Import completed. Created: <?= (int) ($importResult['created'] ?? 0) ?>. Updated: <?= (int) ($importResult['updated'] ?? 0) ?>. Skipped: <?= count((array) ($importResult['skipped'] ?? [])) ?>. Failed: <?= count((array) ($importResult['failed'] ?? [])) ?>.</div>
+<?php endif; ?>
+
 <?php // ====================================================================
       // DETAIL VIEW — single patient record
       // ==================================================================== ?>
@@ -994,12 +1190,11 @@ $justVisited = isset($_GET['visited']);
                 data-type="<?= tdc_e((string) $viewPatient['PatientType']) ?>"
                 data-doctor="<?= tdc_e((string) $viewPatient['AllocatedDoctor']) ?>"
                 data-remark="<?= tdc_e((string) $viewPatient['Remark']) ?>">Edit Patient</button><?php endif; ?>
-            <?php if($canCreateVisit): ?><a class="btn btn-primary" href="reception.php?section=consultations&amp;patient=<?= (int) $viewPatient['PatientID'] ?>">Book Consultation</a><?php endif; ?>
         </div>
     </div>
     <?php endif; ?>
 
-    <div class="subsection-title"><span>Consultation History</span><a href="reception.php?section=consultations" class="btn-sm">Book Consultation</a></div>
+    <div class="subsection-title"><span>Consultation History</span></div>
     <div class="data-table-wrap" style="margin-bottom:32px"><table class="data-table"><thead><tr><th>Visit</th><th>Doctor</th><th>Date</th><th>Payment</th><th>Status</th><th>Diagnosis</th><th>Treatment / Follow-up</th></tr></thead><tbody>
     <?php if(!$viewVisits): ?><tr class="empty-row"><td colspan="7">No consultation history for this patient.</td></tr><?php else:foreach($viewVisits as $visit): ?><tr><td><?= tdc_e($visit['VisitReference']) ?></td><td><?= tdc_e($visit['DoctorName']) ?></td><td><?= tdc_e(date('d M Y H:i',strtotime($visit['VisitDate']))) ?></td><td><span class="status-badge<?= $visit['PaymentStatus']==='Unpaid'?' danger':($visit['PaymentStatus']==='Partial'?' warn':'') ?>"><?= tdc_e($visit['PaymentStatus']) ?></span></td><td><span class="status-badge"><?= tdc_e($visit['QueueStatus']) ?></span></td><td><?= nl2br(tdc_e($visit['Diagnosis'] ?: '—')) ?></td><td><?= nl2br(tdc_e(trim(($visit['TreatmentPlan'] ?: '')."\n".($visit['FollowUpPlan'] ?: '')) ?: '—')) ?></td></tr><?php endforeach;endif; ?>
     </tbody></table></div>
@@ -1057,8 +1252,8 @@ $justVisited = isset($_GET['visited']);
                     <td><?= tdc_e(date('Y-m-d', strtotime((string) $b['PrescriptionDate']))) ?></td>
                     <td>
                         <div class="row-actions">
-                            <a href="reception.php?section=pharmacy&edit=<?= urlencode($b['BillRef']) ?>" class="btn-warning btn-sm"><?= tdc_icon('pencil',16) ?><span>Edit</span></a>
-                            <a href="../print_prescription.php?ref=<?= urlencode($b['BillRef']) ?>" class="btn-info btn-sm" target="_blank" rel="noopener"><?= tdc_icon('printer',16) ?><span>Print</span></a>
+                            <a href="reception.php?section=pharmacy&edit=<?= urlencode($b['BillRef']) ?>" class="btn-secondary btn-sm"><?= tdc_icon('pencil',16) ?><span>Edit</span></a>
+                            <a href="../print_prescription.php?ref=<?= urlencode($b['BillRef']) ?>" class="btn-primary btn-sm" target="_blank" rel="noopener"><?= tdc_icon('printer',16) ?><span>Print</span></a>
                         </div>
                     </td>
                 </tr>
@@ -1094,7 +1289,7 @@ $justVisited = isset($_GET['visited']);
             <button type="submit" class="btn-primary btn "><?= tdc_icon('search',16) ?><span>Filter</span></button>
             <?php if ($patientSearch !== '' || $patientTypeFilter !== '' || $doctorFilter > 0 || $patientDateFilter !== ''): ?><a href="patients.php" class="btn btn-secondary clear-filters">Clear</a><?php endif; ?>
         </form>
-        <div class="table-command-bar"><?php if($canImport):?><button type="button" id="importPatientBtn" class="btn-success btn "><?= tdc_icon('upload',16) ?><span>Import CSV</span></button><a class="btn-secondary btn " href="patients.php?download=patient-template"><?= tdc_icon('download',16) ?><span>Download CSV Template</span></a><?php endif;?><?php if($canExport):?><a class="btn-secondary btn " href="patients.php?download=patients"><?= tdc_icon('download',16) ?><span>Export CSV</span></a><button type="button" class="btn-info btn " onclick="window.print()"><?= tdc_icon('printer',16) ?><span>Print / Save PDF</span></button><?php endif;?><?php if ($canCreate): ?><button type="button" id="addPatientBtn" class="btn-success btn "><?= tdc_icon('plus',16) ?><span>Register Patient</span></button><?php endif; ?></div>
+        <div class="table-command-bar"><?php if($canImport):?><button type="button" id="importPatientBtn" class="btn-success btn "><?= tdc_icon('upload',16) ?><span>Import CSV / XLSX</span></button><a class="btn-secondary btn " href="patients.php?download=patient-template"><?= tdc_icon('download',16) ?><span>Download CSV Template</span></a><?php endif;?><?php if($canExport):?><a class="btn-secondary btn " href="patients.php?download=patients"><?= tdc_icon('download',16) ?><span>Export CSV</span></a><a class="btn-secondary btn " href="patients.php?download=patients-xlsx"><?= tdc_icon('download',16) ?><span>Export XLSX</span></a><button type="button" class="btn-primary btn " onclick="window.print()"><?= tdc_icon('printer',16) ?><span>Print / Save PDF</span></button><?php endif;?><?php if ($canCreate): ?><button type="button" id="addPatientBtn" class="btn-success btn "><?= tdc_icon('plus',16) ?><span>Register Patient</span></button><?php endif; ?></div>
     </div>
 
     <div class="data-table-wrap">
@@ -1122,8 +1317,9 @@ $justVisited = isset($_GET['visited']);
                     <td>
                         <div class="row-actions">
                             <a href="patients.php?view=<?= (int) $p['PatientID'] ?>" class="btn-sm">View</a>
+                            <?php if ($canCreateVisit): ?><a href="patients.php?book=<?= (int) $p['PatientID'] ?>" class="btn-primary btn-sm"><?= !empty($p['ActiveVisitID']) ? 'Edit Appointment' : 'Book' ?></a><?php endif; ?>
                             <?php if ($canEdit): ?>
-                            <button type="button" class="btn-warning btn-sm edit-patient-btn"
+                            <button type="button" class="btn-secondary btn-sm edit-patient-btn"
                                 data-id="<?= (int) $p['PatientID'] ?>"
                                 data-name="<?= tdc_e($p['PatientName']) ?>"
                                 data-phone="<?= tdc_e((string) $p['PatientPhone']) ?>"
@@ -1134,8 +1330,8 @@ $justVisited = isset($_GET['visited']);
                                 data-type="<?= tdc_e((string) $p['PatientType']) ?>"
                                 data-doctor="<?= tdc_e((string) $p['AllocatedDoctor']) ?>"
                                 data-remark="<?= tdc_e((string) $p['Remark']) ?>"><?= tdc_icon('pencil',16) ?><span>Edit</span></button>
-                            <?php endif; ?><?php if($canCreateVisit): ?><a class="btn-sm" href="reception.php?section=consultations&amp;patient=<?= (int) $p['PatientID'] ?>">Book</a><?php endif; ?>
-                            <?php if($canDelete): ?><form method="POST" action="patients.php" data-confirm="Delete this patient? This cannot be undone.">
+                            <?php endif; ?>
+                            <?php if($canDelete): ?><form method="POST" action="patients.php" data-confirm="Permanently delete this patient and clear all linked visits, laboratory results, prescriptions, pharmacy sales, payments, and ledger history? This cannot be undone.">
                                 <input type="hidden" name="csrf_token" value="<?= tdc_e($csrfToken) ?>">
                                 <input type="hidden" name="form_action" value="delete">
                                 <input type="hidden" name="PatientID" value="<?= (int) $p['PatientID'] ?>">
@@ -1177,21 +1373,28 @@ $justVisited = isset($_GET['visited']);
                         <div class="form-row">
                             <div class="form-group"><label for="pf_PatientName">Patient Name</label>
                                 <input type="text" id="pf_PatientName" name="PatientName" placeholder="e.g. Mahamed Omar Madobe" required></div>
-                            <div class="form-group"><label for="pf_PatientPhone">Phone</label>
-                                <input type="text" id="pf_PatientPhone" name="PatientPhone" placeholder="e.g. 615019253"></div>
+                            <div class="form-group"><label for="pf_PatientPhone">Phone <span class="required-mark">*</span></label>
+                                <input type="text" id="pf_PatientPhone" name="PatientPhone" placeholder="e.g. 615019253" required></div>
                         </div>
                         <div class="form-row">
-                            <div class="form-group"><label for="pf_Gender">Gender</label>
-                                <select id="pf_Gender" name="Gender">
+                            <div class="form-group"><label for="pf_Gender">Gender *</label>
+                                <select id="pf_Gender" name="Gender" required>
                                     <option value="">Select gender</option>
                                     <?php foreach (GENDER_OPTIONS as $v => $l): ?><option value="<?= tdc_e($v) ?>"><?= tdc_e($l) ?></option><?php endforeach; ?>
                                 </select></div>
-                            <div class="form-group"><label for="pf_DateOfBirth">Date of Birth</label>
-                                <input type="date" id="pf_DateOfBirth" name="DateOfBirth"></div>
+                            <div class="form-group"><label for="pf_DateOfBirth">Date of Birth *</label>
+                                <input type="date" id="pf_DateOfBirth" name="DateOfBirth" required></div>
                         </div>
                         <div class="form-row">
-                            <div class="form-group"><label for="pf_Age">Age</label>
-                                <input type="number" id="pf_Age" name="Age" min="0" max="150" placeholder="e.g. 34"></div>
+                            <div class="form-group patient-age-group"><label>Age *</label>
+                                <input type="hidden" id="pf_Age" name="Age">
+                                <div class="patient-age-segments" id="pf_AgeSegments" aria-label="Patient age">
+                                    <label><input type="text" id="pf_AgeYears" inputmode="numeric" autocomplete="off"><span>Years</span></label>
+                                    <label><input type="text" id="pf_AgeMonths" inputmode="numeric" autocomplete="off"><span>Months</span></label>
+                                    <label><input type="text" id="pf_AgeDays" inputmode="numeric" autocomplete="off"><span>Days</span></label>
+                                </div>
+                                <div class="patient-age-hint" id="pf_AgeHint">Select a date of birth to calculate age.</div>
+                            </div>
                             <div class="form-group"><label for="pf_PatientAddress">Address</label>
                                 <input type="text" id="pf_PatientAddress" name="PatientAddress" placeholder="e.g. Degmada Hodan, Isgoyska Al-barako"></div>
                         </div>
@@ -1203,8 +1406,8 @@ $justVisited = isset($_GET['visited']);
                             <span><strong>Visit Information</strong><span>Set patient type and allocated doctor.</span></span>
                         </div>
                         <div class="form-row">
-                            <div class="form-group"><label for="pf_PatientType">Patient Type</label>
-                                <select id="pf_PatientType" name="PatientType">
+                            <div class="form-group"><label for="pf_PatientType">Patient Type *</label>
+                                <select id="pf_PatientType" name="PatientType" required>
                                     <option value="">Select type</option>
                                     <?php foreach (PATIENT_TYPE_OPTIONS as $v => $l): ?><option value="<?= tdc_e($v) ?>"><?= tdc_e($l) ?></option><?php endforeach; ?>
                                 </select></div>
@@ -1218,9 +1421,31 @@ $justVisited = isset($_GET['visited']);
                             <textarea id="pf_Remark" name="Remark" placeholder="Optional notes about the patient"></textarea></div>
                     </section>
 
+                    <section class="form-section appointment-intake-section">
+                        <button type="button" class="btn btn-secondary" id="toggleAppointmentFields">+ Add appointment now</button>
+                        <input type="hidden" name="BookAppointment" id="pf_BookAppointment" value="">
+                        <input type="hidden" name="AppointmentOnly" id="pf_AppointmentOnly" value="">
+                        <input type="hidden" name="AppointmentVisitID" id="pf_AppointmentVisitID" value="">
+                        <div id="appointmentValidationMessage" class="form-error" hidden role="alert"></div>
+                        <div id="appointmentIntakeFields" hidden style="margin-top:16px">
+                            <div class="form-section-heading"><span class="form-section-icon"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 11h18"/></svg></span><span><strong>Appointment details</strong><span>Optional: create the appointment together with this new patient.</span></span></div>
+                            <div class="form-row">
+                                <div class="form-group"><label for="pf_AppointmentDoctorID">Doctor *</label><select id="pf_AppointmentDoctorID" name="AppointmentDoctorID"><option value="">Choose a linked doctor</option><?php foreach ($doctors as $d): if (empty($d['UserID'])) continue; ?><option value="<?= (int) $d['DoctorID'] ?>" data-fee="<?= tdc_e((string) $d['ConsultationFee']) ?>" data-days="<?= tdc_e((string) $d['WorkingDays']) ?>" data-start="<?= tdc_e(substr((string) $d['WorkStartTime'],0,5)) ?>" data-end="<?= tdc_e(substr((string) $d['WorkEndTime'],0,5)) ?>" data-booked="<?= tdc_e(json_encode($appointmentBookingsByDoctor[(int) $d['DoctorID']] ?? [])) ?>"><?= tdc_e($d['DoctorName']) ?> — <?= number_format((float) $d['ConsultationFee'],2) ?></option><?php endforeach; ?></select></div>
+                                <div class="form-group"><label for="pf_AppointmentDate">Date and time *</label><input type="datetime-local" id="pf_AppointmentDate" name="AppointmentDate" list="appointmentDateOptions" step="1800"><datalist id="appointmentDateOptions"></datalist><div id="appointmentAvailabilityHint" class="field-hint" role="status">Choose a doctor to see available days and hours.</div><div id="appointmentAvailabilityCalendar" class="appointment-availability-calendar" role="group" aria-label="Available appointment dates"></div></div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group"><label for="pf_AppointmentAmountPaid">Amount paid</label><input type="number" id="pf_AppointmentAmountPaid" name="AppointmentAmountPaid" min="0" step="0.01" value="0"></div><div class="form-group"><label for="pf_AppointmentDiscountType">Discount type</label><select id="pf_AppointmentDiscountType" name="AppointmentDiscountType"><option value="None">No discount</option><option value="Fixed">Fixed amount</option><option value="Percentage">Percentage</option></select></div><div class="form-group"><label for="pf_AppointmentDiscountValue">Discount value</label><input type="number" id="pf_AppointmentDiscountValue" name="AppointmentDiscountValue" min="0" step="0.01" value="0" placeholder="Optional discount"></div><div class="form-group"><label for="pf_AppointmentTaxRate">Tax rate (%)</label><input type="number" id="pf_AppointmentTaxRate" name="AppointmentTaxRate" min="0" max="100" step="0.01" value="0" placeholder="Optional tax"></div><div class="form-group"><label for="pf_AppointmentDiscountReason">Discount reason</label><input id="pf_AppointmentDiscountReason" name="AppointmentDiscountReason" placeholder="Required with discount"></div>
+                                <div class="form-group"><label for="pf_AppointmentPaymentMethod">Payment method</label><select id="pf_AppointmentPaymentMethod" name="AppointmentPaymentMethod"><option value="">Select when receiving payment</option><?php foreach ($paymentMethods as $method): ?><option value="<?= tdc_e($method['MethodName']) ?>"><?= tdc_e($method['MethodName']) ?></option><?php endforeach; ?></select></div>
+                            </div>
+                            <div class="form-row appointment-summary" aria-live="polite"><div><span>Consultation fee</span><strong id="appointmentFeeDisplay">0.00</strong></div><div><span>Final amount</span><strong id="appointmentFinalDisplay">0.00</strong></div><div><span>Due</span><strong id="appointmentDueDisplay">0.00</strong></div><div><span>Status</span><strong id="appointmentStatusDisplay">Unpaid</strong></div></div>
+                            <label class="free-consultation-toggle"><input type="checkbox" name="AppointmentFreeConsultation" value="1" id="pf_AppointmentFreeConsultation" <?= !empty($old['AppointmentFreeConsultation']) ? 'checked' : '' ?>> <span><strong>Free Consultation</strong><small>Waive the consultation fee for this visit.</small></span></label>
+                            <div class="form-group"><label for="pf_AppointmentReason">Reason for visit (Optional)</label><textarea id="pf_AppointmentReason" name="AppointmentReason" placeholder="Reason for visit"></textarea></div>
+                        </div>
+                    </section>
+
                 <div class="modal-actions">
                     <button type="button" class="btn btn-secondary" id="patientModalCancelBtn">Cancel</button>
-                    <button type="submit" class="btn-success  btn "><?= tdc_icon('check',16) ?><span>Save Patient</span></button>
+                    <button type="submit" class="btn-success  btn "><?= tdc_icon('check',16) ?><span id="patientSaveLabel">Save Patient</span></button>
                 </div>
             </div>
         </form>
@@ -1228,7 +1453,7 @@ $justVisited = isset($_GET['visited']);
 </div>
 <?php endif; ?>
 
-<?php if($canImport):?><div class="modal-overlay" id="importPatientModal"><div class="modal-box"><div class="modal-head"><h3><?= tdc_icon('upload',20) ?><span>Import Patients</span></h3><button type="button" class="modal-close" data-close-import aria-label="Close">×</button></div><form method="post" enctype="multipart/form-data"><div class="modal-body"><input type="hidden" name="csrf_token" value="<?=tdc_e($csrfToken)?>"><input type="hidden" name="form_action" value="import_csv"><div class="form-section"><div class="form-section-heading"><span><strong>CSV File</strong><span>Use the required CSV template. The import is transactional.</span></span></div><div class="form-group"><label>Select CSV</label><input type="file" name="csv_file" accept=".csv,text/csv" required></div></div><div class="modal-actions"><button type="button" class="btn btn-secondary" data-close-import>Cancel</button><button class="btn-success btn "><?= tdc_icon('upload',16) ?><span>Import Patients</span></button></div></div></form></div></div><?php endif;?>
+<?php if($canImport):?><div class="modal-overlay" id="importPatientModal"><div class="modal-box"><div class="modal-head"><h3><?= tdc_icon('upload',20) ?><span>Import Patients</span></h3><button type="button" class="modal-close" data-close-import aria-label="Close">×</button></div><form method="post" enctype="multipart/form-data"><div class="modal-body"><input type="hidden" name="csrf_token" value="<?=tdc_e($csrfToken)?>"><input type="hidden" name="form_action" value="import_csv"><div class="form-section"><div class="form-section-heading"><span><strong>CSV or XLSX File</strong><span>Use the required patient template. The import is transactional.</span></span></div><div class="form-group"><label>Select CSV or XLSX</label><input type="file" name="csv_file" accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required></div><p class="form-hint">Required column: patient_name. CSV and XLSX files use the same patient columns and validation rules; the first worksheet is imported.</p></div><div class="modal-actions"><button type="button" class="btn btn-secondary" data-close-import>Cancel</button><button class="btn-success btn "><?= tdc_icon('upload',16) ?><span>Import Patients</span></button></div></div></form></div></div><?php endif;?>
 
 </main>
 
@@ -1275,69 +1500,176 @@ function showToast(message){
     const fPhone = document.getElementById('pf_PatientPhone');
     const fGender = document.getElementById('pf_Gender');
     const fAge = document.getElementById('pf_Age');
+    const fAgeYears = document.getElementById('pf_AgeYears');
+    const fAgeMonths = document.getElementById('pf_AgeMonths');
+    const fAgeDays = document.getElementById('pf_AgeDays');
+    const fAgeHint = document.getElementById('pf_AgeHint');
     const fDob = document.getElementById('pf_DateOfBirth');
     const fAddress = document.getElementById('pf_PatientAddress');
     const fType = document.getElementById('pf_PatientType');
     const fDoctor = document.getElementById('pf_AllocatedDoctor');
     const fRemark = document.getElementById('pf_Remark');
+    const appointmentToggle = document.getElementById('toggleAppointmentFields');
+    const appointmentFields = document.getElementById('appointmentIntakeFields');
+    const fBookAppointment = document.getElementById('pf_BookAppointment');
+    const fAppointmentOnly = document.getElementById('pf_AppointmentOnly');
+    const fAppointmentVisitId = document.getElementById('pf_AppointmentVisitID');
+    const fAppointmentDoctor = document.getElementById('pf_AppointmentDoctorID');
+    const fAppointmentDate = document.getElementById('pf_AppointmentDate');
+    const fAppointmentReason = document.getElementById('pf_AppointmentReason');
+    const fAppointmentPaid = document.getElementById('pf_AppointmentAmountPaid');
+    const fAppointmentMethod = document.getElementById('pf_AppointmentPaymentMethod');
+    const fAppointmentFree = document.getElementById('pf_AppointmentFreeConsultation');
+    const fAppointmentDiscountType = document.getElementById('pf_AppointmentDiscountType');
+    const fAppointmentDiscountValue = document.getElementById('pf_AppointmentDiscountValue');
+    const fAppointmentTaxRate = document.getElementById('pf_AppointmentTaxRate');
+    const fAppointmentDiscountReason = document.getElementById('pf_AppointmentDiscountReason');
+    const appointmentFinalDisplay = document.getElementById('appointmentFinalDisplay');
+    const saveLabel = document.getElementById('patientSaveLabel');
+    const appointmentValidationMessage = document.getElementById('appointmentValidationMessage');
+    const appointmentAvailabilityHint = document.getElementById('appointmentAvailabilityHint');
+    const appointmentAvailabilityCalendar = document.getElementById('appointmentAvailabilityCalendar');
+    const appointmentDateOptions = document.getElementById('appointmentDateOptions');
+    const appointmentFeeDisplay = document.getElementById('appointmentFeeDisplay');
+    const appointmentDueDisplay = document.getElementById('appointmentDueDisplay');
+    const appointmentStatusDisplay = document.getElementById('appointmentStatusDisplay');
+    let appointmentOnly = false;
+    const existingAppointmentSlot = <?= json_encode($bookVisit ? date('Y-m-d\\TH:i', strtotime((string) $bookVisit['VisitDate'])) : '') ?>;
+    const existingAppointmentDoctor = <?= json_encode((string) ($bookVisit['DoctorID'] ?? '')) ?>;
 
     const MAX_AGE = 150;
-    let ageDobSyncing = false;
-
-    function pad2(n){ return String(n).padStart(2, '0'); }
-
-    function dobFromAge(years){
-        if (!Number.isInteger(years) || years < 0 || years > MAX_AGE) return '';
-        const t = new Date();
-        const d = new Date(t.getFullYear() - years, t.getMonth(), t.getDate());
-        return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate());
+    function daysInMonth(year, month){ return new Date(year, month, 0).getDate(); }
+    function parseDateValue(value){
+        const parts = String(value || '').split('-').map(Number);
+        if (parts.length !== 3 || parts.some(Number.isNaN)) return null;
+        const date = new Date(parts[0], parts[1] - 1, parts[2]);
+        return date.getFullYear() === parts[0] && date.getMonth() === parts[1] - 1 && date.getDate() === parts[2] ? date : null;
     }
-
-    function ageFromDob(value){
-        if (!value) return null;
-        const dob = new Date(value + 'T00:00:00');
-        if (isNaN(dob.getTime())) return null;
-        const today = new Date();
-        let age = today.getFullYear() - dob.getFullYear();
-        if (today.getMonth() < dob.getMonth() || (today.getMonth() === dob.getMonth() && today.getDate() < dob.getDate())) age--;
-        return (age >= 0 && age <= MAX_AGE) ? age : null;
+    function addCalendarMonths(date, months){
+        const target = new Date(date.getFullYear(), date.getMonth() + months, 1);
+        target.setDate(Math.min(date.getDate(), daysInMonth(target.getFullYear(), target.getMonth() + 1)));
+        return target;
     }
-
-    fAge.addEventListener('input', function(){
-        if (ageDobSyncing) return;
-        const raw = fAge.value.trim();
-        if (raw === '') { fDob.value = ''; fDob.setCustomValidity(''); return; }
-        if (!/^\d+$/.test(raw)) { fDob.value = ''; return; }
-        const years = parseInt(raw, 10);
-        if (years < 0 || years > MAX_AGE) { fDob.value = ''; return; }
-        ageDobSyncing = true;
-        fDob.value = dobFromAge(years);
+    function agePartsFromDob(value, today = new Date()){
+        const dob = parseDateValue(value); if (!dob) return null;
+        const current = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+        if (dob > current) return null;
+        let years = current.getFullYear() - dob.getFullYear();
+        const birthdayMonth = dob.getMonth(), birthdayDay = (dob.getMonth() === 1 && dob.getDate() === 29 && !((current.getFullYear() % 4 === 0 && current.getFullYear() % 100 !== 0) || current.getFullYear() % 400 === 0)) ? 28 : dob.getDate();
+        if (current.getMonth() < birthdayMonth || (current.getMonth() === birthdayMonth && current.getDate() < birthdayDay)) years--;
+        let anchor = new Date(dob.getFullYear() + years, dob.getMonth(), Math.min(dob.getDate(), daysInMonth(dob.getFullYear() + years, dob.getMonth() + 1)));
+        let months = (current.getFullYear() - anchor.getFullYear()) * 12 + current.getMonth() - anchor.getMonth();
+        if (addCalendarMonths(anchor, months) > current) months--;
+        const monthAnchor = addCalendarMonths(anchor, Math.max(0, months));
+        const days = Math.floor((current - monthAnchor) / 86400000);
+        return {years, months: Math.max(0, months), days: Math.max(0, days)};
+    }
+    function dobFromManualAge(today = new Date()){
+        if (fAgeYears.value.trim() === '' || fAgeMonths.value.trim() === '' || fAgeDays.value.trim() === '') return;
+        const years = Number.parseInt(fAgeYears.value, 10), months = Number.parseInt(fAgeMonths.value, 10), days = Number.parseInt(fAgeDays.value, 10);
+        if (!Number.isInteger(years) || !Number.isInteger(months) || !Number.isInteger(days) || years < 0 || years > MAX_AGE || months < 0 || months > 11 || days < 0 || days > 30) return;
+        const dob = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+        dob.setFullYear(dob.getFullYear() - years);
+        const monthAnchor = addCalendarMonths(dob, -months);
+        monthAnchor.setDate(monthAnchor.getDate() - days);
+        fDob.value = [monthAnchor.getFullYear(), String(monthAnchor.getMonth() + 1).padStart(2, '0'), String(monthAnchor.getDate()).padStart(2, '0')].join('-');
         fDob.setCustomValidity('');
-        ageDobSyncing = false;
-    });
+        if (fAgeHint) fAgeHint.textContent = 'Date of birth calculated from the entered age.';
+    }
+    function syncAgeDisplay(){
+        const rawDob = fDob.value.trim(), parts = rawDob ? agePartsFromDob(rawDob) : null;
+        if (rawDob && !parts) { fAge.value = ''; fAgeYears.value = ''; fAgeMonths.value = ''; fAgeDays.value = ''; fAgeYears.readOnly = true; fDob.setCustomValidity('Date of birth cannot be in the future.'); if (fAgeHint) fAgeHint.textContent = 'Date of birth cannot be in the future.'; return; }
+        fDob.setCustomValidity('');
+        if (parts) { fAge.value = String(parts.years); fAgeYears.value = parts.years; fAgeMonths.value = parts.months; fAgeDays.value = parts.days; [fAgeYears,fAgeMonths,fAgeDays].forEach(field => field.readOnly = true); if (fAgeHint) fAgeHint.textContent = 'Calculated from the date of birth.'; }
+        else { [fAgeYears,fAgeMonths,fAgeDays].forEach(field => field.readOnly = false); if (fAgeHint) fAgeHint.textContent = fId.value && fAgeYears.value ? 'DOB not recorded; enter or retain the legacy age.' : 'Enter age or select a date of birth.'; }
+    }
+    function normalizeManualAge(field, max){ if (field.readOnly) return; if (field.value.trim() === '') { if (field === fAgeYears) fAge.value = ''; return; } const value = Number.parseInt(field.value, 10); field.value = String(Number.isFinite(value) ? Math.max(0, Math.min(max, value)) : ''); if (field === fAgeYears) fAge.value = field.value; }
+    fAgeYears.addEventListener('input', function(){ normalizeManualAge(fAgeYears, MAX_AGE); dobFromManualAge(); });
+    fAgeMonths.addEventListener('input', function(){ normalizeManualAge(fAgeMonths, 11); dobFromManualAge(); });
+    fAgeDays.addEventListener('input', function(){ normalizeManualAge(fAgeDays, 30); dobFromManualAge(); });
+    fAgeYears.addEventListener('change', dobFromManualAge);
+    fAgeMonths.addEventListener('change', dobFromManualAge);
+    fAgeDays.addEventListener('change', dobFromManualAge);
+    fDob.addEventListener('input', syncAgeDisplay);
+    fDob.addEventListener('change', syncAgeDisplay);
 
-    fDob.addEventListener('change', function(){
-        if (ageDobSyncing) return;
-        const rawDob = fDob.value.trim();
-        if (rawDob === '') { fAge.value = ''; fDob.setCustomValidity(''); return; }
-        if (!/^\d{4}-\d{2}-\d{2}$/.test(rawDob)) { fAge.value = ''; return; }
-        const today = new Date();
-        const todayKey = today.getFullYear() + '-' + pad2(today.getMonth() + 1) + '-' + pad2(today.getDate());
-        if (rawDob > todayKey) {
-            fAge.value = '';
-            fDob.setCustomValidity('Date of birth cannot be in the future.');
-            fDob.reportValidity();
+    function setAppointmentOpen(open){
+        if (!appointmentFields || !appointmentToggle) return;
+        appointmentFields.hidden = !open;
+        fBookAppointment.value = open ? '1' : '';
+        appointmentToggle.textContent = open ? '− Remove appointment' : '+ Add appointment now';
+        [fAppointmentDoctor, fAppointmentDate].forEach(function(field){ if(field) field.required = open; });
+        updateAppointmentSummary();
+        if (open) updateAvailabilityHint();
+        if (saveLabel) saveLabel.textContent = appointmentOnly ? 'Book Appointment' : (open ? 'Save Patient & Book Appointment' : 'Save Patient');
+    }
+    function updateAppointmentSummary(){
+        const option = fAppointmentDoctor?.selectedOptions?.[0];
+        const fee = option && option.dataset.fee !== undefined ? Number(option.dataset.fee) : 0;
+        const free = Boolean(fAppointmentFree?.checked);
+        if (free) {
+            if (fAppointmentPaid) { fAppointmentPaid.value = '0'; fAppointmentPaid.max = '0'; fAppointmentPaid.disabled = true; }
+            if (fAppointmentMethod) { fAppointmentMethod.value = ''; fAppointmentMethod.disabled = true; fAppointmentMethod.required = false; }
+            [fAppointmentDiscountType,fAppointmentDiscountValue,fAppointmentTaxRate,fAppointmentDiscountReason].forEach(function(field){ if(field) field.disabled = true; });
+            if (appointmentFeeDisplay) appointmentFeeDisplay.textContent = '0.00';
+            if (appointmentFinalDisplay) appointmentFinalDisplay.textContent = '0.00';
+            if (appointmentDueDisplay) appointmentDueDisplay.textContent = '0.00';
+            if (appointmentStatusDisplay) appointmentStatusDisplay.textContent = 'Waived / Free';
+            if (fAppointmentPaid) fAppointmentPaid.setCustomValidity('');
             return;
         }
-        const age = ageFromDob(rawDob);
-        if (age === null) { fAge.value = ''; return; }
-        fDob.setCustomValidity('');
-        ageDobSyncing = true;
-        fAge.value = age;
-        ageDobSyncing = false;
+        [fAppointmentDiscountType,fAppointmentDiscountValue,fAppointmentTaxRate,fAppointmentDiscountReason].forEach(function(field){ if(field) field.disabled = false; });
+        if (fAppointmentPaid) fAppointmentPaid.disabled = false;
+        if (fAppointmentMethod) fAppointmentMethod.disabled = false;
+        const discountType = fAppointmentDiscountType?.value || 'None';
+        const discountValue = Math.max(0, Number(fAppointmentDiscountValue?.value || 0));
+        const taxRate = Math.min(100, Math.max(0, Number(fAppointmentTaxRate?.value || 0)));
+        const discount = discountType === 'None' ? 0 : (discountType === 'Percentage' ? fee * discountValue / 100 : discountValue);
+        const subtotal = Math.max(0, fee - Math.min(fee, discount));
+        const final = Math.round((subtotal + subtotal * taxRate / 100) * 100) / 100;
+        const paid = Number(fAppointmentPaid?.value || 0);
+        const invalid = paid < 0 || !Number.isFinite(paid) || paid > final;
+        if (appointmentFeeDisplay) appointmentFeeDisplay.textContent = fee.toFixed(2);
+        if (appointmentFinalDisplay) appointmentFinalDisplay.textContent = final.toFixed(2);
+        if (appointmentDueDisplay) appointmentDueDisplay.textContent = Math.max(0, final - Math.max(0, paid)).toFixed(2);
+        if (appointmentStatusDisplay) appointmentStatusDisplay.textContent = invalid ? 'Invalid amount' : (final > 0 && paid >= final ? 'Paid' : (paid > 0 ? 'Partial' : 'Unpaid'));
+        if (fAppointmentPaid) { fAppointmentPaid.max = final.toFixed(2); fAppointmentPaid.setCustomValidity(invalid ? 'Amount paid cannot exceed the final consultation amount (' + final.toFixed(2) + ').' : ''); }
+        if (fAppointmentMethod) fAppointmentMethod.setCustomValidity(paid > 0 && !fAppointmentMethod.value ? 'Select a payment method for the amount received.' : '');
+    }
+    function updateAvailabilityHint(){
+        if (!fAppointmentDate || !fAppointmentDoctor || !appointmentAvailabilityCalendar) return;
+        const calendar = window.TdcAppointmentCalendar(fAppointmentDate, fAppointmentDoctor, appointmentAvailabilityCalendar, appointmentAvailabilityHint, <?= TDC_APPOINTMENT_MINUTES ?>, existingAppointmentSlot, existingAppointmentDoctor);
+        calendar.refresh();
+    }
+    function validateAppointmentDate(){ updateAvailabilityHint(); }
+    function renderAppointmentAvailabilityCalendar(){ updateAvailabilityHint(); }
+    fAppointmentDoctor?.addEventListener('change', updateAppointmentSummary);
+    fDoctor?.addEventListener('change', function(){ fAppointmentDoctor.value=fDoctor.value; updateAppointmentSummary(); updateAvailabilityHint(); });
+    fAppointmentDoctor?.addEventListener('change', updateAvailabilityHint);
+    fAppointmentDate?.addEventListener('input', validateAppointmentDate);
+    fAppointmentDate?.addEventListener('change', function(){ validateAppointmentDate(); renderAppointmentAvailabilityCalendar(fAppointmentDoctor?.selectedOptions?.[0]); });
+    fAppointmentPaid?.addEventListener('input', updateAppointmentSummary);
+    fAppointmentMethod?.addEventListener('change', updateAppointmentSummary);
+    fAppointmentFree?.addEventListener('change', updateAppointmentSummary);
+    [fAppointmentDiscountType,fAppointmentDiscountValue,fAppointmentTaxRate].forEach(function(field){ field?.addEventListener('input', updateAppointmentSummary); field?.addEventListener('change', updateAppointmentSummary); });
+    form.noValidate = true;
+    form.addEventListener('submit', function(event){
+        updateAppointmentSummary();
+        if (!form.checkValidity()) {
+            event.preventDefault();
+            const invalid = form.querySelector(':invalid');
+            if (appointmentValidationMessage) {
+                appointmentValidationMessage.textContent = invalid?.validationMessage || 'Please correct the highlighted fields before saving.';
+                appointmentValidationMessage.hidden = false;
+            }
+            invalid?.scrollIntoView({behavior:'smooth', block:'center'});
+            invalid?.focus({preventScroll:true});
+        } else if (appointmentValidationMessage) {
+            appointmentValidationMessage.hidden = true;
+        }
     });
-
-    function openModal(){ overlay.classList.add('show'); }
+    appointmentToggle?.addEventListener('click', function(){ setAppointmentOpen(fBookAppointment.value !== '1'); });
+    function openModal(){ setAppointmentOpen(false); overlay.classList.add('show'); }
     function closeModal(){ overlay.classList.remove('show'); }
 
     function fillFromDataset(ds){
@@ -1347,7 +1679,9 @@ function showToast(message){
         fAddress.value = ds.address;
         fGender.value = ds.gender;
         fAge.value = ds.age;
-        fDob.value = ds.dob || dobFromAge(parseInt(ds.age, 10));
+        fDob.value = ds.dob || '';
+        fAgeYears.value = ds.age || '';
+        syncAgeDisplay();
         fType.value = ds.type;
         fDoctor.value = ds.doctor;
         fRemark.value = ds.remark;
@@ -1356,8 +1690,15 @@ function showToast(message){
     const addBtn = document.getElementById('addPatientBtn');
     if (addBtn) {
         addBtn.addEventListener('click', function(){
+            appointmentOnly = false;
             form.reset();
+            if (fAppointmentOnly) fAppointmentOnly.value = '';
             fId.value = '';
+            fAppointmentPaid.value = '0';
+            fAge.value = '';
+            fDob.value = '';
+            fAgeYears.value = '';
+            syncAgeDisplay();
             modalTitle.textContent = 'Register Patient';
             openModal();
         });
@@ -1365,7 +1706,9 @@ function showToast(message){
 
     document.querySelectorAll('.edit-patient-btn').forEach(function(btn){
         btn.addEventListener('click', function(){
+            appointmentOnly = false;
             form.reset();
+            if (fAppointmentOnly) fAppointmentOnly.value = '';
             fillFromDataset(btn.dataset);
             modalTitle.textContent = 'Edit Patient';
             openModal();
@@ -1375,12 +1718,48 @@ function showToast(message){
     const editFromViewBtn = document.getElementById('editFromViewBtn');
     if (editFromViewBtn) {
         editFromViewBtn.addEventListener('click', function(){
+            appointmentOnly = false;
             form.reset();
+            if (fAppointmentOnly) fAppointmentOnly.value = '';
             fillFromDataset(editFromViewBtn.dataset);
             modalTitle.textContent = 'Edit Patient';
             openModal();
         });
     }
+
+    <?php if ($bookPatient !== null && $canCreateVisit): ?>
+    appointmentOnly = true;
+    form.reset();
+    if (fAppointmentOnly) fAppointmentOnly.value = '1';
+    if (fAppointmentVisitId) fAppointmentVisitId.value = <?= json_encode((string) ($bookVisit['VisitID'] ?? '')) ?>;
+    if (fAppointmentVisitId?.value) {
+        fAppointmentPaid.readOnly = true;
+        fAppointmentMethod.disabled = true;
+    }
+    fillFromDataset(<?= json_encode([
+        'id' => (string) $bookPatient['PatientID'],
+        'name' => (string) $bookPatient['PatientName'],
+        'phone' => (string) ($bookPatient['PatientPhone'] ?? ''),
+        'address' => (string) ($bookPatient['PatientAddress'] ?? ''),
+        'gender' => (string) ($bookPatient['Gender'] ?? ''),
+        'age' => (string) ($bookPatient['Age'] ?? ''),
+        'dob' => (string) ($bookPatient['DateOfBirth'] ?? ''),
+        'type' => (string) ($bookPatient['PatientType'] ?? ''),
+        'doctor' => (string) ($bookPatient['AllocatedDoctor'] ?? ''),
+        'remark' => (string) ($bookPatient['Remark'] ?? ''),
+    ], JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>);
+    fAppointmentDoctor.value = <?= json_encode((string) ($bookPatient['AllocatedDoctor'] ?? '')) ?>;
+    fAppointmentDate.value = <?= json_encode($bookVisit ? date('Y-m-d\\TH:i', strtotime((string) $bookVisit['VisitDate'])) : '') ?>;
+    fAppointmentReason.value = <?= json_encode((string) ($bookVisit['ChiefComplaint'] ?? '')) ?>;
+    fAppointmentPaid.value = <?= json_encode((string) ($bookVisit['AmountPaid'] ?? '0')) ?>;
+    fAppointmentMethod.value = <?= json_encode((string) ($bookVisit['AppointmentPaymentMethod'] ?? '')) ?>;
+    if (!fAppointmentVisitId?.value) fAppointmentPaid.value = '0';
+    modalTitle.textContent = 'Book Appointment — ' + fName.value;
+    if (saveLabel) saveLabel.textContent = 'Book Appointment';
+    openModal();
+    setAppointmentOpen(true);
+    updateAvailabilityHint();
+    <?php endif; ?>
 
     document.getElementById('patientModalCloseBtn').addEventListener('click', closeModal);
     document.getElementById('patientModalCancelBtn').addEventListener('click', closeModal);
@@ -1395,15 +1774,30 @@ function showToast(message){
     fGender.value = <?= json_encode($old['Gender']) ?>;
     fAge.value = <?= json_encode($old['Age']) ?>;
     fDob.value = <?= json_encode($old['DateOfBirth']) ?>;
+    fAgeYears.value = <?= json_encode($old['Age']) ?>;
+    syncAgeDisplay();
     fType.value = <?= json_encode($old['PatientType']) ?>;
     fDoctor.value = <?= json_encode($old['AllocatedDoctor']) ?>;
     fRemark.value = <?= json_encode($old['Remark']) ?>;
+    fAppointmentDoctor.value = <?= json_encode($old['AppointmentDoctorID']) ?>;
+    fAppointmentDate.value = <?= json_encode($old['AppointmentDate']) ?>;
+    fAppointmentFree.checked = <?= json_encode(!empty($old['AppointmentFreeConsultation'])) ?>;
+    fAppointmentDiscountType.value = <?= json_encode($old['AppointmentDiscountType']) ?>;
+    fAppointmentDiscountValue.value = <?= json_encode($old['AppointmentDiscountValue']) ?>;
+    fAppointmentDiscountReason.value = <?= json_encode($old['AppointmentDiscountReason']) ?>;
+    fAppointmentTaxRate.value = <?= json_encode($old['AppointmentTaxRate']) ?>;
+    fAppointmentReason.value = <?= json_encode($old['AppointmentReason']) ?>;
+    fAppointmentPaid.value = <?= json_encode($old['AppointmentAmountPaid']) ?>;
+    fAppointmentMethod.value = <?= json_encode($old['AppointmentPaymentMethod']) ?>;
     modalTitle.textContent = fId.value ? 'Edit Patient' : 'Register Patient';
     openModal();
+    setAppointmentOpen(<?= json_encode($old['BookAppointment'] === '1') ?>);
+    if (<?= json_encode($old['BookAppointment'] === '1') ?>) updateAvailabilityHint();
+    if (appointmentValidationMessage) { appointmentValidationMessage.textContent = <?= json_encode(implode(' ', $errors)) ?>; appointmentValidationMessage.hidden = false; }
     <?php endif; ?>
 
-    <?php if ($justSaved || $justDeleted || $justVisited): ?>
-    showToast(<?= $justSaved ? json_encode('Patient saved successfully.') : ($justDeleted ? json_encode('Patient deleted successfully.') : json_encode('Visit recorded successfully.')) ?>);
+    <?php if ($hasPatientToast): ?>
+    showToast(<?= json_encode($patientToast) ?>);
     if (window.history.replaceState) { window.history.replaceState({}, document.title, 'patients.php'); }
     <?php endif; ?>
 })();

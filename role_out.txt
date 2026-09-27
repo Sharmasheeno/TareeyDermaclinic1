@@ -1,0 +1,295 @@
+PASS superuser home.php
+PASS superuser reception.php
+PASS superuser doctors.php
+PASS superuser patients.php
+PASS superuser laboratory.php
+PASS superuser pharmacy.php
+PASS superuser accounting.php
+PASS superuser reports.php
+PASS superuser setup.php
+PASS receptionuser home.php
+PASS receptionuser reception.php
+PASS receptionuser doctors.php
+PASS receptionuser patients.php
+PASS receptionuser laboratory.php
+PASS receptionuser pharmacy.php
+PASS receptionuser accounting.php
+PASS receptionuser reports.php
+PASS receptionuser setup.php
+PASS doctoruser home.php
+PASS doctoruser reception.php
+PASS doctoruser doctors.php
+PASS doctoruser patients.php
+PASS doctoruser laboratory.php
+PASS doctoruser pharmacy.php
+PASS doctoruser accounting.php
+PASS doctoruser reports.php
+PASS doctoruser setup.php
+PASS pharmacyuser home.php
+PASS pharmacyuser reception.php
+PASS pharmacyuser doctors.php
+PASS pharmacyuser patients.php
+PASS pharmacyuser laboratory.php
+PASS pharmacyuser pharmacy.php
+PASS pharmacyuser accounting.php
+PASS pharmacyuser reports.php
+PASS pharmacyuser setup.php
+PASS labuser home.php
+PASS labuser reception.php
+PASS labuser doctors.php
+PASS labuser patients.php
+PASS labuser laboratory.php
+PASS labuser pharmacy.php
+PASS labuser accounting.php
+PASS labuser reports.php
+PASS labuser setup.php
+PASS superuser dashboard navigation
+PASS receptionuser dashboard navigation
+PASS doctoruser dashboard navigation
+PASS pharmacyuser dashboard navigation
+PASS labuser dashboard navigation
+PASS Doctor has dedicated workspace
+PASS Pharmacist sees only permitted operations
+PASS Reception opens Pharmacy workspace
+PASS Reception can dispense prescriptions
+PASS Reception opens Laboratory workspace
+PASS Reception can process laboratory orders
+PASS Reception can create pharmacy inventory
+PASS Reception can use pharmacy POS
+PASS Reception views the authoritative pharmacy bill
+PASS Reception views laboratory billing with dynamic methods
+PASS Reception income statement omits confidential COGS
+PASS Setup exposes system and custom role architecture
+PASS SuperAdmin configures authoritative lab service in Setup
+PASS SuperAdmin creates user with database role assignment
+PASS Custom Accountant navigation follows permissions
+PASS Custom Accountant can open accounting
+PASS Custom Accountant can open advanced journal
+PASS Custom Accountant posts balanced manual journal
+PASS Custom Accountant cannot open patients
+PASS Export hidden before permission grant
+PASS Permission dependency rejects broken configuration
+PASS SuperAdmin grants report export without source changes
+PASS Custom authorized accountant sees aggregate COGS
+PASS SuperAdmin revokes report export
+PASS Revoked report export is hidden immediately
+PASS Revoked report export backend is forbidden
+PASS Root SuperAdmin cannot be deactivated
+PASS Active payment method is configured in Setup
+PASS Reception booking form loads configured payment methods
+PASS Accounting Payments page loads and renders payment rows
+PASS Payment source label helper renders the linked source
+PASS EVC Plus is displayed as a manual payment method
+PASS Reversible payment exposes Reverse action
+PASS Unauthorized user cannot reverse a payment
+PASS Valid reversal creates reversal payment and preserves original
+PASS Accounting reversal remains balanced
+PASS Reversal restores linked source balance
+PASS Fully reversed payment no longer offers Reverse
+PASS Partial reversal leaves the correct reversible amount
+PASS Partial reversal is shown with remaining amount
+PASS Legacy Settings URL redirects to Setup
+PASS Patient age is derived from date of birth
+PASS Shared patient phone creates a distinct patient
+PASS Future patient date of birth is rejected
+PASS Reception cannot book an unlinked doctor
+PASS Reception books paid consultation into doctor queue
+PASS Opening a notification marks only that recipient read
+PASS Reception books partial consultation with outstanding debt
+PASS Doctor starts a partially paid consultation
+PASS Reception settles consultation into doctor queue
+PASS Doctor starts own consultation
+PASS Doctor saves connected clinical record
+PASS Doctor prescription form uses live inventory choices
+PASS Doctor cannot prescribe unknown inventory item
+PASS Doctor prescription enters pharmacy queue
+PASS Doctor multi-test lab order uses catalogue totals
+PASS Pharmacist prices prescription before dispensing
+PASS Pharmacist dispenses prescription and reduces stock
+PASS Multi-item prescription groups lines sequentially
+PASS Price shortage prescription
+PASS Prescription shortage rolls back dispensing
+PASS Standalone POS ignores tampered browser prices
+PASS Voiding POS reverses stock and revenue
+PASS Walk-in POS keeps patient and visit relationships empty
+PASS Registered POS preserves patient visit and payment ledger link
+PASS Registered POS receipt resolves patient and visit details
+PASS Reception clears doctor lab request payment
+PASS Laboratory collects modern order
+PASS Laboratory completes doctor-requested modern tests
+PASS Doctor reviews returned lab result
+PASS Doctor queue excludes another doctor patients
+PASS Patient with clinical history cannot be deleted
+PASS Doctor with workflow history cannot be deleted
+PASS SuperAdmin cannot create patient lab orders manually
+PASS Lab sees unpaid work
+PASS Stale SuperAdmin session loses Setup access
+PASS Laboratory starts paid fixture before result entry
+PASS Bad CSRF cannot change lab results
+PASS Legacy lab result requires processing state without changing payment
+PASS Lab cannot delete orders
+PASS Lab saves results without changing bill
+PASS Reception bills cannot overwrite results
+PASS Reception pays order for lab handoff
+PASS Lab now receives reception paid order
+PASS Deleted account loses access
+PASS SuperAdmin section and search reception.php patients
+PASS SuperAdmin section and search reception.php consultations
+PASS SuperAdmin section and search reception.php laboratory
+PASS SuperAdmin section and search reception.php pharmacy
+PASS SuperAdmin section and search pharmacy.php prescriptions
+PASS SuperAdmin section and search pharmacy.php pos
+PASS SuperAdmin section and search pharmacy.php purchases
+PASS SuperAdmin section and search pharmacy.php inventory
+PASS SuperAdmin section and search accounting.php ledger
+PASS SuperAdmin section and search accounting.php accounts
+PASS SuperAdmin section and search reports.php income-statement
+PASS SuperAdmin section and search reports.php balance-sheet
+PASS SuperAdmin section and search setup.php users
+PASS SuperAdmin section and search setup.php roles
+PASS SuperAdmin section and search setup.php permissions
+PASS SuperAdmin section and search setup.php clinical
+PASS SuperAdmin section and search setup.php laboratory
+PASS SuperAdmin section and search setup.php payment-methods
+PASS SuperAdmin section and search setup.php audit
+PASS SuperAdmin section and search patients.php 
+PASS SuperAdmin section and search doctors.php 
+PASS SuperAdmin section and search laboratory.php 
+PASS Non-root SuperAdmin opens dashboard
+PASS Non-root SuperAdmin opens reception patients
+PASS Non-root SuperAdmin opens reception consultations
+PASS Non-root SuperAdmin opens reception laboratory billing
+PASS Non-root SuperAdmin opens reception pharmacy billing
+PASS Non-root SuperAdmin opens doctor directory
+PASS Non-root SuperAdmin opens laboratory workspace
+PASS Non-root SuperAdmin opens pharmacy prescriptions
+PASS Non-root SuperAdmin opens pharmacy point of sale
+PASS Non-root SuperAdmin opens pharmacy purchases
+PASS Non-root SuperAdmin opens pharmacy inventory
+PASS Non-root SuperAdmin opens patients module
+PASS Non-root SuperAdmin opens accounting ledger
+PASS Non-root SuperAdmin opens reports income statement
+PASS Non-root SuperAdmin opens reports balance sheet
+PASS Non-root SuperAdmin opens setup users
+PASS Non-root SuperAdmin opens setup permissions
+PASS Non-root SuperAdmin opens setup audit
+PASS Non-root SuperAdmin opens doctor workspace for assigned visit
+PASS Non-root SuperAdmin sees doctor workspace action in directory
+PASS receptionuser creates medicine
+PASS receptionuser edits medicine
+PASS receptionuser POS uses selling price and records partial payment
+PASS receptionuser fulfills prescription
+PASS pharmacyuser creates medicine
+PASS pharmacyuser edits medicine
+PASS pharmacyuser POS uses selling price and records partial payment
+PASS pharmacyuser fulfills prescription
+PASS superuser creates medicine
+PASS superuser edits medicine
+PASS superuser POS uses selling price and records partial payment
+PASS superuser fulfills prescription
+PASS Reception cannot post advanced manual journal
+PASS receptionuser registers patient
+PASS receptionuser books supported visit
+PASS superuser posts balanced manual journal
+PASS superuser registers patient
+PASS superuser books supported visit
+PASS Reception denied Setup users
+PASS Reception denied Setup roles
+PASS Reception denied Setup permissions
+PASS Reception denied Setup audit
+PASS Reception denied Setup payment-methods
+PASS Reception cannot author clinical notes
+PASS Reception cannot rename financial configuration
+PASS Reception financial configuration controls absent
+PASS Render dashboard
+PASS Render reception
+PASS Render registration
+PASS Render waiting
+PASS Render schedule
+PASS Render doctors
+PASS Render laboratory
+PASS Render inventory
+PASS Render purchase
+PASS Render purchases
+PASS Render pos
+PASS Render accounting
+PASS Render expense
+PASS Render reports
+PASS Render setup
+PASS Render Reception combined pharmacy navigation
+PASS Render Pharmacy dedicated navigation
+PASS superuser unit create persists
+PASS superuser rejects negative SellingPrice
+PASS superuser rejects negative QuantityInStock
+PASS superuser rejects negative ReorderLevel
+PASS receptionuser unit create persists
+PASS receptionuser rejects negative SellingPrice
+PASS receptionuser rejects negative QuantityInStock
+PASS receptionuser rejects negative ReorderLevel
+PASS pharmacyuser unit create persists
+PASS pharmacyuser rejects negative SellingPrice
+PASS pharmacyuser rejects negative QuantityInStock
+PASS pharmacyuser rejects negative ReorderLevel
+PASS Editable permission form snapshot
+PASS SuperAdmin purchase conversion and partial payment
+PASS SuperAdmin purchase form modal
+PASS SuperAdmin cost detail visible
+PASS SuperAdmin cost export visible
+PASS Purchase rejects invalid Discount
+PASS Purchase rejects invalid AmountPaid
+PASS Purchase rejects invalid ExpiryDate
+PASS Purchase rejects invalid Quantity
+PASS Purchase rejects invalid UnitPrice
+PASS Purchase rejects invalid SellingPrice
+PASS pharmacyuser cost confidentiality surface 0
+PASS pharmacyuser cost confidentiality surface 1
+PASS pharmacyuser cost confidentiality surface 2
+PASS pharmacyuser cost confidentiality surface 3
+PASS pharmacyuser cost confidentiality surface 4
+PASS pharmacyuser cost confidentiality surface 5
+PASS pharmacyuser direct cost denial new
+PASS pharmacyuser direct cost denial post
+PASS pharmacyuser direct cost denial report
+PASS doctoruser cost confidentiality surface 0
+PASS doctoruser cost confidentiality surface 1
+PASS doctoruser cost confidentiality surface 2
+PASS doctoruser cost confidentiality surface 3
+PASS doctoruser cost confidentiality surface 4
+PASS doctoruser cost confidentiality surface 5
+PASS doctoruser direct cost denial new
+PASS doctoruser direct cost denial post
+PASS doctoruser direct cost denial report
+PASS receptionuser cost confidentiality surface 0
+PASS receptionuser cost confidentiality surface 1
+PASS receptionuser cost confidentiality surface 2
+PASS receptionuser cost confidentiality surface 3
+PASS receptionuser cost confidentiality surface 4
+PASS receptionuser cost confidentiality surface 5
+PASS receptionuser direct cost denial new
+PASS receptionuser direct cost denial post
+PASS receptionuser direct cost denial report
+PASS Restore disposable deleted lab fixture
+PASS labuser cost confidentiality surface 0
+PASS labuser cost confidentiality surface 1
+PASS labuser cost confidentiality surface 2
+PASS labuser cost confidentiality surface 3
+PASS labuser cost confidentiality surface 4
+PASS labuser cost confidentiality surface 5
+PASS labuser direct cost denial new
+PASS labuser direct cost denial post
+PASS labuser direct cost denial report
+PASS SuperAdmin waiting table all doctors
+PASS Doctor waiting export stays assigned
+PASS Waiting search filters actual visits
+PASS Waiting date range rejects invalid dates
+PASS SuperAdmin real doctor action start
+PASS SuperAdmin real doctor action save_notes
+PASS SuperAdmin real doctor action prescribe
+PASS SuperAdmin real doctor action request_lab
+PASS SuperAdmin starts another doctor visit without impersonation
+PASS Purchase stock and expiry were persisted
+FAIL Purchase reuses configured pack conversion: {"case":"Purchase reuses configured pack conversion","failures":["Unexpected status 200","Database assertion failed [SELECT ConversionFactor FROM purchases WHERE ReferenceNumber='REUSE-TEST'] expected=6.00 actual=","Database assertion failed [SELECT QuantityInStock FROM inventory WHERE ItemID='ITM000001'] expected=32 actual=20"]}
+
+FAIL Purchase void reverses converted stock: {"case":"Purchase void reverses converted stock","failures":["Unexpected status 200"]}
+
+292 checks; 2 failed.

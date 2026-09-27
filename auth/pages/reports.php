@@ -369,6 +369,7 @@ require_once __DIR__ . '/../../db.php';
 require_once __DIR__ . '/../includes/ui.php';
 require_once __DIR__ . '/../includes/pharmacy-costing.php';
 require_once __DIR__ . '/../includes/finance.php';
+$reportsSaleStatusFilter = tdc_has_column($pdo, 'pharmacysales', 'SaleStatus') ? "SaleStatus <> 'Voided'" : '1=1';
 
 if (empty($_SESSION['csrf_token'])) {
     $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
@@ -482,7 +483,7 @@ if (($_GET['export'] ?? '') === 'csv' && $section !== null) {
             foreach ($incomeStatement['revenue'] as $line) if ((string) $line['AccountID'] === 'REV-PHARM') $incomePharmacyRevenue = (float) $line['Amount'];
             fputcsv($output, ['Pharmacy Cost','Drug Cost',$pharmacyCogs['drugCost']]);
             fputcsv($output, ['Pharmacy Gross Profit','',$pharmacyCogs['grossProfit']]);
-            if ($pharmacyCogs['complete']) fputcsv($output, ['Net Income','',$incomeStatement['netIncome'] - $incomePharmacyRevenue + (float) $pharmacyCogs['grossProfit']]);
+            if ($pharmacyCogs['complete']) fputcsv($output, ['Net Income','',$incomeStatement['netIncome'] - (float) $pharmacyCogs['drugCost']]);
         }
     } elseif ($section === 'balance-sheet' && $balanceSheet) {
         fputcsv($output, ['As of', $bsAsOf]); fputcsv($output, ['Type','Account','Amount']);
@@ -507,9 +508,9 @@ if ($section === null) {
     $summaryQueries = [
         'Consultations (Today)' => "SELECT COUNT(*) FROM visits WHERE DATE(VisitDate)=CURDATE()",
         'Consultation revenue (Today)' => "SELECT COALESCE(SUM(Credit-Debit),0) FROM accounting WHERE AccountID='REV-CONSULT' AND DATE(TransactionDate)=CURDATE()",
-        'Pharmacy revenue (Today)' => "SELECT COALESCE(SUM(Credit-Debit),0) FROM accounting WHERE AccountID='REV-PHARM' AND DATE(TransactionDate)=CURDATE()",
+        'Pharmacy collected revenue (Today)' => "SELECT COALESCE(SUM(Amount),0) FROM payments WHERE PaymentType IN ('POS','Pharmacy') AND PaymentStatus='Confirmed' AND DATE(PaidAt)=CURDATE()",
         'Laboratory revenue (Today)' => "SELECT COALESCE(SUM(Credit-Debit),0) FROM accounting WHERE AccountID='REV-LAB' AND DATE(TransactionDate)=CURDATE()",
-        'Pending balances (Current)' => "SELECT COALESCE((SELECT SUM(DueBalance) FROM visits WHERE QueueStatus<>'Cancelled'),0)+COALESCE((SELECT SUM(DueBalance) FROM laboratory WHERE WorkflowStatus<>'Cancelled'),0)+COALESCE((SELECT SUM(s.DueBalance) FROM (SELECT MIN(DueBalance) DueBalance FROM pharmacysales GROUP BY SUBSTRING_INDEX(SaleID,'-',1)) s),0)",
+        'Pending balances (Current)' => "SELECT COALESCE((SELECT SUM(DueBalance) FROM visits WHERE QueueStatus<>'Cancelled'),0)+COALESCE((SELECT SUM(DueBalance) FROM laboratory WHERE WorkflowStatus<>'Cancelled'),0)+COALESCE((SELECT SUM(s.DueBalance) FROM (SELECT MIN(DueBalance) DueBalance FROM pharmacysales WHERE {$reportsSaleStatusFilter} GROUP BY SUBSTRING_INDEX(SaleID,'-',1)) s),0)",
         'Prescriptions (All time)' => "SELECT COUNT(DISTINCT SUBSTRING_INDEX(PrescriptionID,'-',1)) FROM prescriptions",
         'Lab tests (All time)' => "SELECT COUNT(*) FROM laboratory",
         'Low stock (Current)' => "SELECT COUNT(*) FROM inventory WHERE QuantityInStock<=ReorderLevel",
@@ -530,6 +531,31 @@ $legalName     = (string) ($_SESSION['userlegalname'] ?? 'User');
 $displayName   = tdc_display_name($legalName);
 $avatarLetters = strtoupper(substr($displayName, 0, 2));
 $csrfToken     = (string) ($_SESSION['csrf_token'] ?? '');
+$landingPeriod = (string) ($_GET['period'] ?? 'this_month');
+$landingToday = date('Y-m-d');
+$landingPeriods = [
+    'today' => [$landingToday, $landingToday],
+    'yesterday' => [date('Y-m-d', strtotime('-1 day')), date('Y-m-d', strtotime('-1 day'))],
+    'this_week' => [date('Y-m-d', strtotime('monday this week')), $landingToday],
+    'this_month' => [$thisMonthStart, $landingToday],
+    'last_month' => [$lastMonthStart, $lastMonthEnd],
+    'this_year' => [$thisYearStart, $landingToday],
+];
+if ($landingPeriod === 'custom') {
+    $landingFrom = trim((string) ($_GET['from_date'] ?? $thisMonthStart));
+    $landingTo = trim((string) ($_GET['to_date'] ?? $landingToday));
+    if (!tdc_is_valid_date($landingFrom)) $landingFrom = $thisMonthStart;
+    if (!tdc_is_valid_date($landingTo)) $landingTo = $landingToday;
+    if ($landingFrom > $landingTo) [$landingFrom, $landingTo] = [$landingTo, $landingFrom];
+} else {
+    if (!isset($landingPeriods[$landingPeriod])) $landingPeriod = 'this_month';
+    [$landingFrom, $landingTo] = $landingPeriods[$landingPeriod];
+}
+$landingFilters = ['period' => $landingPeriod, 'from' => $landingFrom, 'to' => $landingTo, 'module' => (string) ($_GET['module'] ?? 'reception')];
+if ($section === null) {
+    header('Location: reports.php?section=visits&from_date=' . urlencode($landingFrom) . '&to_date=' . urlencode($landingTo));
+    exit;
+}
 $currentPage   = basename((string) ($_SERVER['SCRIPT_NAME'] ?? 'reports.php'));
 ?>
 <!DOCTYPE html>
@@ -587,7 +613,7 @@ $currentPage   = basename((string) ($_SERVER['SCRIPT_NAME'] ?? 'reports.php'));
     .notif-menu{ right:0; left:auto; min-width:260px; }
     .notif-menu .notif-title{ padding:10px 16px 8px; font-size:12px; font-weight:700; letter-spacing:0.04em; text-transform:uppercase; color:var(--navy-55); }
     .notif-empty{ padding:20px 16px 22px; font-size:13px; color:var(--navy-55); text-align:center; }
-    .page-body{ padding:40px 32px; }
+    .page-body{ width:100%; max-width:1500px; margin:0 auto; padding:32px 28px; }
     .welcome-eyebrow{ font-size:11px; font-weight:600; letter-spacing:0.08em; text-transform:uppercase; color:var(--navy-55); margin-bottom:8px; }
     .welcome-title{ font-size:26px; font-weight:700; color:var(--navy); }
     .welcome-sub{ font-size:14px; color:var(--navy-55); margin-top:6px; margin-bottom:28px; }
@@ -678,6 +704,22 @@ $currentPage   = basename((string) ($_SERVER['SCRIPT_NAME'] ?? 'reports.php'));
         .income-statement-preview .statement-grandtotal { grid-template-columns:minmax(0,1fr) 120px; }
     }
     @media print{
+        @page { size: A4 portrait; margin: 12mm; }
+        body { background:#fff !important; }
+        .app-header, .logout-fab, .back-link, .section-toolbar, .preset-links, .statement-actions, .report-toolbar, .no-print { display:none !important; }
+        .page-body { padding:0 !important; }
+        .statement-wrap { max-width:100%; border:none; }
+        .report-module-tabs, .report-side-nav, .report-toolbar, .report-table-tools, .back-link, .no-print { display:none !important; }
+        .report-workspace-live { display:block !important; width:100% !important; margin:0 !important; }
+        .report-workspace-main, .report-active-content { display:block !important; width:100% !important; max-width:none !important; min-height:0 !important; margin:0 !important; padding:0 !important; border:0 !important; box-shadow:none !important; }
+        .report-head { margin:0 0 12px !important; }
+        .report-summary { display:flex !important; gap:8px !important; margin-bottom:12px !important; }
+        .report-summary-card { flex:1 1 0 !important; min-width:0 !important; padding:7px 9px !important; }
+        .data-table-wrap { overflow:visible !important; max-height:none !important; width:100% !important; }
+        .report-data-table { width:100% !important; table-layout:auto !important; font-size:9px !important; }
+        .report-data-table th, .report-data-table td { padding:5px 6px !important; white-space:normal !important; overflow-wrap:anywhere !important; }
+        .report-data-table thead th { position:static !important; }
+
         .income-statement-preview{ width:100%; min-height:auto; margin:0; box-shadow:none; }
         .income-report-section{ break-inside:avoid; page-break-inside:avoid; }
     }
@@ -690,16 +732,26 @@ $currentPage   = basename((string) ($_SERVER['SCRIPT_NAME'] ?? 'reports.php'));
     .logout-fab::after{ content:'Log Out'; position:absolute; bottom:calc(100% + 8px); right:0; background:var(--navy); color:var(--white); font-family:'Google Sans', sans-serif; font-size:12px; font-weight:600; padding:6px 10px; white-space:nowrap; opacity:0; visibility:hidden; transform:translateY(4px); transition:opacity 0.15s ease, transform 0.15s ease, visibility 0.15s ease; pointer-events:none; }
     .logout-fab:hover::after, .logout-fab:focus-visible::after{ opacity:1; visibility:visible; transform:translateY(0); }
     .report-tag{ font-size:9.5px; font-weight:700; letter-spacing:0.06em; text-transform:uppercase; padding:2px 6px; background:var(--navy-10); color:var(--navy-55); }
-    .report-head{ display:flex; align-items:flex-start; gap:12px; margin:14px 0 18px; }
+    .report-breadcrumb{margin-bottom:5px;color:var(--navy-55);font-size:11px;font-weight:650;}.report-head{ display:flex; align-items:flex-start; gap:12px; margin:14px 0 18px; }
     .report-head-icon{ display:grid; place-items:center; width:40px; height:40px; flex-shrink:0; background:var(--navy-10); color:var(--navy); }
-    .report-toolbar{ display:flex; flex-wrap:wrap; align-items:flex-end; gap:12px; margin-bottom:16px; }
+    .quick-period-control { display:grid; gap:4px; color:var(--navy-55); font-size:10px; font-weight:700; letter-spacing:.04em; text-transform:uppercase; }
+.quick-period-control select { min-height:36px; padding:7px 9px; border:1px solid var(--border-ui); border-radius:var(--radius); background:var(--white); color:var(--navy); }
+.selected-period-label { margin-top:7px; color:var(--navy-55); font-size:12px; font-weight:650; }
+.report-table-tools { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-top:12px; color:var(--navy-55); font-size:12px; }
+.report-table-tools label { display:flex; align-items:center; gap:6px; }
+.report-table-tools select { min-height:32px; padding:5px 8px; border:1px solid var(--border-ui); border-radius:var(--radius); }
+.report-table-tools [data-page-status] { margin-right:auto; }
+.data-table-wrap { overflow:auto; max-height:calc(100vh - 330px); }
+.data-table-wrap .data-table thead th { position:sticky; top:0; z-index:1; cursor:pointer; }
+.data-table-wrap .data-table tbody tr:hover { background:var(--primary-soft); }
+.report-toolbar{ display:flex; flex-wrap:wrap; align-items:flex-end; gap:12px; margin-bottom:16px; }
     .report-context{ align-self:center; color:var(--navy-55); font-size:12px; font-weight:600; }
     .report-filters{ display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
     .report-summary{ display:flex; flex-wrap:wrap; gap:10px; margin-bottom:16px; }
     .report-summary-card{ display:flex; flex-direction:column; gap:2px; min-width:150px; padding:10px 14px; border:var(--border); background:var(--white); }
     .report-summary-label{ font-size:10.5px; font-weight:700; letter-spacing:0.06em; text-transform:uppercase; color:var(--navy-55); }
     .report-summary-value{ font-size:17px; font-weight:700; color:var(--navy); }
-    .data-table th.align-right, .data-table td.align-right{ text-align:right; }
+    .data-table tfoot th{border-top:2px solid var(--border-ui);background:var(--surface-muted);color:var(--text-primary);font-weight:750;}.data-table th.align-right, .data-table td.align-right{ text-align:right; }
     .cell-muted{ color:var(--navy-30); }
     .status-badge{ display:inline-block; padding:3px 9px; font-size:10.5px; font-weight:700; letter-spacing:0.04em; text-transform:uppercase; border:1px solid transparent; }
     .status-badge.success{ background:rgba(21,153,87,.1); color:#159957; border-color:rgba(21,153,87,.35); }
@@ -707,14 +759,29 @@ $currentPage   = basename((string) ($_SERVER['SCRIPT_NAME'] ?? 'reports.php'));
     .status-badge.warn{ background:rgba(241,90,36,.1); color:#b8471f; border-color:rgba(241,90,36,.35); }
     .status-badge.info{ background:var(--navy-10); color:var(--navy); border-color:var(--navy-30); }
     .status-badge.neutral{ background:rgba(46,49,146,.06); color:var(--navy-55); border-color:var(--navy-30); }
-    @media print{
-        .app-header, .logout-fab, .back-link, .section-toolbar, .preset-links, .statement-actions, .report-toolbar, .no-print{ display:none !important; }
-        .page-body{ padding:0; }
-        .statement-wrap{ max-width:100%; border:none; }
-    }
+    /* Report workspace layout is kept here as a page-local fallback so a stale cached clinic.css cannot collapse the workspace. */
+    .report-module-tabs{display:flex;gap:8px;overflow-x:auto;margin:20px 0 16px;padding:4px 0 8px;}
+    .report-module-tab{display:inline-flex;align-items:center;gap:7px;flex:0 0 auto;padding:10px 15px;border:1px solid var(--border-ui,#d6dcef);border-radius:8px;background:var(--surface,#fff);color:var(--text-secondary,#68709b);text-decoration:none;font-size:12px;font-weight:700;}
+    .report-module-tab:hover{border-color:var(--primary,#303192);color:var(--primary,#303192);}
+    .report-module-tab.active{border-color:var(--primary,#303192);background:var(--primary,#303192);color:#fff;box-shadow:0 3px 8px rgba(48,49,146,.18);}
+    .report-workspace-live{display:grid;grid-template-columns:240px minmax(0,1fr);gap:20px;align-items:start;width:100%;}
+    .report-side-nav{padding:14px;border:1px solid var(--border-ui,#d6dcef);border-radius:12px;background:var(--surface,#fff);}
+    .report-side-title{margin-bottom:14px;color:var(--text-primary,#172033);font-size:14px;font-weight:750;}
+    .report-side-heading{margin:14px 0 6px;color:var(--text-secondary,#68709b);font-size:10px;font-weight:750;letter-spacing:.08em;text-transform:uppercase;}
+    .report-side-heading:first-of-type{margin-top:0;}
+    .report-side-links{display:grid;gap:3px;}
+    .report-side-links a{padding:8px 9px;border-radius:8px;color:var(--text-primary,#172033);font-size:12px;text-decoration:none;}
+    .report-side-links a:hover,.report-side-links a.active{background:var(--primary-soft,#eef0f7);color:var(--primary,#303192);}
+    .report-side-links a.active{border-left:3px solid var(--primary,#303192);font-weight:750;}
+    .report-side-empty{padding:8px 9px;color:var(--text-secondary,#68709b);font-size:11px;}
+    .report-workspace-main{min-height:220px;padding:24px;border:1px solid var(--border-ui,#d6dcef);border-radius:12px;background:var(--surface,#fff);min-width:0;}
+    @media (max-width:900px){.report-workspace-live{grid-template-columns:200px minmax(0,1fr);gap:14px;}}
+    @media (max-width:760px){.report-workspace-live{grid-template-columns:1fr;}.report-side-nav{order:0}.report-workspace-main{order:1;}}
+
 </style>
-<link rel="stylesheet" href="../assets/clinic.css">
-<script src="../assets/clinic.js" defer></script>
+<link rel="stylesheet" href="../assets/clinic.css?v=<?= rawurlencode((string) @filemtime(__DIR__ . '/../assets/clinic.css')) ?>">
+<link rel="stylesheet" href="../assets/print-theme.css?v=<?= rawurlencode((string) @filemtime(__DIR__ . '/../assets/print-theme.css')) ?>">
+<script src="../assets/clinic.js?v=<?= rawurlencode((string) @filemtime(__DIR__ . '/../assets/clinic.js')) ?>" defer></script>
 </head>
 <body>
 
@@ -759,12 +826,12 @@ $currentPage   = basename((string) ($_SERVER['SCRIPT_NAME'] ?? 'reports.php'));
 
 <?php if ($section === null): ?>
 
-    <?= tdc_rc_render_landing($clinicSummary) ?>
+    <?= tdc_rc_render_landing([], $landingFilters) ?>
 
 
 <?php elseif ($isCatalog): ?>
 
-    <a href="reports.php" class="back-link no-print">&larr; Back to Reports</a>
+    <a href="reports.php?workspace=1" class="back-link no-print">&larr; Back to Reports</a>
     <?php
     $rcExportLinks = [];
     if (tdc_can('reports.export')) {
@@ -818,14 +885,9 @@ $currentPage   = basename((string) ($_SERVER['SCRIPT_NAME'] ?? 'reports.php'));
         $pharmacyCost = $pharmacyCogs['drugCost'];
         $pharmacyGrossProfit = $pharmacyCogs['grossProfit'];
         $incomeReportRevenue = $incomeStatement['revenue'];
-        if ($canViewIncomeCosts && $pharmacyCogs['complete'] && array_key_exists('REV-PHARM', $incomeRevenueById)) {
-            $incomeReportRevenue = array_values(array_filter($incomeReportRevenue, static fn (array $line): bool => (string) $line['AccountID'] !== 'REV-PHARM'));
-            array_unshift($incomeReportRevenue, ['AccountID' => 'REV-PHARM-GP', 'AccountName' => 'Pharmacy Gross Profit', 'Amount' => (float) $pharmacyGrossProfit]);
-        }
+
         $incomeReportTotalRevenue = (float) $incomeStatement['totalRevenue'];
-        if ($canViewIncomeCosts && $pharmacyCogs['complete'] && array_key_exists('REV-PHARM', $incomeRevenueById)) {
-            $incomeReportTotalRevenue = $incomeReportTotalRevenue - $incomeRevenueById['REV-PHARM'] + (float) $pharmacyGrossProfit;
-        }
+
         $salaryExpense = 0.0;
         foreach ($incomeStatement['expense'] as $incomeLine) {
             if (stripos((string) $incomeLine['AccountID'], 'SALARY') !== false || stripos((string) $incomeLine['AccountName'], 'salary') !== false) $salaryExpense += (float) $incomeLine['Amount'];
@@ -833,6 +895,7 @@ $currentPage   = basename((string) ($_SERVER['SCRIPT_NAME'] ?? 'reports.php'));
         $otherExpense = max(0.0, (float) $incomeStatement['totalExpense'] - $salaryExpense);
         ?>
         <article class="income-statement-preview" aria-label="Income Statement">
+            <div class="print-brand-bar" aria-hidden="true"><div class="print-brand-mark">T</div><div class="print-brand-name"><?= tdc_e($companyName) ?><small>Reports</small></div><span class="print-brand-label">INCOME STATEMENT</span></div>
             <header class="income-report-header">
                 <img class="income-report-logo" src="../uploads/tareydermacliniclogo.png" alt="Tarey Derma Clinic">
                 <div class="income-report-clinic"><?= tdc_e($companyName) ?></div>
@@ -841,12 +904,12 @@ $currentPage   = basename((string) ($_SERVER['SCRIPT_NAME'] ?? 'reports.php'));
             </header>
             <div class="income-report-content">
                 <?php if ($canViewIncomeCosts): ?><section class="income-report-section">
-                    <div class="income-report-heading">Pharmacy Gross Profit</div>
-                    <div class="income-report-row"><span>Drug Sold</span><span class="income-report-amount"><?= number_format($pharmacySold, 2) ?></span></div>
+                    <div class="income-report-heading">Pharmacy Gross Profit</div><div class="income-report-note">Billed revenue includes credit dispensing. Cash collections and outstanding prescription balances are shown separately.</div><div class="income-report-row"><span>Pharmacy cash collected in period</span><span><?= number_format((float)($pharmacyCogs['cashCollected']??0),2) ?></span></div><div class="income-report-row"><span>Dispensed prescription receivables at period end</span><span><?= number_format((float)($pharmacyCogs['prescriptionReceivable']??0),2) ?></span></div>
+                    <div class="income-report-row"><span>Drug Sold (billed revenue)</span><span class="income-report-amount"><?= number_format($pharmacySold, 2) ?></span></div>
                     <div class="income-report-row"><span>Drug Cost</span><span class="income-report-amount"><?= $pharmacyCost === null ? 'Incomplete' : number_format($pharmacyCost, 2) ?></span></div>
                     <div class="income-report-rule"></div>
                     <div class="income-report-row income-report-total"><span>Gross Profit</span><span class="income-report-amount"><span class="income-report-box"><?= $pharmacyGrossProfit === null ? '—' : number_format($pharmacyGrossProfit, 2) ?></span></span></div>
-                    <?php if ($pharmacyCost === null): ?><div class="income-report-note">COGS unavailable for <?= (int) $pharmacyCogs['unknownSales'] ?> legacy sale<?= (int) $pharmacyCogs['unknownSales'] === 1 ? '' : 's' ?> totaling <?= number_format((float) $pharmacyCogs['unknownRevenue'], 2) ?>.</div><?php endif; ?>
+                    <?php if ($pharmacyCost === null): ?><div class="income-report-note">COGS unavailable for <?= (int) $pharmacyCogs['unknownSales'] ?> pharmacy bill<?= (int) $pharmacyCogs['unknownSales'] === 1 ? '' : 's' ?> without cost snapshots totaling <?= number_format((float) $pharmacyCogs['unknownRevenue'], 2) ?>.</div><?php endif; ?>
                 </section><?php endif; ?>
                 <section class="income-report-section">
                     <div class="income-report-heading">Revenue</div>
@@ -862,7 +925,7 @@ $currentPage   = basename((string) ($_SERVER['SCRIPT_NAME'] ?? 'reports.php'));
                     <div class="income-report-row income-report-total"><span>Total</span><span class="income-report-amount"><span class="income-report-box"><?= number_format((float) $incomeStatement['totalExpense'], 2) ?></span></span></div>
                 </section>
                 <?php if ($canViewIncomeCosts): ?><section class="income-report-section income-report-net">
-                    <div class="income-report-row income-report-total"><span>Net Profit or Loss</span><span class="income-report-amount"><span class="income-report-box"><?= $pharmacyCost === null ? '—' : number_format($incomeReportTotalRevenue - (float) $incomeStatement['totalExpense'], 2) ?></span></span></div>
+                    <div class="income-report-row income-report-total"><span>Cash income less expenses and dispensed COGS</span><span class="income-report-amount"><span class="income-report-box"><?= $pharmacyCost === null ? '—' : number_format($incomeReportTotalRevenue - (float) $incomeStatement['totalExpense'] - (float) $pharmacyCost, 2) ?></span></span></div>
                     <?php if ($pharmacyCost === null): ?><div class="income-report-note">Net profit unavailable because pharmacy COGS is incomplete.</div><?php endif; ?>
                 </section><?php endif; ?>
             </div>
@@ -940,6 +1003,7 @@ $currentPage   = basename((string) ($_SERVER['SCRIPT_NAME'] ?? 'reports.php'));
         </div>
 
         <div class="income-statement-preview" aria-label="Balance Sheet">
+            <div class="print-brand-bar" aria-hidden="true"><div class="print-brand-mark">T</div><div class="print-brand-name"><?= tdc_e($companyName) ?><small>Reports</small></div><span class="print-brand-label">BALANCE SHEET</span></div>
             <header class="income-report-header">
                 <img class="income-report-logo" src="../uploads/tareydermacliniclogo.png" alt="Tarey Derma Clinic">
                 <div class="income-report-clinic"><?= tdc_e($companyName) ?></div>

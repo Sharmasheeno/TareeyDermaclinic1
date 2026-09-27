@@ -1,0 +1,78 @@
+PASS Register patient A sharing mobile
+PASS Register patient B sharing mobile
+PASS Shared mobile returns both patients
+PASS Overpayment rejected with no visit or payment
+PASS Book partial credit consultation
+PASS Pending Payment cannot complete
+PASS Forged PatientID rejected
+PASS Bad CSRF rejected
+PASS Call partial visit
+PASS Save clinical notes while partial
+PASS Lab add category
+PASS Lab deactivate category
+PASS Lab activate category
+PASS Lab add type
+PASS Lab deactivate type
+PASS Lab activate type
+PASS Lab add unit
+PASS Lab deactivate unit
+PASS Lab activate unit
+PASS Lab add flag
+PASS Lab deactivate flag
+PASS Lab activate flag
+PASS Lab add test
+PASS Lab deactivate test
+PASS Lab activate test
+PASS Lab add parameter
+PASS Lab deactivate parameter
+PASS Lab activate parameter
+PASS Lab add center
+PASS Lab deactivate center
+PASS Lab activate center
+PASS Modern request authoritative price
+PASS Lab queue reads actual local schema
+PASS Create doctor test selection
+PASS Duplicate selection rejected
+PASS Update selection availability 0
+PASS Update selection availability 1
+PASS Upsert center test mapping 1
+PASS Upsert center test mapping 0
+PASS Upsert center test mapping 1
+PASS Collect unpaid modern multi-test order
+PASS Required modern results block completion atomically
+PASS Forged parameter rejected atomically
+PASS Invalid numeric rejected
+PASS Save both modern result drafts
+PASS Reopen modern draft values
+PASS Complete modern results preserves debt and identities
+PASS Finalized modern result cannot be overwritten
+PASS Doctor reads completed modern result via bridge
+PASS Prescription reaches pharmacy with no stock change
+PASS Pharmacy receives authoritative prescription
+PASS Price prescription without stock movement
+PASS Collect partial prescription payment without stock movement
+PASS Repricing preserves confirmed payment and debt
+PASS Prescription overpayment rejected
+PASS Settle prescription payment without stock movement
+PASS Dispense exactly once without synthetic POS
+PASS Repeated dispense does not move stock
+PASS Collect completed lab debt without reopening clinical work
+PASS Lab overpayment rejected
+PASS Complete consultation preserves credit debt
+PASS Create Unpaid credit prescription
+PASS Price Unpaid credit prescription
+PASS Unpaid queue exposes Dispense Medicine
+PASS Unpaid dispensing retains debt without fake payment or POS
+PASS Repeated Unpaid dispense cannot deduct twice
+PASS Later payment settles dispensed Unpaid prescription and AccR
+PASS Create Partial credit prescription
+PASS Price Partial credit prescription
+PASS Collect before partial dispense
+PASS Partial queue exposes Dispense Medicine
+PASS Partial dispensing retains debt without fake payment or POS
+PASS Repeated Partial dispense cannot deduct twice
+PASS Later payment settles dispensed Partial prescription and AccR
+PASS Consultation reversal excludes lab payments sharing VisitID
+PASS Accounting entries balance after linked payments and reversal
+PASS Prescription finance separates billed revenue, cash, COGS and receivables
+77 checks; 0 failed.

@@ -1,0 +1,397 @@
+{
+    "database": "tdc_role_test_e8efeae4d87c",
+    "checks": [
+        {
+            "name": "Register patient A sharing mobile",
+            "ok": true,
+            "detail": ""
+        },
+        {
+            "name": "Register patient B sharing mobile",
+            "ok": true,
+            "detail": ""
+        },
+        {
+            "name": "Shared mobile returns both patients",
+            "ok": true,
+            "detail": ""
+        },
+        {
+            "name": "Overpayment rejected with no visit or payment",
+            "ok": true,
+            "detail": ""
+        },
+        {
+            "name": "Book partial credit consultation",
+            "ok": true,
+            "detail": ""
+        },
+        {
+            "name": "Pending Payment cannot complete",
+            "ok": true,
+            "detail": ""
+        },
+        {
+            "name": "Forged PatientID rejected",
+            "ok": true,
+            "detail": ""
+        },
+        {
+            "name": "Bad CSRF rejected",
+            "ok": true,
+            "detail": ""
+        },
+        {
+            "name": "Call partial visit",
+            "ok": true,
+            "detail": ""
+        },
+        {
+            "name": "Save clinical notes while partial",
+            "ok": true,
+            "detail": ""
+        },
+        {
+            "name": "Lab add category",
+            "ok": true,
+            "detail": ""
+        },
+        {
+            "name": "Lab deactivate category",
+            "ok": true,
+            "detail": ""
+        },
+        {
+            "name": "Lab activate category",
+            "ok": true,
+            "detail": ""
+        },
+        {
+            "name": "Lab add type",
+            "ok": true,
+            "detail": ""
+        },
+        {
+            "name": "Lab deactivate type",
+            "ok": true,
+            "detail": ""
+        },
+        {
+            "name": "Lab activate type",
+            "ok": true,
+            "detail": ""
+        },
+        {
+            "name": "Lab add unit",
+            "ok": true,
+            "detail": ""
+        },
+        {
+            "name": "Lab deactivate unit",
+            "ok": true,
+            "detail": ""
+        },
+        {
+            "name": "Lab activate unit",
+            "ok": true,
+            "detail": ""
+        },
+        {
+            "name": "Lab add flag",
+            "ok": true,
+            "detail": ""
+        },
+        {
+            "name": "Lab deactivate flag",
+            "ok": true,
+            "detail": ""
+        },
+        {
+            "name": "Lab activate flag",
+            "ok": true,
+            "detail": ""
+        },
+        {
+            "name": "Lab add test",
+            "ok": true,
+            "detail": ""
+        },
+        {
+            "name": "Lab deactivate test",
+            "ok": true,
+            "detail": ""
+        },
+        {
+            "name": "Lab activate test",
+            "ok": true,
+            "detail": ""
+        },
+        {
+            "name": "Lab add parameter",
+            "ok": true,
+            "detail": ""
+        },
+        {
+            "name": "Lab deactivate parameter",
+            "ok": true,
+            "detail": ""
+        },
+        {
+            "name": "Lab activate parameter",
+            "ok": true,
+            "detail": ""
+        },
+        {
+            "name": "Lab add center",
+            "ok": true,
+            "detail": ""
+        },
+        {
+            "name": "Lab deactivate center",
+            "ok": true,
+            "detail": ""
+        },
+        {
+            "name": "Lab activate center",
+            "ok": true,
+            "detail": ""
+        },
+        {
+            "name": "Modern request authoritative price",
+            "ok": true,
+            "detail": ""
+        },
+        {
+            "name": "Lab queue reads actual local schema",
+            "ok": true,
+            "detail": ""
+        },
+        {
+            "name": "Create doctor test selection",
+            "ok": true,
+            "detail": ""
+        },
+        {
+            "name": "Duplicate selection rejected",
+            "ok": true,
+            "detail": ""
+        },
+        {
+            "name": "Update selection availability 0",
+            "ok": true,
+            "detail": ""
+        },
+        {
+            "name": "Update selection availability 1",
+            "ok": true,
+            "detail": ""
+        },
+        {
+            "name": "Upsert center test mapping 1",
+            "ok": true,
+            "detail": ""
+        },
+        {
+            "name": "Upsert center test mapping 0",
+            "ok": true,
+            "detail": ""
+        },
+        {
+            "name": "Upsert center test mapping 1",
+            "ok": true,
+            "detail": ""
+        },
+        {
+            "name": "Collect unpaid modern multi-test order",
+            "ok": true,
+            "detail": ""
+        },
+        {
+            "name": "Required modern results block completion atomically",
+            "ok": true,
+            "detail": ""
+        },
+        {
+            "name": "Forged parameter rejected atomically",
+            "ok": true,
+            "detail": ""
+        },
+        {
+            "name": "Invalid numeric rejected",
+            "ok": true,
+            "detail": ""
+        },
+        {
+            "name": "Save both modern result drafts",
+            "ok": true,
+            "detail": ""
+        },
+        {
+            "name": "Reopen modern draft values",
+            "ok": true,
+            "detail": ""
+        },
+        {
+            "name": "Complete modern results preserves debt and identities",
+            "ok": true,
+            "detail": ""
+        },
+        {
+            "name": "Finalized modern result cannot be overwritten",
+            "ok": true,
+            "detail": ""
+        },
+        {
+            "name": "Doctor reads completed modern result via bridge",
+            "ok": true,
+            "detail": ""
+        },
+        {
+            "name": "Prescription reaches pharmacy with no stock change",
+            "ok": true,
+            "detail": ""
+        },
+        {
+            "name": "Pharmacy receives authoritative prescription",
+            "ok": true,
+            "detail": ""
+        },
+        {
+            "name": "Prescription bill uses authoritative price without stock movement",
+            "ok": true,
+            "detail": ""
+        },
+        {
+            "name": "Collect partial prescription payment without stock movement",
+            "ok": true,
+            "detail": ""
+        },
+        {
+            "name": "Bill adjustment preserves confirmed payment and debt",
+            "ok": true,
+            "detail": ""
+        },
+        {
+            "name": "Prescription overpayment rejected",
+            "ok": true,
+            "detail": ""
+        },
+        {
+            "name": "Settle prescription payment without stock movement",
+            "ok": true,
+            "detail": ""
+        },
+        {
+            "name": "Dispense exactly once without synthetic POS",
+            "ok": true,
+            "detail": ""
+        },
+        {
+            "name": "Repeated dispense does not move stock",
+            "ok": true,
+            "detail": ""
+        },
+        {
+            "name": "Collect completed lab debt without reopening clinical work",
+            "ok": true,
+            "detail": ""
+        },
+        {
+            "name": "Lab overpayment rejected",
+            "ok": true,
+            "detail": ""
+        },
+        {
+            "name": "Complete consultation preserves credit debt",
+            "ok": true,
+            "detail": ""
+        },
+        {
+            "name": "Create Unpaid credit prescription",
+            "ok": true,
+            "detail": ""
+        },
+        {
+            "name": "Unpaid prescription uses authoritative inventory price",
+            "ok": true,
+            "detail": ""
+        },
+        {
+            "name": "Unpaid queue exposes Dispense",
+            "ok": true,
+            "detail": ""
+        },
+        {
+            "name": "Unpaid dispensing retains debt without fake payment or POS",
+            "ok": true,
+            "detail": ""
+        },
+        {
+            "name": "Repeated Unpaid dispense cannot deduct twice",
+            "ok": true,
+            "detail": ""
+        },
+        {
+            "name": "Later payment settles dispensed Unpaid prescription and AccR",
+            "ok": true,
+            "detail": ""
+        },
+        {
+            "name": "Create Partial credit prescription",
+            "ok": true,
+            "detail": ""
+        },
+        {
+            "name": "Partial prescription uses authoritative inventory price",
+            "ok": true,
+            "detail": ""
+        },
+        {
+            "name": "Collect before partial dispense",
+            "ok": true,
+            "detail": ""
+        },
+        {
+            "name": "Partial queue exposes Dispense",
+            "ok": true,
+            "detail": ""
+        },
+        {
+            "name": "Partial dispensing retains debt without fake payment or POS",
+            "ok": true,
+            "detail": ""
+        },
+        {
+            "name": "Repeated Partial dispense cannot deduct twice",
+            "ok": true,
+            "detail": ""
+        },
+        {
+            "name": "Later payment settles dispensed Partial prescription and AccR",
+            "ok": true,
+            "detail": ""
+        },
+        {
+            "name": "Consultation reversal excludes lab payments sharing VisitID",
+            "ok": true,
+            "detail": ""
+        },
+        {
+            "name": "Accounting entries balance after linked payments and reversal",
+            "ok": true,
+            "detail": ""
+        },
+        {
+            "name": "Prescription finance separates billed revenue, cash, COGS and receivables",
+            "ok": true,
+            "detail": ""
+        }
+    ],
+    "failures": 0,
+    "trace": {
+        "patient": 1,
+        "visit": 1,
+        "laboratory": "LAB000001",
+        "prescription": "RX000001"
+    }
+}

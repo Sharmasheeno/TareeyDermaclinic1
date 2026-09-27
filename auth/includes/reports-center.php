@@ -19,49 +19,73 @@ if (!function_exists('tdc_rc_catalog')) {
     function tdc_rc_catalog(): array
     {
         $catalog = [
-            'clinical' => [
-                'label'   => 'Clinical & Patient',
-                'icon'    => 'stethoscope',
+            'patients' => [
+                'label' => 'Patients',
+                'icon' => 'users',
                 'reports' => [
                     'patients' => [
                         'title' => 'Patient Report',
-                        'desc'  => 'Registered patients with visit counts and outstanding balances.',
-                        'icon'  => 'users',
+                        'desc' => 'Registered patients with visit counts and outstanding balances.',
+                        'icon' => 'users',
                         'status' => 'patient',
-                    ],
-                    'visits' => [
-                        'title'  => 'Visit Report',
-                        'desc'   => 'Consultations by date with fees, payments and queue status.',
-                        'icon'   => 'calendar',
-                        'status' => 'payment',
-                    ],
-                    'doctor-consultations' => [
-                        'title' => 'Doctor Consultation Report',
-                        'desc'  => 'Consultation volume and revenue grouped by doctor.',
-                        'icon'  => 'user',
                     ],
                 ],
             ],
-            'billing' => [
-                'label'   => 'Reception & Billing',
-                'icon'    => 'credit-card',
+            'doctors' => [
+                'label' => 'Doctors',
+                'icon' => 'stethoscope',
                 'reports' => [
+                    'doctor-consultations' => [
+                        'title' => 'Doctor Consultation Report',
+                        'desc' => 'Consultation volume and revenue grouped by doctor.',
+                        'icon' => 'user',
+                    ],
+                ],
+            ],
+            'reception' => [
+                'label' => 'Reception',
+                'icon' => 'bell',
+                'reports' => [
+                    'visits' => [
+                        'title' => 'Visit Report',
+                        'desc' => 'Consultations by date with fees, payments and queue status.',
+                        'icon' => 'calendar',
+                        'status' => 'payment',
+                    ],
                     'billing' => [
-                        'title'  => 'Billing Report',
-                        'desc'   => 'Consultation, laboratory and pharmacy charges in one ledger.',
-                        'icon'   => 'file-text',
+                        'title' => 'Billing Report',
+                        'desc' => 'Consultation, laboratory, pharmacy and service charges in one ledger.',
+                        'icon' => 'file-text',
+                        'status' => 'payment',
+                    ],
+                    'billing-consultation' => [
+                        'title' => 'Consultation Billing',
+                        'desc' => 'Consultation fees, payments and outstanding balances.',
+                        'icon' => 'stethoscope',
                         'status' => 'payment',
                     ],
                     'payments' => [
-                        'title'  => 'Payment Report',
-                        'desc'   => 'Amounts collected across every service.',
-                        'icon'   => 'wallet',
+                        'title' => 'Payment Report',
+                        'desc' => 'Amounts collected across every service.',
+                        'icon' => 'wallet',
                         'status' => 'payment',
                     ],
                     'outstanding' => [
                         'title' => 'Outstanding Balances',
-                        'desc'  => 'Unpaid balances grouped by patient.',
-                        'icon'  => 'clock',
+                        'desc' => 'Unpaid balances grouped by patient.',
+                        'icon' => 'clock',
+                    ],
+                ],
+            ],
+            'services' => [
+                'label' => 'Services',
+                'icon' => 'grid',
+                'reports' => [
+                    'billing-services' => [
+                        'title' => 'Service Billing',
+                        'desc' => 'Assigned services, payments and outstanding balances.',
+                        'icon' => 'grid',
+                        'status' => 'payment',
                     ],
                 ],
             ],
@@ -69,6 +93,12 @@ if (!function_exists('tdc_rc_catalog')) {
                 'label'   => 'Pharmacy',
                 'icon'    => 'pill',
                 'reports' => [
+                    'billing-pharmacy' => [
+                        'title' => 'Pharmacy Billing',
+                        'desc' => 'Pharmacy sales, payments and outstanding balances.',
+                        'icon' => 'pill',
+                        'status' => 'payment',
+                    ],
                     'pharmacy-sales' => [
                         'title'  => 'Pharmacy Sales Report',
                         'desc'   => 'Dispensing sales with totals, payments and dues.',
@@ -103,6 +133,12 @@ if (!function_exists('tdc_rc_catalog')) {
                 'label'   => 'Laboratory',
                 'icon'    => 'flask',
                 'reports' => [
+                    'billing-laboratory' => [
+                        'title' => 'Laboratory Billing',
+                        'desc' => 'Laboratory charges, payments and outstanding balances.',
+                        'icon' => 'flask',
+                        'status' => 'payment',
+                    ],
                     'lab-orders' => [
                         'title'  => 'Laboratory Orders',
                         'desc'   => 'All laboratory requests with workflow and payment status.',
@@ -131,7 +167,7 @@ if (!function_exists('tdc_rc_catalog')) {
                 ],
             ],
             'financial' => [
-                'label'   => 'Financial',
+                'label'   => 'Accounting',
                 'icon'    => 'wallet',
                 'reports' => [
                     'revenue-by-account' => [
@@ -165,7 +201,11 @@ if (!function_exists('tdc_rc_catalog')) {
             ],
         ];
         if (!tdc_can_view_purchase_cost()) unset($catalog['pharmacy']['reports']['pharmacy-purchases']);
-        return $catalog;
+        $ordered = [];
+        foreach (['reception', 'services', 'doctors', 'patients', 'laboratory', 'pharmacy', 'financial'] as $groupKey) {
+            if (isset($catalog[$groupKey])) $ordered[$groupKey] = $catalog[$groupKey];
+        }
+        return $ordered;
     }
 }
 
@@ -248,22 +288,27 @@ if (!function_exists('tdc_rc_money_union')) {
      * Each branch uses its own placeholder prefix because PDO runs with real
      * prepared statements, where a named placeholder may only appear once.
      */
-    function tdc_rc_money_union(string $from, string $to, string $search, string $status): array
+    function tdc_rc_money_union(string $from, string $to, string $search, string $status, bool $hasSaleStatus = true, bool $hasAdjustments = true, bool $hasServices = true): array
     {
         $params = [];
         $branches = [];
+        $saleStatusFilter = $hasSaleStatus ? "SaleStatus <> 'Voided'" : '1=1';
 
         $where = tdc_rc_date('v.VisitDate', $from, $to, $params, 'mv');
         $where = array_merge($where, tdc_rc_like(['p.PatientName', 'v.VisitReference'], $search, $params, 'mv'));
         $where[] = "v.QueueStatus <> 'Cancelled'";
         if ($status !== '') {
-            $where[] = 'v.PaymentStatus = :mv_st';
+            $where[] = "CASE WHEN v.IsFreeConsultation=1 THEN 'Waived' ELSE v.PaymentStatus END = :mv_st";
             $params['mv_st'] = $status;
         }
+        $consultAdjustJoin = $hasAdjustments ? " LEFT JOIN patient_bill_adjustments ba ON ba.BillType='consultation' AND ba.BillReference=v.VisitReference" : '';
+        $consultGross = $hasAdjustments ? 'COALESCE(ba.GrossAmount,v.ConsultationFee)' : 'v.ConsultationFee';
+        $consultDiscount = $hasAdjustments ? 'COALESCE(ba.DiscountAmount,0)' : '0';
+        $consultTax = $hasAdjustments ? 'COALESCE(ba.TaxAmount,0)' : '0';
         $branches[] = "SELECT 'Consultation' AS Service, v.VisitReference AS Ref, p.PatientName AS Party,"
-            . " v.VisitDate AS Dt, v.ConsultationFee AS Total, v.AmountPaid AS Paid, v.DueBalance AS Due,"
-            . " v.PaymentStatus AS Status"
-            . " FROM visits v LEFT JOIN patients p ON p.PatientID = v.PatientID"
+            . " v.VisitDate AS Dt, {$consultGross} AS Gross, {$consultDiscount} AS Discount, {$consultTax} AS Tax, v.ConsultationFee AS Total, v.AmountPaid AS Paid, v.DueBalance AS Due,"
+            . " CASE WHEN v.IsFreeConsultation=1 THEN 'Waived' ELSE v.PaymentStatus END AS Status"
+            . " FROM visits v LEFT JOIN patients p ON p.PatientID = v.PatientID{$consultAdjustJoin}"
             . ($where ? ' WHERE ' . implode(' AND ', $where) : '');
 
         $where = tdc_rc_date('l.OrderDate', $from, $to, $params, 'ml');
@@ -273,10 +318,14 @@ if (!function_exists('tdc_rc_money_union')) {
             $where[] = 'l.PaymentStatus = :ml_st';
             $params['ml_st'] = $status;
         }
+        $labAdjustJoin = $hasAdjustments ? " LEFT JOIN patient_bill_adjustments ba ON ba.BillType='laboratory' AND ba.BillReference=l.LaboratoryID" : '';
+        $labGross = $hasAdjustments ? 'COALESCE(ba.GrossAmount,l.TotalAmount)' : 'l.TotalAmount';
+        $labDiscount = $hasAdjustments ? 'COALESCE(ba.DiscountAmount,0)' : '0';
+        $labTax = $hasAdjustments ? 'COALESCE(ba.TaxAmount,0)' : '0';
         $branches[] = "SELECT 'Laboratory' AS Service, l.LaboratoryID AS Ref, p.PatientName AS Party,"
-            . " l.OrderDate AS Dt, l.TotalAmount AS Total, l.AmountPaid AS Paid, l.DueBalance AS Due,"
+            . " l.OrderDate AS Dt, {$labGross} AS Gross, {$labDiscount} AS Discount, {$labTax} AS Tax, l.TotalAmount AS Total, l.AmountPaid AS Paid, l.DueBalance AS Due,"
             . " l.PaymentStatus AS Status"
-            . " FROM laboratory l LEFT JOIN patients p ON p.PatientID = l.PatientID"
+            . " FROM laboratory l LEFT JOIN patients p ON p.PatientID = l.PatientID{$labAdjustJoin}"
             . ($where ? ' WHERE ' . implode(' AND ', $where) : '');
 
         $where = tdc_rc_date('ps.SaleDate', $from, $to, $params, 'mp');
@@ -286,12 +335,44 @@ if (!function_exists('tdc_rc_money_union')) {
             $params['mp_st'] = $status;
         }
         $branches[] = "SELECT 'Pharmacy' AS Service, ps.SaleRef AS Ref, ps.CustomerName AS Party,"
-            . " ps.SaleDate AS Dt, ps.Total AS Total, ps.Paid AS Paid, ps.Due AS Due, ps.Status AS Status"
+            . " ps.SaleDate AS Dt, ps.Total AS Gross, 0 AS Discount, 0 AS Tax, ps.Total AS Total, ps.Paid AS Paid, ps.Due AS Due, ps.Status AS Status"
             . " FROM (SELECT SUBSTRING_INDEX(SaleID,'-',1) AS SaleRef, MIN(CustomerName) AS CustomerName,"
             . " MIN(SaleDate) AS SaleDate, SUM(LineTotal) AS Total, MIN(AmountPaid) AS Paid,"
             . " MIN(DueBalance) AS Due, MIN(PaymentStatus) AS Status"
-            . " FROM pharmacysales GROUP BY SUBSTRING_INDEX(SaleID,'-',1)) ps"
+            . " FROM pharmacysales WHERE {$saleStatusFilter} GROUP BY SUBSTRING_INDEX(SaleID,'-',1)) ps"
             . ($where ? ' WHERE ' . implode(' AND ', $where) : '');
+
+        // Prescriptions are valid pharmacy bills before dispensing creates a
+        // pharmacysales row. Include those bills once, while excluding any
+        // reference already represented by a non-voided pharmacy sale.
+        $where = tdc_rc_date('pr.Dt', $from, $to, $params, 'mpr');
+        $where = array_merge($where, tdc_rc_like(['p.PatientName', 'pr.Ref'], $search, $params, 'mpr'));
+        if ($status !== '') {
+            $where[] = "CASE WHEN pr.Paid <= 0 THEN 'Unpaid' WHEN pr.Due <= 0 THEN 'Paid' ELSE 'Partial' END = :mpr_st";
+            $params['mpr_st'] = $status;
+        }
+        $rxAdjustJoin = $hasAdjustments ? " LEFT JOIN patient_bill_adjustments ba ON ba.BillType='prescription' AND ba.BillReference=pr.Ref" : '';
+        $rxGross = $hasAdjustments ? 'COALESCE(ba.GrossAmount,pr.Gross)' : 'pr.Gross';
+        $rxDiscount = $hasAdjustments ? 'COALESCE(ba.DiscountAmount,0)' : '0';
+        $rxTax = $hasAdjustments ? 'COALESCE(ba.TaxAmount,0)' : '0';
+        $rxTotal = $hasAdjustments ? 'COALESCE(ba.FinalAmount,pr.Gross)' : 'pr.Gross';
+        $branches[] = "SELECT 'Pharmacy' AS Service, pr.Ref, p.PatientName AS Party, pr.Dt, {$rxGross} AS Gross, {$rxDiscount} AS Discount, {$rxTax} AS Tax, {$rxTotal} AS Total, pr.Paid, pr.Due, CASE WHEN pr.Paid <= 0 THEN 'Unpaid' WHEN pr.Due <= 0 THEN 'Paid' ELSE 'Partial' END AS Status"
+            . " FROM (SELECT SUBSTRING_INDEX(PrescriptionID,'-',1) AS Ref, PatientID, MIN(PrescriptionDate) AS Dt, MAX(TotalAmount) AS Gross, MAX(AmountPaid) AS Paid, MAX(DueBalance) AS Due FROM prescriptions GROUP BY SUBSTRING_INDEX(PrescriptionID,'-',1), PatientID) pr"
+            . " JOIN patients p ON p.PatientID=pr.PatientID{$rxAdjustJoin}"
+            . " WHERE NOT EXISTS (SELECT 1 FROM pharmacysales psv WHERE psv.SaleID LIKE CONCAT(pr.Ref,'-%') AND {$saleStatusFilter})"
+            . ($where ? ' AND ' . implode(' AND ', $where) : '');
+
+        $where = tdc_rc_date('sa.AssignedAt', $from, $to, $params, 'ms');
+        $where = array_merge($where, tdc_rc_like(['p.PatientName', 'sa.ServiceReference', 'ss.ServiceName', 'sc.CategoryName'], $search, $params, 'ms'));
+        $where[] = "sa.AssignmentStatus <> 'Cancelled'";
+        if ($status !== '') { $where[] = 'sa.PaymentStatus = :ms_st'; $params['ms_st'] = $status; }
+        if ($hasServices) {
+            $serviceAdjustJoin = $hasAdjustments ? " LEFT JOIN patient_bill_adjustments ba ON ba.BillType='Service' AND ba.BillReference=sa.ServiceReference" : '';
+            $serviceGross = $hasAdjustments ? 'COALESCE(ba.GrossAmount,sa.ServiceAmount)' : 'sa.ServiceAmount';
+            $serviceDiscount = $hasAdjustments ? 'COALESCE(ba.DiscountAmount,0)' : '0';
+            $serviceTax = $hasAdjustments ? 'COALESCE(ba.TaxAmount,0)' : '0';
+            $branches[] = "SELECT 'Service' AS Service, sa.ServiceReference AS Ref, p.PatientName AS Party, sa.AssignedAt AS Dt, {$serviceGross} AS Gross, {$serviceDiscount} AS Discount, {$serviceTax} AS Tax, sa.ServiceAmount AS Total, sa.AmountPaid AS Paid, sa.DueBalance AS Due, sa.PaymentStatus AS Status FROM service_assignments sa JOIN patients p ON p.PatientID=sa.PatientID JOIN service_subservices ss ON ss.ServiceID=sa.ServiceID JOIN service_categories sc ON sc.ServiceCategoryID=ss.ServiceCategoryID{$serviceAdjustJoin}" . ($where ? ' WHERE ' . implode(' AND ', $where) : '');
+        }
 
         return ['sql' => implode(' UNION ALL ', $branches), 'params' => $params];
     }
@@ -312,6 +393,12 @@ if (!function_exists('tdc_rc_build')) {
         $summary = [];
         $note    = '';
         $cols    = [];
+        $hasPaymentSaleReference = tdc_has_column($pdo, 'payments', 'SaleReference');
+        $hasPaymentPurchaseReference = tdc_has_column($pdo, 'payments', 'PurchaseReference');
+        $hasBillAdjustments = tdc_has_column($pdo, 'patient_bill_adjustments', 'BillType');
+        $hasServices = tdc_has_column($pdo, 'service_assignments', 'AssignmentID')
+            && tdc_has_column($pdo, 'service_subservices', 'ServiceID')
+            && tdc_has_column($pdo, 'service_categories', 'ServiceCategoryID');
 
         $run = static function (string $sql, array $bind) use ($pdo): array {
             $stmt = $pdo->prepare($sql);
@@ -407,7 +494,9 @@ if (!function_exists('tdc_rc_build')) {
                 $where = array_merge($where, tdc_rc_like([
                     'p.PaymentReference', 'p.PaymentType', 'p.PaymentMethod',
                     'p.VisitID', 'p.LaboratoryID', 'p.PrescriptionReference',
-                    'p.SaleReference', 'p.PurchaseReference', 'pt.PatientName',
+                    ...($hasPaymentSaleReference ? ['p.SaleReference'] : []),
+                    ...($hasPaymentPurchaseReference ? ['p.PurchaseReference'] : []),
+                    'pt.PatientName',
                 ], $search, $params, 'py'));
                 if ($status !== '') {
                     $where = array_filter($where, static fn(string $clause): bool => $clause !== "p.PaymentStatus = 'Confirmed'");
@@ -417,11 +506,13 @@ if (!function_exists('tdc_rc_build')) {
                 $rows = $run(
                     "SELECT p.PaymentReference AS payment_ref, p.PaymentType AS service,
                             p.VisitID, v.VisitReference, p.LaboratoryID,
-                            p.PrescriptionReference, p.SaleReference, p.PurchaseReference,
+                                p.PrescriptionReference,
+                                " . ($hasPaymentSaleReference ? 'p.SaleReference' : 'NULL AS SaleReference') . ",
+                                " . ($hasPaymentPurchaseReference ? 'p.PurchaseReference' : 'NULL AS PurchaseReference') . ",
                             COALESCE(NULLIF(pt.PatientName, ''),
                                 CASE
-                                    WHEN p.PaymentType = 'POS' THEN (SELECT MIN(CustomerName) FROM pharmacysales ps WHERE ps.SaleID LIKE CONCAT(p.SaleReference, '-%'))
-                                    WHEN p.PaymentType = 'Supplier' THEN (SELECT MIN(SupplierName) FROM purchases pu WHERE pu.PurchaseID LIKE CONCAT(p.PurchaseReference, '-%'))
+                                    " . ($hasPaymentSaleReference ? "WHEN p.PaymentType = 'POS' THEN (SELECT MIN(CustomerName) FROM pharmacysales ps WHERE ps.SaleID LIKE CONCAT(p.SaleReference, '-%'))" : '') . "
+                                    " . ($hasPaymentPurchaseReference ? "WHEN p.PaymentType = 'Supplier' THEN (SELECT MIN(SupplierName) FROM purchases pu WHERE pu.PurchaseID LIKE CONCAT(p.PurchaseReference, '-%'))" : '') . "
                                     ELSE NULL
                                 END) AS party,
                             p.PaymentMethod AS method, p.PaidAt AS dt,
@@ -441,25 +532,40 @@ if (!function_exists('tdc_rc_build')) {
                 break;
 
             case 'billing':
+            case 'billing-consultation':
+            case 'billing-laboratory':
+            case 'billing-pharmacy':
+            case 'billing-services':
             case 'outstanding':
-                $union = tdc_rc_money_union($from, $to, $search, $status);
+                $union = tdc_rc_money_union($from, $to, $search, $status, tdc_has_column($pdo, 'pharmacysales', 'SaleStatus'), $hasBillAdjustments, $hasServices);
                 $params = $union['params'];
                 $inner = 'SELECT * FROM (' . $union['sql'] . ') t';
+                if (in_array($key, ['billing-consultation', 'billing-laboratory', 'billing-pharmacy', 'billing-services'], true)) {
+                    $billingServices = [
+                        'billing-consultation' => 'Consultation',
+                        'billing-laboratory' => 'Laboratory',
+                        'billing-services' => 'Service',
+                        'billing-pharmacy' => 'Pharmacy',
+                    ];
+                    $params['billing_service'] = $billingServices[$key] ?? 'Pharmacy';
+                    $inner .= ' WHERE t.Service = :billing_service';
+                }
                 if ($key === 'outstanding') $inner .= ' WHERE t.Due > 0';
+                if ($key === 'outstanding' && isset($params['billing_service'])) $inner = str_replace(' WHERE t.Due > 0', ' WHERE t.Service = :billing_service AND t.Due > 0', $inner);
                 $inner .= ' ORDER BY t.Dt DESC LIMIT 500';
                 $rows = $run($inner, $params);
                 if ($key === 'outstanding') {
                     $cols = [
                         ['Service', 'Service', 'text'], ['Ref', 'Reference', 'text'],
                         ['Party', 'Patient / Customer', 'text'], ['Dt', 'Date', 'date'],
-                        ['Total', 'Billed', 'money'], ['Paid', 'Paid', 'money'],
+                        ['Gross', 'Gross', 'money'], ['Discount', 'Discount', 'money'], ['Tax', 'Tax', 'money'], ['Total', 'Final Billed', 'money'], ['Paid', 'Paid', 'money'],
                         ['Due', 'Outstanding', 'money'],
                     ];
                 } else {
                     $cols = [
                         ['Service', 'Service', 'text'], ['Ref', 'Reference', 'text'],
                         ['Party', 'Patient / Customer', 'text'], ['Dt', 'Date', 'date'],
-                        ['Total', 'Billed', 'money'], ['Paid', 'Paid', 'money'],
+                        ['Gross', 'Gross', 'money'], ['Discount', 'Discount', 'money'], ['Tax', 'Tax', 'money'], ['Total', 'Final Billed', 'money'], ['Paid', 'Paid', 'money'],
                         ['Due', 'Due', 'money'], ['Status', 'Status', 'badge'],
                     ];
                 }
@@ -480,8 +586,8 @@ if (!function_exists('tdc_rc_build')) {
                     . " MIN(SaleDate) AS dt, COUNT(*) AS items, SUM(LineTotal) AS total,"
                     . " MIN(AmountPaid) AS paid, MIN(DueBalance) AS due,"
                     . " MIN(PaymentStatus) AS status"
-                    . " FROM pharmacysales"
-                    . ($where ? ' WHERE ' . implode(' AND ', $where) : '')
+                    . " FROM pharmacysales WHERE " . (tdc_has_column($pdo, 'pharmacysales', 'SaleStatus') ? "SaleStatus <> 'Voided'" : '1=1')
+                    . ($where ? ' AND ' . implode(' AND ', $where) : '')
                     . " GROUP BY SUBSTRING_INDEX(SaleID,'-',1)"
                     . " ORDER BY dt DESC LIMIT 500",
                     $params
@@ -660,13 +766,25 @@ if (!function_exists('tdc_rc_status_options')) {
     /** Status dropdown choices per report; only values the schema actually has. */
     function tdc_rc_status_options(string $key): array
     {
-        return match ($key) {
-            'visits', 'billing', 'pharmacy-sales' => ['Paid', 'Partial', 'Unpaid'],
-            'payments' => ['Confirmed', 'Voided'],
-            'lab-orders', 'lab-completed', 'lab-pending' => ['Paid', 'Partial', 'Unpaid'],
-            'transactions' => ['Asset', 'Liability', 'Equity', 'Revenue', 'Expense'],
-            default => [],
-        };
+        switch ($key) {
+            case 'visits':
+            case 'billing':
+            case 'billing-consultation':
+            case 'billing-laboratory':
+            case 'billing-pharmacy':
+            case 'billing-services':
+            case 'pharmacy-sales':
+            case 'lab-orders':
+            case 'lab-completed':
+            case 'lab-pending':
+                return ['Paid', 'Partial', 'Unpaid'];
+            case 'payments':
+                return ['Confirmed', 'Voided'];
+            case 'transactions':
+                return ['Asset', 'Liability', 'Equity', 'Revenue', 'Expense'];
+            default:
+                return [];
+        }
     }
 }
 
@@ -715,7 +833,7 @@ if (!function_exists('tdc_rc_summary_cards')) {
 
 if (!function_exists('tdc_rc_render_landing')) {
     /** Grouped, responsive report catalogue for the Reports landing page. */
-    function tdc_rc_render_landing(array $hubSummary = []): string
+    function tdc_rc_render_landing(array $hubSummary = [], array $landingFilters = []): string
     {
         $html = '<div class="welcome-eyebrow">Reports</div>'
             . '<div class="welcome-title">Report Center</div>'
@@ -734,22 +852,41 @@ if (!function_exists('tdc_rc_render_landing')) {
             $html .= '</div>';
         }
 
-        foreach (tdc_rc_catalog() as $groupKey => $group) {
-            $html .= '<div class="report-group category-'.tdc_ui_h($groupKey).'">'
-                . '<div class="report-group-head">' . tdc_icon($group['icon'], 16)
-                . '<span>' . tdc_ui_h($group['label']) . '</span></div>'
-                . '<div class="report-grid">';
-            foreach ($group['reports'] as $key => $meta) {
-                $href = 'reports.php?section=' . urlencode($key);
-                $tag = !empty($meta['legacy']) ? '<span class="report-tag">Statement</span>' : '';
-                $html .= '<a class="report-card" href="' . tdc_ui_h($href) . '">'
-                    . '<span class="report-card-icon">' . tdc_icon($meta['icon'] ?? 'grid', 18) . '</span>'
-                    . '<span class="report-card-body"><span class="report-card-title">' . tdc_ui_h($meta['title'])
-                    . $tag . '</span><span class="report-card-desc">' . tdc_ui_h($meta['desc'] ?? '') . '</span></span>'
-                    . '</a>';
-            }
-            $html .= '</div></div>';
+        $period = (string) ($landingFilters['period'] ?? 'this_month');
+        $from = (string) ($landingFilters['from'] ?? '');
+        $to = (string) ($landingFilters['to'] ?? '');
+        $period = (string) ($landingFilters['period'] ?? 'this_month');
+        $from = (string) ($landingFilters['from'] ?? '');
+        $to = (string) ($landingFilters['to'] ?? '');
+        $selectedModule = (string) ($landingFilters['module'] ?? 'reception');
+        $catalog = tdc_rc_catalog();
+        if (!isset($catalog[$selectedModule])) $selectedModule = 'reception';
+        $periodQuery = '&period=' . urlencode($period) . '&from_date=' . urlencode($from) . '&to_date=' . urlencode($to);
+        $html .= '<section class="report-period-panel no-print"><div><strong>Selected reporting period</strong><span>Use one period across the report workspace.</span></div><form method="get" action="reports.php" class="report-period-form"><label>Quick period<select name="period"><option value="today"'.($period === 'today' ? ' selected' : '').'>Today</option><option value="yesterday"'.($period === 'yesterday' ? ' selected' : '').'>Yesterday</option><option value="this_week"'.($period === 'this_week' ? ' selected' : '').'>This Week</option><option value="this_month"'.($period === 'this_month' ? ' selected' : '').'>This Month</option><option value="last_month"'.($period === 'last_month' ? ' selected' : '').'>Last Month</option><option value="this_year"'.($period === 'this_year' ? ' selected' : '').'>This Year</option><option value="custom"'.($period === 'custom' ? ' selected' : '').'>Custom</option></select></label><label>From<input type="date" name="from_date" value="'.tdc_ui_h($from).'" aria-label="From date"></label><label>To<input type="date" name="to_date" value="'.tdc_ui_h($to).'" aria-label="To date"></label><button class="btn-primary btn" type="submit">Apply</button><a class="btn-secondary btn" href="reports.php">Reset</a></form></section>';
+        $html .= '<nav class="report-module-tabs no-print" aria-label="Report modules">';
+        foreach ($catalog as $moduleKey => $module) {
+            $active = $moduleKey === $selectedModule ? ' active' : '';
+            $moduleFirst = (string) array_key_first($module['reports']);
+            $html .= '<a class="report-module-tab'.$active.'" href="reports.php?section='.urlencode($moduleFirst).$periodQuery.'#report-workspace">'.tdc_icon($module['icon'], 15).'<span>'.tdc_ui_h($module['label']).'</span></a>';
         }
+        $html .= '</nav>';
+        $group = $catalog[$selectedModule];
+        $html .= '<div id="report-workspace" class="report-workspace"><aside class="report-side-nav no-print"><div class="report-side-title">'.tdc_ui_h($group['label']).' reports</div>';
+        $financialKeys = ['billing','billing-consultation','billing-services','billing-laboratory','billing-pharmacy','payments','outstanding','pharmacy-sales','pharmacy-purchases','lab-revenue','revenue-by-account','expenses','transactions','income-statement','balance-sheet'];
+        foreach (['Operational' => false, 'Financial' => true] as $kindLabel => $isFinancial) {
+            $html .= '<div class="report-side-heading">'.$kindLabel.'</div><div class="report-side-links">';
+            $has = false;
+            foreach ($group['reports'] as $key => $meta) {
+                if (in_array($key, $financialKeys, true) !== $isFinancial) continue;
+                $has = true;
+                $href = 'reports.php?section='.urlencode($key).$periodQuery;
+                $html .= '<a href="'.tdc_ui_h($href).'">'.tdc_ui_h($meta['title']).'</a>';
+            }
+            if (!$has) $html .= '<span class="report-side-empty">No reports</span>';
+            $html .= '</div>';
+        }
+        $firstReport = (string) array_key_first($group['reports']);
+        $html .= '</aside><section class="report-workspace-main"><div class="report-workspace-kicker">Reports / '.tdc_ui_h($group['label']).'</div><h2>'.tdc_ui_h($group['reports'][$firstReport]['title'] ?? $group['label']).'</h2><p>'.tdc_ui_h($group['reports'][$firstReport]['desc'] ?? 'Select a report from the menu to view its results.').'</p><a class="btn-primary btn" href="reports.php?section='.urlencode($firstReport).$periodQuery.'">View report</a></section></div>';
         return $html;
     }
 }
@@ -763,45 +900,69 @@ if (!function_exists('tdc_rc_render_report')) {
     {
         $columns = $data['columns'] ?? [];
         $rows    = $data['rows'] ?? [];
-        $html = '<div class="report-head">'
+        $catalog = tdc_rc_catalog();
+        $groupKey = (string) ($meta['group'] ?? 'reception');
+        $group = $catalog[$groupKey] ?? reset($catalog);
+        $periodQuery = '&from_date=' . urlencode((string) ($filters['from'] ?? '')) . '&to_date=' . urlencode((string) ($filters['to'] ?? ''));
+        $financialKeys = ['billing','billing-consultation','billing-services','billing-laboratory','billing-pharmacy','payments','outstanding','pharmacy-sales','pharmacy-purchases','lab-revenue','revenue-by-account','expenses','transactions','income-statement','balance-sheet'];
+        $html = '<nav class="report-module-tabs no-print" aria-label="Report modules">';
+        foreach ($catalog as $moduleKey => $module) {
+            $active = $moduleKey === $groupKey ? ' active' : '';
+            $first = (string) array_key_first($module['reports']);
+            $html .= '<a class="report-module-tab'.$active.'" href="reports.php?section='.urlencode($first).$periodQuery.'">'.tdc_icon($module['icon'], 15).'<span>'.tdc_ui_h($module['label']).'</span></a>';
+        }
+        $html .= '</nav><div class="report-workspace-live"><aside class="report-side-nav no-print"><div class="report-side-title">'.tdc_ui_h($group['label']).' reports</div>';
+        foreach (['Operational' => false, 'Financial' => true] as $kindLabel => $isFinancial) {
+            $html .= '<div class="report-side-heading">'.$kindLabel.'</div><div class="report-side-links">';
+            $has = false;
+            foreach ($group['reports'] as $reportKey => $reportMeta) {
+                if (in_array($reportKey, $financialKeys, true) !== $isFinancial) continue;
+                $has = true; $active = $reportKey === $key ? ' active' : '';
+                $html .= '<a class="'.$active.'" href="reports.php?section='.urlencode($reportKey).$periodQuery.'">'.tdc_ui_h($reportMeta['title']).'</a>';
+            }
+            if (!$has) $html .= '<span class="report-side-empty">No reports</span>';
+            $html .= '</div>';
+        }
+        $html .= '</aside><main class="report-workspace-main report-active-content"><div class="report-head">'
             . '<span class="report-head-icon">' . tdc_icon($meta['icon'] ?? 'grid', 20) . '</span>'
-            . '<div><div class="welcome-title">' . tdc_ui_h($meta['title']) . '</div>'
-            . '<div class="welcome-sub" style="margin-bottom:0">' . tdc_ui_h($meta['desc'] ?? '') . '</div></div>'
+            . '<div><div class="report-breadcrumb">Reports / ' . tdc_ui_h($meta['groupLabel'] ?? 'Reports') . ' / ' . tdc_ui_h($meta['title']) . '</div><div class="welcome-title">' . tdc_ui_h($meta['title']) . '</div>'
+            . '<div class="welcome-sub" style="margin-bottom:0">' . tdc_ui_h($meta['desc'] ?? '') . '</div><div class="selected-period-label">Selected Period: ' . tdc_ui_h(($filters['from'] ?? '') !== '' ? date('d M Y', strtotime((string)$filters['from'])) : 'All dates') . ' – ' . tdc_ui_h(($filters['to'] ?? '') !== '' ? date('d M Y', strtotime((string)$filters['to'])) : 'Present') . '</div></div>'
             . '</div>';
 
         $statusOptions = tdc_rc_status_options($key);
-        $html .= '<div class="report-toolbar no-print">';
-        if (in_array($key, ['pharmacy-stock', 'pharmacy-low-stock', 'pharmacy-expiry'], true)) {
-            $html .= '<span class="report-context">Current inventory snapshot</span>';
-        } else {
-            $html .= tdc_date_range([
-                'from'     => (string) ($filters['from'] ?? ''),
-                'to'       => (string) ($filters['to'] ?? ''),
-                'error'    => (string) ($filters['error'] ?? ''),
-                'preserve' => ['section' => $key, 'search' => (string) ($filters['search'] ?? ''), 'status' => (string) ($filters['status'] ?? '')],
-                'action'   => 'reports.php',
-                'id'       => 'rr_' . preg_replace('/[^a-z0-9_]/i', '_', $key),
-            ]);
-        }
-        $html .= '<form class="report-filters" method="get" action="reports.php">'
+        $fromValue = (string) ($filters['from'] ?? '');
+        $toValue = (string) ($filters['to'] ?? '');
+        $searchValue = (string) ($filters['search'] ?? '');
+        $statusValue = (string) ($filters['status'] ?? '');
+        $isInventory = in_array($key, ['pharmacy-stock', 'pharmacy-low-stock', 'pharmacy-expiry'], true);
+        $clearUrl = 'reports.php?section=' . urlencode($key);
+        $html .= '<div class="report-toolbar no-print">'
+            . '<form class="report-filters report-filter-form" data-report-filter method="get" action="reports.php">'
             . '<input type="hidden" name="section" value="' . tdc_ui_h($key) . '">'
-            . '<input type="hidden" name="from_date" value="' . tdc_ui_h((string) ($filters['from'] ?? '')) . '">'
-            . '<input type="hidden" name="to_date" value="' . tdc_ui_h((string) ($filters['to'] ?? '')) . '">'
-            . tdc_search_field('search', (string) ($filters['search'] ?? ''), 'Search this report...');
+            . '<label class="quick-period-control">Quick Period<select data-quick-period aria-label="Quick period">'
+            . '<option value="custom">Custom</option><option value="today">Today</option><option value="yesterday">Yesterday</option><option value="this_week">This Week</option><option value="this_month">This Month</option><option value="last_month">Last Month</option><option value="this_year">This Year</option>'
+            . '</select></label>';
+        if (!$isInventory) {
+            $html .= '<label class="date-range-field"><span>From Date</span><input type="date" name="from_date" value="' . tdc_ui_h($fromValue) . '"></label>'
+                . '<label class="date-range-field"><span>To Date</span><input type="date" name="to_date" value="' . tdc_ui_h($toValue) . '"></label>';
+        }
+        $html .= tdc_search_field('search', $searchValue, 'Search this report...');
         if ($statusOptions) {
-            $filterLabel = $key === 'transactions' ? 'Filter by account type' : 'Filter by status';
-            $allLabel = $key === 'transactions' ? 'All account types' : 'All statuses';
+            $filterLabel = $key === 'transactions' ? 'Filter by account type' : 'Filter by payment status';
+            $allLabel = $key === 'transactions' ? 'All account types' : (in_array($key, $financialKeys, true) ? 'All Payment Statuses' : 'All statuses');
             $html .= '<label class="table-filter"><select name="status" aria-label="' . tdc_ui_h($filterLabel) . '">'
                 . '<option value="">' . tdc_ui_h($allLabel) . '</option>';
             foreach ($statusOptions as $opt) {
-                $html .= '<option value="' . tdc_ui_h($opt) . '"'
-                    . ((string) ($filters['status'] ?? '') === $opt ? ' selected' : '') . '>' . tdc_ui_h($opt) . '</option>';
+                $html .= '<option value="' . tdc_ui_h($opt) . '"' . ($statusValue === $opt ? ' selected' : '') . '>' . tdc_ui_h($opt) . '</option>';
             }
             $html .= '</select></label>';
         }
-        $html .= '<button type="submit" class="btn btn-primary btn-sm">' . tdc_icon('filter', 14) . '<span>Filter</span></button>'
+        $html .= '<button type="submit" class="btn btn-primary btn-sm">' . tdc_icon('filter', 14) . '<span>Apply Filters</span></button>'
+            . '<a class="btn btn-secondary btn-sm" href="' . tdc_ui_h($clearUrl) . '">' . tdc_icon('refresh', 14) . '<span>Reset</span></a>'
             . '</form>';
-        $html .= tdc_export_buttons($exportLinks);
+        if ($isInventory) $html .= '<span class="report-context">Current inventory snapshot</span>';
+        $exportMarkup = str_replace('data-print-page', 'data-print-page data-report-action="print" data-report-section="' . tdc_ui_h($key) . '"', tdc_export_buttons($exportLinks));
+        $html .= $exportMarkup;
         $html .= '</div>';
 
         $summary = tdc_rc_summary_cards($columns, $rows);
@@ -815,14 +976,14 @@ if (!function_exists('tdc_rc_render_report')) {
             $html .= '</div>';
         }
 
-        $html .= '<div class="data-table-wrap"><table class="data-table"><thead><tr>';
+        $html .= '<div class="data-table-wrap"><table class="data-table report-data-table" data-report-table><thead><tr>';
         foreach ($columns as $col) {
             $align = in_array(($col[2] ?? ''), ['money', 'number'], true) ? ' class="align-right"' : '';
-            $html .= '<th' . $align . '>' . tdc_ui_h($col[1]) . '</th>';
+            $html .= '<th' . $align . ' data-sort-index="' . (int) array_search($col, $columns, true) . '">' . tdc_ui_h($col[1]) . '</th>';
         }
         $html .= '</tr></thead><tbody>';
         if (!$rows) {
-            $html .= tdc_empty_state('inbox', 'No records match this report', 'Adjust the date range or filters to widen the search.', '', count($columns));
+            $html .= tdc_empty_state('inbox', 'No records found for the selected filters.', 'Adjust the date range or filters to widen the search.', '<a class="btn btn-secondary btn-sm" href="reports.php?section=' . urlencode($key) . '">Clear Filters</a>', count($columns));
         } else {
             foreach ($rows as $row) {
                 $html .= '<tr>';
@@ -833,7 +994,34 @@ if (!function_exists('tdc_rc_render_report')) {
                 $html .= '</tr>';
             }
         }
-        $html .= '</tbody></table></div>';
+        $moneyTotals = [];
+        foreach ($columns as $col) {
+            if (($col[2] ?? '') !== 'money') continue;
+            $sum = 0.0;
+            foreach ($rows as $row) $sum += (float) ($row[$col[0]] ?? 0);
+            $moneyTotals[$col[0]] = $sum;
+        }
+        $html .= '</tbody>';
+        if ($moneyTotals && $rows) {
+            $html .= '<tfoot><tr><th>Total</th>';
+            foreach (array_slice($columns, 1) as $col) {
+                $align = in_array(($col[2] ?? ''), ['money', 'number'], true) ? ' class="align-right"' : '';
+                $html .= '<th' . $align . '>' . (isset($moneyTotals[$col[0]]) ? number_format($moneyTotals[$col[0]], 2) : '') . '</th>';
+            }
+            $html .= '</tr></tfoot>';
+        }
+        $html .= '</table></div><div class="report-table-tools no-print"><label>Rows per page<select data-page-size aria-label="Rows per page"><option>10</option><option>25</option><option>50</option><option>100</option></select></label><span data-page-status></span><button type="button" class="btn btn-secondary btn-sm" data-page-prev>Previous</button><button type="button" class="btn btn-secondary btn-sm" data-page-next>Next</button></div>';
+        $html .= <<<'REPORT_SCRIPT'
+<script>(function(){
+document.addEventListener('click',function(event){const button=event.target.closest('[data-report-action="print"]');if(!button)return;event.preventDefault();window.print();});
+const table=document.querySelector('[data-report-table]');if(!table)return;
+const body=table.tBodies[0],rows=[...body.querySelectorAll('tr:not(.empty-row)')],size=document.querySelector('[data-page-size]'),status=document.querySelector('[data-page-status]'),prev=document.querySelector('[data-page-prev]'),next=document.querySelector('[data-page-next]');let page=1,sortIndex=null,sortDirection=1;
+function draw(){const n=+(size?.value||10),pages=Math.max(1,Math.ceil(rows.length/n));page=Math.min(page,pages);rows.forEach((r,i)=>r.hidden=i<((page-1)*n)||i>=page*n);if(status)status.textContent=rows.length?('Showing '+((page-1)*n+1)+'–'+Math.min(page*n,rows.length)+' of '+rows.length+' records'):'No records';if(prev)prev.disabled=page<=1;if(next)next.disabled=page>=pages;}
+size?.addEventListener('change',()=>{page=1;draw();});prev?.addEventListener('click',()=>{page--;draw();});next?.addEventListener('click',()=>{page++;draw();});table.querySelectorAll('th[data-sort-index]').forEach(th=>th.addEventListener('click',()=>{const i=+th.dataset.sortIndex;if(sortIndex===i)sortDirection*=-1;else{sortIndex=i;sortDirection=1;}rows.sort((a,b)=>sortDirection*a.cells[i].textContent.trim().localeCompare(b.cells[i].textContent.trim(),undefined,{numeric:true,sensitivity:'base'}));table.querySelectorAll('th[data-sort-index]').forEach(h=>h.removeAttribute('aria-sort'));th.setAttribute('aria-sort',sortDirection===1?'ascending':'descending');page=1;draw();}));draw();
+const q=document.querySelector('[data-quick-period]'),from=document.querySelector('[data-report-filter] input[name="from_date"]'),to=document.querySelector('[data-report-filter] input[name="to_date"]');q?.addEventListener('change',()=>{const d=new Date(),fmt=x=>x.toISOString().slice(0,10);let a='',b=fmt(d);if(q.value==='today')a=b;if(q.value==='yesterday'){d.setDate(d.getDate()-1);a=b=fmt(d);}if(q.value==='this_month')a=b.slice(0,8)+'01';if(q.value==='this_year')a=b.slice(0,4)+'-01-01';if(q.value==='this_week'){const w=new Date(d);w.setDate(w.getDate()-((w.getDay()+6)%7));a=fmt(w);}if(q.value==='last_month'){const m=new Date(d.getFullYear(),d.getMonth()-1,1);a=fmt(m);b=fmt(new Date(d.getFullYear(),d.getMonth(),0));}if(from&&a)from.value=a;if(to&&b)to.value=b;});
+})();</script>
+REPORT_SCRIPT;
+        $html .= '</main></div>';
         return $html;
     }
 }

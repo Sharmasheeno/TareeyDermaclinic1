@@ -35,4 +35,4 @@ Audited the PHP/PDO clinic workflows, production migration, RBAC defaults, payme
 
 ## Release decision
 
-**NO-GO.** HIGH issues remain around payment reversal/correction, the duplicate pharmacy lifecycle, and the clean production installer. The local verifier also reports four existing active SuperAdmins; they are preserved for deliberate admin review rather than silently deleted.
+**NO-GO.** The duplicate pharmacy lifecycle remains an unresolved deployment concern. Payment reversal/correction is covered by current local audit evidence, and the clean production installer has now been executed successfully in an isolated local database; production execution and backup evidence are still pending. The local verifier also reports four existing active SuperAdmins; they are preserved for deliberate admin review rather than silently deleted.

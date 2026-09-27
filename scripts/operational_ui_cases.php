@@ -10,7 +10,7 @@ foreach (['receptionuser','pharmacyuser','superuser'] as $index=>$role) {
     $cases[]=['name'=>"$role edits medicine",'role'=>$role,'page'=>'pharmacy.php','get'=>['section'=>'inventory'],'post'=>array_replace($stock,['ItemID'=>$itemId,'SellingPrice'=>'9.50']),'status'=>302,'sql'=>[["SELECT SellingPrice FROM inventory WHERE ItemID='$itemId'",'9.50']]];
     $cases[]=['name'=>"$role POS uses selling price and records partial payment",'role'=>$role,'page'=>'pharmacy.php','get'=>['section'=>'pos'],'post'=>['CustomerName'=>'Operational '.$role,'CustomerPhone'=>'','AmountPaid'=>'10','ItemID'=>[$itemId],'Quantity'=>['2'],'UnitPrice'=>['0.01']],'status'=>302,'sql'=>[["SELECT TotalAmount FROM pharmacysales WHERE CustomerName='Operational $role'",'19.00'],["SELECT DueBalance FROM pharmacysales WHERE CustomerName='Operational $role'",'9.00'],["SELECT QuantityInStock FROM inventory WHERE ItemID='$itemId'",'8']]];
     $rx='OPRX'.($index+1);
-    $cases[]=['name'=>"$role fulfills prescription",'role'=>$role,'page'=>'pharmacy.php','get'=>['section'=>'prescriptions'],'before_sql'=>["INSERT INTO prescriptions (PrescriptionID,PatientID,VisitID,PatientName,DoctorID,MedicationName,Quantity,Status) VALUES ('$rx-01',1,1,'Test Patient',1,'$medicine',1,'Pending')"],'post'=>['form_action'=>'dispense','PrescriptionReference'=>$rx,'AmountPaid'=>'9.50','PaymentMethod'=>'Cash'],'status'=>302,'sql'=>[["SELECT Status FROM prescriptions WHERE PrescriptionID='$rx-01'",'Dispensed'],["SELECT QuantityInStock FROM inventory WHERE ItemID='$itemId'",'7']]];
+    $cases[]=['name'=>"$role fulfills prescription",'role'=>$role,'page'=>'pharmacy.php','get'=>['section'=>'prescriptions'],'before_sql'=>["INSERT INTO prescriptions (PrescriptionID,PatientID,VisitID,PatientName,DoctorID,MedicationName,Quantity,Status,TotalAmount,DueBalance) VALUES ('$rx-01',1,1,'Test Patient',1,'$medicine',1,'Pending',9.50,9.50)"],'post'=>['form_action'=>'dispense','PrescriptionReference'=>$rx,'AmountPaid'=>'9.50','PaymentMethod'=>'Cash'],'status'=>302,'sql'=>[["SELECT Status FROM prescriptions WHERE PrescriptionID='$rx-01'",'Dispensed'],["SELECT QuantityInStock FROM inventory WHERE ItemID='$itemId'",'7']]];
 }
 // Reception retains front-desk, finance and collection operations.
 foreach (['receptionuser','superuser'] as $role) {
@@ -33,7 +33,7 @@ $views=[
     'laboratory'=>['laboratory.php',[]], 'inventory'=>['pharmacy.php',['section'=>'inventory']], 'purchase'=>['pharmacy.php',['section'=>'purchases','new'=>'1']],
     'purchases'=>['pharmacy.php',['section'=>'purchases']], 'pos'=>['pharmacy.php',['section'=>'pos','new'=>'1']],
     'accounting'=>['accounting.php',['section'=>'ledger']], 'expense'=>['accounting.php',['section'=>'ledger','new'=>'1']],
-    'reports'=>['reports.php',[]], 'setup'=>['setup.php',['section'=>'users']],
+    'reports'=>['reports.php',['section'=>'income-statement']], 'setup'=>['setup.php',['section'=>'users']],
 ];
 foreach ($views as $name=>[$page,$get]) $cases[]=['name'=>'Render '.$name,'snapshot'=>'ui-'.$name,'role'=>'superuser','page'=>$page,'get'=>$get,'absent'=>['Fatal error','Warning:','Access denied']];
 $cases[]=['name'=>'Render Reception combined pharmacy navigation','snapshot'=>'ui-reception-role','role'=>'receptionuser','page'=>'pharmacy.php','get'=>['section'=>'inventory'],'contains'=>['href="pharmacy.php?section=prescriptions"','href="pharmacy.php?section=pos"','href="pharmacy.php?section=inventory"'],'absent'=>['href="setup.php"','Purchase Price','name="UnitPrice[]"']];

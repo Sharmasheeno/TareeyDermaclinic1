@@ -1,0 +1,326 @@
+PASS superuser home.php
+PASS superuser reception.php
+PASS superuser doctors.php
+PASS superuser patients.php
+FAIL superuser laboratory.php: {"case":"superuser laboratory.php","failures":[]}
+[LAB WORKSPACE DATA] SQLSTATE[42S22]: Column not found: 1054 Unknown column 'p.DOB' in 'field list'
+
+PASS superuser pharmacy.php
+PASS superuser accounting.php
+PASS superuser reports.php
+PASS superuser setup.php
+PASS receptionuser home.php
+PASS receptionuser reception.php
+PASS receptionuser doctors.php
+PASS receptionuser patients.php
+FAIL receptionuser laboratory.php: {"case":"receptionuser laboratory.php","failures":[]}
+[LAB WORKSPACE DATA] SQLSTATE[42S22]: Column not found: 1054 Unknown column 'p.DOB' in 'field list'
+
+PASS receptionuser pharmacy.php
+PASS receptionuser accounting.php
+PASS receptionuser reports.php
+PASS receptionuser setup.php
+PASS doctoruser home.php
+PASS doctoruser reception.php
+PASS doctoruser doctors.php
+PASS doctoruser patients.php
+PASS doctoruser laboratory.php
+PASS doctoruser pharmacy.php
+PASS doctoruser accounting.php
+PASS doctoruser reports.php
+PASS doctoruser setup.php
+PASS pharmacyuser home.php
+PASS pharmacyuser reception.php
+PASS pharmacyuser doctors.php
+PASS pharmacyuser patients.php
+PASS pharmacyuser laboratory.php
+PASS pharmacyuser pharmacy.php
+PASS pharmacyuser accounting.php
+PASS pharmacyuser reports.php
+PASS pharmacyuser setup.php
+PASS labuser home.php
+PASS labuser reception.php
+PASS labuser doctors.php
+PASS labuser patients.php
+FAIL labuser laboratory.php: {"case":"labuser laboratory.php","failures":[]}
+[LAB WORKSPACE DATA] SQLSTATE[42S22]: Column not found: 1054 Unknown column 'p.DOB' in 'field list'
+
+PASS labuser pharmacy.php
+PASS labuser accounting.php
+PASS labuser reports.php
+PASS labuser setup.php
+PASS superuser dashboard navigation
+PASS receptionuser dashboard navigation
+PASS doctoruser dashboard navigation
+PASS pharmacyuser dashboard navigation
+PASS labuser dashboard navigation
+PASS Doctor has dedicated workspace
+PASS Pharmacist sees only permitted operations
+PASS Reception opens Pharmacy workspace
+PASS Reception can dispense prescriptions
+FAIL Reception opens Laboratory workspace: {"case":"Reception opens Laboratory workspace","failures":[]}
+[LAB WORKSPACE DATA] SQLSTATE[42S22]: Column not found: 1054 Unknown column 'p.DOB' in 'field list'
+
+FAIL Reception can process laboratory orders: {"case":"Reception can process laboratory orders","failures":[]}
+[LAB WORKSPACE DATA] SQLSTATE[42S22]: Column not found: 1054 Unknown column 'p.DOB' in 'field list'
+
+PASS Reception can create pharmacy inventory
+PASS Reception can use pharmacy POS
+PASS Reception views the authoritative pharmacy bill
+PASS Reception views laboratory billing with dynamic methods
+PASS Reception income statement omits confidential COGS
+PASS Setup exposes system and custom role architecture
+PASS SuperAdmin configures authoritative lab service in Setup
+PASS SuperAdmin creates user with database role assignment
+PASS Custom Accountant navigation follows permissions
+PASS Custom Accountant can open accounting
+PASS Custom Accountant can open advanced journal
+PASS Custom Accountant posts balanced manual journal
+PASS Custom Accountant cannot open patients
+PASS Export hidden before permission grant
+PASS Permission dependency rejects broken configuration
+PASS SuperAdmin grants report export without source changes
+PASS Custom authorized accountant sees aggregate COGS
+PASS SuperAdmin revokes report export
+PASS Revoked report export is hidden immediately
+PASS Revoked report export backend is forbidden
+PASS Root SuperAdmin cannot be deactivated
+PASS Active payment method is configured in Setup
+FAIL Reception loads configured payment methods: {"case":"Reception loads configured payment methods","failures":["Missing EVC Plus"]}
+
+PASS Accounting Payments page loads and renders payment rows
+PASS Payment source label helper renders the linked source
+PASS EVC Plus is displayed as a manual payment method
+PASS Reversible payment exposes Reverse action
+PASS Unauthorized user cannot reverse a payment
+PASS Valid reversal creates reversal payment and preserves original
+PASS Accounting reversal remains balanced
+PASS Reversal restores linked source balance
+PASS Fully reversed payment no longer offers Reverse
+PASS Partial reversal leaves the correct reversible amount
+PASS Partial reversal is shown with remaining amount
+PASS Legacy Settings URL redirects to Setup
+PASS Patient age is derived from date of birth
+FAIL Duplicate patient phone produces existing-record warning: {"case":"Duplicate patient phone produces existing-record warning","failures":["Unexpected status 302","Missing Possible existing patient found","Missing create a new visit instead","Database assertion failed [SELECT COUNT(*) FROM patients WHERE PatientPhone='615123456'] expected=1 actual=2"]}
+
+PASS Future patient date of birth is rejected
+PASS Reception cannot book an unlinked doctor
+PASS Reception books paid consultation into doctor queue
+PASS Opening a notification marks only that recipient read
+PASS Reception books partial consultation outside doctor queue
+FAIL Doctor cannot work an unpaid consultation: {"case":"Doctor cannot work an unpaid consultation","failures":["Unexpected status 302","Missing must record full consultation payment"]}
+
+PASS Reception settles consultation into doctor queue
+PASS Doctor starts own consultation
+PASS Doctor saves connected clinical record
+PASS Doctor prescription form uses live inventory choices
+PASS Doctor cannot prescribe unknown inventory item
+PASS Doctor prescription enters pharmacy queue
+FAIL Doctor multi-test lab order uses catalogue totals: {"case":"Doctor multi-test lab order uses catalogue totals","failures":["Unexpected status 200","Database assertion failed [SELECT WorkflowStatus FROM laboratory WHERE VisitID=1] expected=Awaiting Payment actual=","Database assertion failed [SELECT PaymentStatus FROM laboratory WHERE VisitID=1] expected=Unpaid actual=","Database assertion failed [SELECT TotalAmount FROM laboratory WHERE VisitID=1] expected=15.00 actual=","Database assertion failed [SELECT COUNT(*) FROM laborderitems WHERE LaboratoryID='LAB000001'] expected=2 actual=0","Database assertion failed [SELECT SUM(UnitPrice) FROM laborderitems WHERE LaboratoryID='LAB000001'] expected=15.00 actual="]}
+
+PASS Pharmacist dispenses prescription and reduces stock
+PASS Multi-item prescription groups lines sequentially
+PASS Prescription shortage rolls back dispensing
+PASS Standalone POS ignores tampered browser prices
+PASS Voiding POS reverses stock and revenue
+PASS Walk-in POS keeps patient and visit relationships empty
+PASS Registered POS preserves patient visit and payment ledger link
+PASS Registered POS receipt resolves patient and visit details
+FAIL Reception clears doctor lab request payment: {"case":"Reception clears doctor lab request payment","failures":["Unexpected status 200","Database assertion failed [SELECT WorkflowStatus FROM laboratory WHERE LaboratoryID='LAB000001'] expected=Ready actual=","Database assertion failed [SELECT COUNT(*) FROM accounting WHERE AccountID='REV-LAB'] expected=1 actual=0"]}
+
+FAIL Laboratory starts only a paid ready order: {"case":"Laboratory starts only a paid ready order","failures":["Unexpected status 200","Database assertion failed [SELECT WorkflowStatus FROM laboratory WHERE LaboratoryID='LAB000001'] expected=In Progress actual="]}
+[LAB WORKSPACE DATA] SQLSTATE[42S22]: Column not found: 1054 Unknown column 'p.DOB' in 'field list'
+
+FAIL Laboratory completes doctor-requested tests: {"case":"Laboratory completes doctor-requested tests","failures":["Unexpected status 200","Database assertion failed [SELECT WorkflowStatus FROM laboratory WHERE LaboratoryID='LAB000001'] expected=Completed actual=","Database assertion failed [SELECT COUNT(*) FROM laborderitems WHERE LaboratoryID='LAB000001' AND Result='Negative'] expected=2 actual=0","Database assertion failed [SELECT ClinicalResult FROM laborderitems WHERE LabOrderItemID=1] expected=Normal count actual="]}
+[LAB WORKSPACE DATA] SQLSTATE[42S22]: Column not found: 1054 Unknown column 'p.DOB' in 'field list'
+
+FAIL Doctor reviews returned lab result: {"case":"Doctor reviews returned lab result","failures":["Database assertion failed [SELECT COUNT(*) FROM laboratory WHERE LaboratoryID='LAB000001' AND ReviewedAt IS NOT NULL] expected=1 actual=0"]}
+
+PASS Doctor queue excludes another doctor patients
+PASS Patient with clinical history cannot be deleted
+PASS Doctor with workflow history cannot be deleted
+PASS SuperAdmin cannot create patient lab orders manually
+FAIL Lab sees unpaid work but actions remain locked: {"case":"Lab sees unpaid work but actions remain locked","failures":[]}
+[LAB WORKSPACE DATA] SQLSTATE[42S22]: Column not found: 1054 Unknown column 'p.DOB' in 'field list'
+
+PASS Stale SuperAdmin session loses Setup access
+PASS Laboratory starts paid fixture before result entry
+FAIL Bad CSRF cannot change lab results: {"case":"Bad CSRF cannot change lab results","failures":[]}
+[LAB WORKSPACE DATA] SQLSTATE[42S22]: Column not found: 1054 Unknown column 'p.DOB' in 'field list'
+
+FAIL Lab cannot bypass payment: {"case":"Lab cannot bypass payment","failures":[]}
+[LAB WORKSPACE DATA] SQLSTATE[42S22]: Column not found: 1054 Unknown column 'p.DOB' in 'field list'
+
+PASS Lab cannot delete orders
+PASS Lab saves results without changing bill
+PASS Reception bills cannot overwrite results
+PASS Reception pays order for lab handoff
+FAIL Lab now receives reception paid order: {"case":"Lab now receives reception paid order","failures":[]}
+[LAB WORKSPACE DATA] SQLSTATE[42S22]: Column not found: 1054 Unknown column 'p.DOB' in 'field list'
+
+PASS Deleted account loses access
+PASS SuperAdmin section and search reception.php patients
+PASS SuperAdmin section and search reception.php consultations
+PASS SuperAdmin section and search reception.php laboratory
+PASS SuperAdmin section and search reception.php pharmacy
+PASS SuperAdmin section and search pharmacy.php prescriptions
+PASS SuperAdmin section and search pharmacy.php pos
+PASS SuperAdmin section and search pharmacy.php purchases
+PASS SuperAdmin section and search pharmacy.php inventory
+PASS SuperAdmin section and search accounting.php ledger
+PASS SuperAdmin section and search accounting.php accounts
+PASS SuperAdmin section and search reports.php income-statement
+PASS SuperAdmin section and search reports.php balance-sheet
+PASS SuperAdmin section and search setup.php users
+PASS SuperAdmin section and search setup.php roles
+PASS SuperAdmin section and search setup.php permissions
+PASS SuperAdmin section and search setup.php clinical
+PASS SuperAdmin section and search setup.php laboratory
+PASS SuperAdmin section and search setup.php payment-methods
+PASS SuperAdmin section and search setup.php audit
+PASS SuperAdmin section and search patients.php 
+PASS SuperAdmin section and search doctors.php 
+FAIL SuperAdmin section and search laboratory.php : {"case":"SuperAdmin section and search laboratory.php ","failures":[]}
+[LAB WORKSPACE DATA] SQLSTATE[42S22]: Column not found: 1054 Unknown column 'p.DOB' in 'field list'
+
+PASS Non-root SuperAdmin opens dashboard
+PASS Non-root SuperAdmin opens reception patients
+PASS Non-root SuperAdmin opens reception consultations
+PASS Non-root SuperAdmin opens reception laboratory billing
+PASS Non-root SuperAdmin opens reception pharmacy billing
+PASS Non-root SuperAdmin opens doctor directory
+FAIL Non-root SuperAdmin opens laboratory workspace: {"case":"Non-root SuperAdmin opens laboratory workspace","failures":[]}
+[LAB WORKSPACE DATA] SQLSTATE[42S22]: Column not found: 1054 Unknown column 'p.DOB' in 'field list'
+
+PASS Non-root SuperAdmin opens pharmacy prescriptions
+PASS Non-root SuperAdmin opens pharmacy point of sale
+PASS Non-root SuperAdmin opens pharmacy purchases
+PASS Non-root SuperAdmin opens pharmacy inventory
+PASS Non-root SuperAdmin opens patients module
+PASS Non-root SuperAdmin opens accounting ledger
+PASS Non-root SuperAdmin opens reports income statement
+PASS Non-root SuperAdmin opens reports balance sheet
+PASS Non-root SuperAdmin opens setup users
+PASS Non-root SuperAdmin opens setup permissions
+PASS Non-root SuperAdmin opens setup audit
+PASS Non-root SuperAdmin opens doctor workspace for assigned visit
+PASS Non-root SuperAdmin sees doctor workspace action in directory
+PASS receptionuser creates medicine
+PASS receptionuser edits medicine
+PASS receptionuser POS uses selling price and records partial payment
+PASS receptionuser fulfills prescription
+PASS pharmacyuser creates medicine
+PASS pharmacyuser edits medicine
+PASS pharmacyuser POS uses selling price and records partial payment
+PASS pharmacyuser fulfills prescription
+PASS superuser creates medicine
+PASS superuser edits medicine
+PASS superuser POS uses selling price and records partial payment
+PASS superuser fulfills prescription
+PASS Reception cannot post advanced manual journal
+PASS receptionuser registers patient
+PASS receptionuser books supported visit
+PASS superuser posts balanced manual journal
+PASS superuser registers patient
+PASS superuser books supported visit
+PASS Reception denied Setup users
+PASS Reception denied Setup roles
+PASS Reception denied Setup permissions
+PASS Reception denied Setup audit
+PASS Reception denied Setup payment-methods
+PASS Reception cannot author clinical notes
+PASS Reception cannot rename financial configuration
+PASS Reception financial configuration controls absent
+PASS Render dashboard
+PASS Render reception
+PASS Render registration
+PASS Render waiting
+PASS Render schedule
+PASS Render doctors
+FAIL Render laboratory: {"case":"Render laboratory","failures":[]}
+[LAB WORKSPACE DATA] SQLSTATE[42S22]: Column not found: 1054 Unknown column 'p.DOB' in 'field list'
+
+PASS Render inventory
+PASS Render purchase
+PASS Render purchases
+PASS Render pos
+PASS Render accounting
+PASS Render expense
+PASS Render reports
+PASS Render setup
+PASS Render Reception combined pharmacy navigation
+PASS Render Pharmacy dedicated navigation
+PASS superuser unit create persists
+PASS superuser rejects negative SellingPrice
+PASS superuser rejects negative QuantityInStock
+PASS superuser rejects negative ReorderLevel
+PASS receptionuser unit create persists
+PASS receptionuser rejects negative SellingPrice
+PASS receptionuser rejects negative QuantityInStock
+PASS receptionuser rejects negative ReorderLevel
+PASS pharmacyuser unit create persists
+PASS pharmacyuser rejects negative SellingPrice
+PASS pharmacyuser rejects negative QuantityInStock
+PASS pharmacyuser rejects negative ReorderLevel
+PASS Editable permission form snapshot
+PASS SuperAdmin purchase conversion and partial payment
+PASS SuperAdmin purchase form modal
+PASS SuperAdmin cost detail visible
+PASS SuperAdmin cost export visible
+PASS Purchase rejects invalid Discount
+PASS Purchase rejects invalid AmountPaid
+PASS Purchase rejects invalid ExpiryDate
+PASS Purchase rejects invalid Quantity
+PASS Purchase rejects invalid UnitPrice
+PASS Purchase rejects invalid SellingPrice
+PASS pharmacyuser cost confidentiality surface 0
+PASS pharmacyuser cost confidentiality surface 1
+PASS pharmacyuser cost confidentiality surface 2
+PASS pharmacyuser cost confidentiality surface 3
+PASS pharmacyuser cost confidentiality surface 4
+PASS pharmacyuser cost confidentiality surface 5
+PASS pharmacyuser direct cost denial new
+PASS pharmacyuser direct cost denial post
+PASS pharmacyuser direct cost denial report
+PASS doctoruser cost confidentiality surface 0
+PASS doctoruser cost confidentiality surface 1
+PASS doctoruser cost confidentiality surface 2
+PASS doctoruser cost confidentiality surface 3
+PASS doctoruser cost confidentiality surface 4
+PASS doctoruser cost confidentiality surface 5
+PASS doctoruser direct cost denial new
+PASS doctoruser direct cost denial post
+PASS doctoruser direct cost denial report
+PASS receptionuser cost confidentiality surface 0
+PASS receptionuser cost confidentiality surface 1
+PASS receptionuser cost confidentiality surface 2
+PASS receptionuser cost confidentiality surface 3
+PASS receptionuser cost confidentiality surface 4
+PASS receptionuser cost confidentiality surface 5
+PASS receptionuser direct cost denial new
+PASS receptionuser direct cost denial post
+PASS receptionuser direct cost denial report
+PASS Restore disposable deleted lab fixture
+PASS labuser cost confidentiality surface 0
+PASS labuser cost confidentiality surface 1
+PASS labuser cost confidentiality surface 2
+PASS labuser cost confidentiality surface 3
+PASS labuser cost confidentiality surface 4
+PASS labuser cost confidentiality surface 5
+PASS labuser direct cost denial new
+PASS labuser direct cost denial post
+PASS labuser direct cost denial report
+PASS SuperAdmin waiting table all doctors
+PASS Doctor waiting export stays assigned
+PASS Waiting search filters actual visits
+PASS Waiting date range rejects invalid dates
+PASS SuperAdmin real doctor action start
+PASS SuperAdmin real doctor action save_notes
+PASS SuperAdmin real doctor action prescribe
+FAIL SuperAdmin real doctor action request_lab: {"case":"SuperAdmin real doctor action request_lab","failures":["Unexpected status 200"]}
+
+PASS SuperAdmin starts another doctor visit without impersonation
+PASS Purchase stock and expiry were persisted
+PASS Purchase reuses configured pack conversion
+PASS Purchase void reverses converted stock
+290 checks; 21 failed.

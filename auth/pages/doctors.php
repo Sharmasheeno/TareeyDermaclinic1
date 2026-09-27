@@ -1,4 +1,6 @@
 <?php
+declare(strict_types=1);
+
 /**
  * auth/pages/doctors.php
  * ---------------------------------------------------------------------
@@ -31,8 +33,6 @@
  *   JoinedDate       DATE
  * ---------------------------------------------------------------------
  */
-declare(strict_types=1);
-
 // =======================================================================
 // SECTION 1 — Session bootstrap & defensive headers
 // =======================================================================
@@ -183,7 +183,9 @@ function tdc_handle_logout(): void
 /** Redirects (Post/Redirect/Get) back to the list with a one-shot flash flag. */
 function tdc_redirect(string $flag): void
 {
-    header('Location: doctors.php?' . $flag . '=1');
+    $statusFlags = ['created', 'updated', 'deleted', 'imported'];
+    $query = in_array($flag, $statusFlags, true) ? 'status=' . urlencode($flag) : $flag . '=1';
+    header('Location: doctors.php?' . $query);
     exit;
 }
 
@@ -262,26 +264,72 @@ function tdc_save_doctor(PDO $pdo, array $input, bool $isEdit, int $editId): voi
 }
 
 /**
- * App-level referential guard: the schema has no FK constraints, so we
- * check dependents (allocated patients, prescriptions written) ourselves
- * before allowing a delete.
+ * Transactional cascade: the schema has no FK constraints, so linked
+ * clinical, pharmacy, payment, and ledger rows are cleared explicitly.
  *
  * @return string[] error messages; empty on success
  */
 function tdc_delete_doctor(PDO $pdo, int $id): array
 {
-    $patientCount = (int) tdc_scalar($pdo, 'SELECT COUNT(*) FROM patients WHERE AllocatedDoctor = :id', ['id' => $id]);
-    $rxCount      = (int) tdc_scalar($pdo, 'SELECT COUNT(*) FROM prescriptions WHERE DoctorID = :id', ['id' => $id]);
-    $visitCount   = (int) tdc_scalar($pdo, 'SELECT COUNT(*) FROM visits WHERE DoctorID = :id', ['id' => $id]);
-    $labCount     = (int) tdc_scalar($pdo, 'SELECT COUNT(*) FROM laboratory WHERE DoctorID = :id', ['id' => $id]);
-
-    if ($patientCount > 0 || $rxCount > 0 || $visitCount > 0 || $labCount > 0) {
-        return ['This doctor has linked patient, consultation, prescription, or laboratory history and cannot be deleted.'];
+    $pdo->beginTransaction();
+    try {
+        $v = $pdo->prepare('SELECT VisitID, VisitReference FROM visits WHERE DoctorID = ?');
+        $v->execute([$id]); $visitRows = $v->fetchAll();
+        $visitIds = array_map(static fn($r) => (int) $r['VisitID'], $visitRows);
+        $refs = array_map(static fn($r) => (string) $r['VisitReference'], $visitRows);
+        $l = $pdo->prepare('SELECT LaboratoryID FROM laboratory WHERE DoctorID = ?');
+        $l->execute([$id]); $labIds = array_map('strval', $l->fetchAll(PDO::FETCH_COLUMN));
+        $r = $pdo->prepare('SELECT PrescriptionID, PharmacySaleReference FROM prescriptions WHERE DoctorID = ?');
+        $r->execute([$id]); $rxRows = $r->fetchAll();
+        $rxRefs = array_map(static fn($row) => (string) $row['PrescriptionID'], $rxRows);
+        $saleRefs = array_values(array_filter(array_map(static fn($row) => (string) ($row['PharmacySaleReference'] ?? ''), $rxRows)));
+        if ($visitIds) { $in = implode(',', array_fill(0, count($visitIds), '?')); $s = $pdo->prepare("SELECT SaleID FROM pharmacysales WHERE VisitID IN ($in)"); $s->execute($visitIds); $saleRefs = array_values(array_unique(array_merge($saleRefs, array_map('strval', $s->fetchAll(PDO::FETCH_COLUMN))))); }
+        $paymentRefs = [];
+        if ($visitIds) { $in = implode(',', array_fill(0, count($visitIds), '?')); $p = $pdo->prepare("SELECT PaymentReference FROM payments WHERE VisitID IN ($in)"); $p->execute($visitIds); $paymentRefs = array_map('strval', $p->fetchAll(PDO::FETCH_COLUMN)); }
+        if ($labIds) {
+            $in = implode(',', array_fill(0, count($labIds), '?'));
+            $pdo->prepare("DELETE FROM laborderitems WHERE LaboratoryID IN ($in)")->execute($labIds);
+            $bridge = $pdo->prepare("SELECT BridgeID FROM lab_order_catalog_bridge WHERE LaboratoryID IN ($in)");
+            $bridge->execute($labIds);
+            $bridgeIds = array_map('strval', $bridge->fetchAll(PDO::FETCH_COLUMN));
+            if ($bridgeIds) {
+                $bin = implode(',', array_fill(0, count($bridgeIds), '?'));
+                $results = $pdo->prepare("SELECT LabResultID FROM lab_results WHERE BridgeID IN ($bin)");
+                $results->execute($bridgeIds);
+                $resultIds = array_map('strval', $results->fetchAll(PDO::FETCH_COLUMN));
+                if ($resultIds) {
+                    $rin = implode(',', array_fill(0, count($resultIds), '?'));
+                    $pdo->prepare("DELETE FROM lab_result_attachments WHERE LabResultID IN ($rin)")->execute($resultIds);
+                    $pdo->prepare("DELETE FROM lab_result_parameters WHERE LabResultID IN ($rin)")->execute($resultIds);
+                    $pdo->prepare("DELETE FROM lab_result_review WHERE LabResultID IN ($rin)")->execute($resultIds);
+                    $pdo->prepare("DELETE FROM lab_results WHERE LabResultID IN ($rin)")->execute($resultIds);
+                }
+            }
+            $pdo->prepare("DELETE FROM lab_order_catalog_bridge WHERE LaboratoryID IN ($in)")->execute($labIds);
+            $pdo->prepare("DELETE FROM laboratory WHERE LaboratoryID IN ($in)")->execute($labIds);
+        }
+        if ($rxRefs) { $in = implode(',', array_fill(0, count($rxRefs), '?')); $pdo->prepare("DELETE FROM prescriptionsheader WHERE PrescriptionID IN ($in)")->execute($rxRefs); $pdo->prepare("DELETE FROM prescriptions WHERE PrescriptionID IN ($in)")->execute($rxRefs); }
+        if ($saleRefs) { $in = implode(',', array_fill(0, count($saleRefs), '?')); $pdo->prepare("DELETE FROM pharmacysales WHERE SaleID IN ($in)")->execute($saleRefs); }
+        $allRefs = array_values(array_unique(array_merge($refs, $labIds, $rxRefs, $saleRefs, $paymentRefs)));
+        if ($allRefs) { $in = implode(',', array_fill(0, count($allRefs), '?')); $pdo->prepare("DELETE FROM accounting WHERE ReferenceID IN ($in)")->execute($allRefs); }
+        if ($visitIds) { $in = implode(',', array_fill(0, count($visitIds), '?')); $pdo->prepare("DELETE FROM payments WHERE VisitID IN ($in)")->execute($visitIds); $pdo->prepare("DELETE FROM visits WHERE VisitID IN ($in)")->execute($visitIds); }
+        $pdo->prepare('UPDATE patients SET AllocatedDoctor = NULL WHERE AllocatedDoctor = ?')->execute([$id]);
+        $pdo->prepare('DELETE FROM doctors WHERE DoctorID = ?')->execute([$id]);
+        $pdo->commit();
+        // Audit logging must never make an already-completed cleanup fail.
+        try {
+            if (function_exists('tdc_audit')) {
+                tdc_audit($pdo, 'doctors.cascade_deleted', 'Doctors', (string) $id, 'Doctor and linked clinical, pharmacy, payment, and ledger history were permanently cleared.');
+            }
+        } catch (Throwable $auditError) {
+            error_log('[DOCTOR DELETE AUDIT] ' . $auditError->getMessage());
+        }
+        return [];
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
+        error_log('[DOCTOR DELETE] ' . $e->getMessage());
+        return ['The doctor and linked history could not be cleared. No records were changed.'];
     }
-
-    $stmt = $pdo->prepare('DELETE FROM doctors WHERE DoctorID = :id');
-    $stmt->execute(['id' => $id]);
-    return [];
 }
 
 // =======================================================================
@@ -324,11 +372,21 @@ if (($_GET['download'] ?? '') === 'doctor-template') {
 if (($_GET['download'] ?? '') === 'doctors') {
     tdc_require_permission('doctors.export');$rows=[];foreach($pdo->query('SELECT d.DoctorID,d.DoctorName,d.Specialty,d.ConsultationFee,d.JoinedDate,u.username FROM doctors d LEFT JOIN users u ON u.id=d.UserID ORDER BY d.DoctorID')->fetchAll() as $row)$rows[]=array_values($row);tdc_csv_download('doctors-'.date('Y-m-d').'.csv',['doctor_id','doctor_name','specialization','consultation_fee','joined_date','linked_username'],$rows);
 }
+if (($_GET['download'] ?? '') === 'doctors-xlsx') {
+    tdc_require_permission('doctors.export');
+    $rows = [];
+    foreach ($pdo->query('SELECT d.DoctorID,d.DoctorName,d.Specialty,d.ConsultationFee,d.JoinedDate,u.username FROM doctors d LEFT JOIN users u ON u.id=d.UserID ORDER BY d.DoctorID')->fetchAll() as $row) {
+        $rows[] = array_values($row);
+    }
+    tdc_xlsx_download('doctors-' . date('Y-m-d') . '.xlsx', ['doctor_id','doctor_name','specialization','consultation_fee','joined_date','linked_username'], $rows);
+}
 
 // =======================================================================
 // SECTION 8 — Request-scoped state
 // =======================================================================
 $errors = [];
+$importResult = $_SESSION['tdc_doctor_import_result'] ?? null;
+unset($_SESSION['tdc_doctor_import_result']);
 $old = [
     'DoctorID'        => '',
     'DoctorName'      => '',
@@ -359,7 +417,65 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         if ($formAction === 'import_csv') {
             tdc_require_permission('doctors.import');
-            try{$rows=tdc_csv_upload_rows($_FILES['csv_file']??[],['doctor_name','consultation_fee']);if(!$rows)throw new RuntimeException('The CSV file contains no doctor rows.');$pdo->beginTransaction();$imported=0;foreach($rows as $index=>$row){$input=['DoctorName'=>trim((string)($row['doctor_name']??'')),'Specialty'=>trim((string)($row['specialization']??'')),'ConsultationFee'=>trim((string)($row['consultation_fee']??'')),'JoinedDate'=>trim((string)($row['joined_date']??'')),'WorkingDays'=>'1,2,3,4,5','WorkStartTime'=>'09:00','WorkEndTime'=>'17:00'];$rowErrors=tdc_validate_doctor_form($input);$stmt=$pdo->prepare('SELECT COUNT(*) FROM doctors WHERE LOWER(TRIM(DoctorName))=LOWER(TRIM(?))');$stmt->execute([$input['DoctorName']]);if((int)$stmt->fetchColumn())$rowErrors[]='doctor name already exists';if($rowErrors)throw new RuntimeException('Row '.($index+2).': '.implode(' ',$rowErrors));tdc_save_doctor($pdo,$input,false,0);$imported++;}tdc_audit($pdo,'doctors.imported','Doctors',null,"Imported $imported doctor records.");$pdo->commit();tdc_redirect('imported');}catch(RuntimeException $e){if($pdo->inTransaction())$pdo->rollBack();$errors[]=$e->getMessage();}
+            try {
+                $upload = $_FILES['csv_file'] ?? [];
+                $uploadExtension = strtolower(pathinfo((string) ($upload['name'] ?? ''), PATHINFO_EXTENSION));
+                $uploadReader = $uploadExtension === 'xlsx' ? 'tdc_xlsx_upload_rows' : 'tdc_csv_upload_rows';
+                $rows = $uploadReader($upload, ['doctor_name', 'consultation_fee'], [
+                    'doctor_id', 'doctor_name', 'specialization', 'consultation_fee', 'joined_date', 'linked_username',
+                ], 2000, [
+                    'id' => 'doctor_id',
+                    'doctor id' => 'doctor_id',
+                    'name' => 'doctor_name',
+                    'doctor name' => 'doctor_name',
+                    'specialty' => 'specialization',
+                    'speciality' => 'specialization',
+                    'consultation fee' => 'consultation_fee',
+                    'joined' => 'joined_date',
+                    'joined date' => 'joined_date',
+                    'username' => 'linked_username',
+                ]);
+                if (!$rows) throw new RuntimeException('The uploaded CSV/XLSX file contains no doctor rows.');
+                $pdo->beginTransaction();
+                $created = 0;
+                $updated = 0;
+                foreach ($rows as $index => $row) {
+                    $rowNumber = $index + 2;
+                    $doctorId = (int) ($row['doctor_id'] ?? 0);
+                    $input = [
+                        'DoctorID'        => $doctorId > 0 ? (string) $doctorId : '',
+                        'DoctorName'      => trim((string) ($row['doctor_name'] ?? '')),
+                        'Specialty'       => trim((string) ($row['specialization'] ?? '')),
+                        'ConsultationFee' => trim((string) ($row['consultation_fee'] ?? '')),
+                        'JoinedDate'      => trim((string) ($row['joined_date'] ?? '')),
+                        'WorkingDays'     => '1,2,3,4,5',
+                        'WorkStartTime'   => '09:00',
+                        'WorkEndTime'     => '17:00',
+                    ];
+                    $rowErrors = tdc_validate_doctor_form($input);
+                    $isEdit = false;
+                    if ($doctorId > 0) {
+                        $stmt = $pdo->prepare('SELECT COUNT(*) FROM doctors WHERE DoctorID=?');
+                        $stmt->execute([$doctorId]);
+                        if (!(int) $stmt->fetchColumn()) $rowErrors[] = 'doctor_id does not exist';
+                        else $isEdit = true;
+                    } else {
+                        $stmt = $pdo->prepare('SELECT COUNT(*) FROM doctors WHERE LOWER(TRIM(DoctorName))=LOWER(TRIM(?))');
+                        $stmt->execute([$input['DoctorName']]);
+                        if ((int) $stmt->fetchColumn()) $rowErrors[] = 'doctor name already exists';
+                    }
+                    if ($rowErrors) throw new RuntimeException('Row ' . $rowNumber . ': ' . implode(' ', $rowErrors));
+                    tdc_save_doctor($pdo, $input, $isEdit, $doctorId);
+                    if ($isEdit) $updated++; else $created++;
+                }
+                tdc_audit($pdo, 'doctors.imported', 'Doctors', null, "Created {$created} and updated {$updated} doctor records.");
+                $pdo->commit();
+                $_SESSION['tdc_doctor_import_result'] = ['created' => $created, 'updated' => $updated];
+                tdc_redirect('imported');
+            } catch (RuntimeException $e) {
+                if ($pdo->inTransaction()) $pdo->rollBack();
+                $errors[] = $e->getMessage();
+            }
         } elseif ($formAction === 'delete') {
             tdc_require_permission('doctors.manage');
             $deleteId = (int) ($_POST['DoctorID'] ?? 0);
@@ -384,7 +500,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if (empty($errors)) {
                 try {
                     tdc_save_doctor($pdo, $old, $isEdit, (int) $old['DoctorID']);
-                    tdc_redirect('success');
+                    tdc_redirect($isEdit ? 'updated' : 'created');
                 } catch (PDOException $e) {
                     error_log('[DOCTORS] save failed: ' . $e->getMessage());
                     $errors[] = 'A system error occurred while saving the doctor. Please try again.';
@@ -393,8 +509,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
 
-    // Rotate CSRF token after every POST (success paths already rotated + exited above via header()).
-    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+    // Keep the session CSRF token stable for other open authenticated forms.
 }
 
 // =======================================================================
@@ -421,8 +536,17 @@ $avatarLetters = strtoupper(substr($displayName, 0, 2));
 $csrfToken     = (string) ($_SESSION['csrf_token'] ?? '');
 $currentPage   = basename((string) ($_SERVER['SCRIPT_NAME'] ?? 'doctors.php'));
 
-$justSaved   = isset($_GET['success']);
-$justDeleted = isset($_GET['deleted']);
+$doctorStatus = (string) ($_GET['status'] ?? '');
+$justSaved   = $doctorStatus === 'created' || $doctorStatus === 'updated' || isset($_GET['success']);
+$justDeleted = $doctorStatus === 'deleted' || isset($_GET['deleted']);
+$doctorToast = match ($doctorStatus) {
+    'created' => 'Doctor created successfully.',
+    'updated' => 'Doctor updated successfully.',
+    'deleted' => 'Doctor deleted successfully.',
+    'imported' => 'Doctor records imported successfully.',
+    default => $justSaved ? 'Doctor saved successfully.' : ($justDeleted ? 'Doctor deleted successfully.' : ''),
+};
+$hasDoctorToast = $doctorToast !== '';
 
 $workspaceDoctorId = ctype_digit((string) ($_GET['doctor'] ?? '')) ? (int) $_GET['doctor'] : 0;
 $workspaceUrl      = 'doctors.php?workspace=1' . ($workspaceDoctorId > 0 ? '&doctor=' . $workspaceDoctorId : '');
@@ -441,8 +565,8 @@ $workspaceUrl      = 'doctors.php?workspace=1' . ($workspaceDoctorId > 0 ? '&doc
     #js-toast svg{ width:16px; height:16px; flex-shrink:0; color:var(--success); }
     #js-toast.show{ opacity:1; transform:translateX(-50%) translateY(0); }
 </style>
-<link rel="stylesheet" href="../assets/clinic.css">
-<script src="../assets/clinic.js" defer></script>
+<link rel="stylesheet" href="../assets/clinic.css?v=<?= rawurlencode((string) @filemtime(__DIR__ . '/../assets/clinic.css')) ?>">
+<script src="../assets/clinic.js?v=<?= rawurlencode((string) @filemtime(__DIR__ . '/../assets/clinic.js')) ?>" defer></script>
 </head>
 <body>
 
@@ -506,12 +630,16 @@ $workspaceUrl      = 'doctors.php?workspace=1' . ($workspaceDoctorId > 0 ? '&doc
     </div>
     <?php endif; ?>
 
+    <?php if (is_array($importResult)): ?>
+    <div class="setup-notice" role="status">Import completed. Created: <?= (int) ($importResult['created'] ?? 0) ?>. Updated: <?= (int) ($importResult['updated'] ?? 0) ?>. Skipped: 0. Failed: 0.</div>
+    <?php endif; ?>
+
     <div class="section-toolbar">
         <form method="GET" action="doctors.php" class="search-box">
             <input type="text" name="q" placeholder="Search by name or specialty..." value="<?= tdc_e($search) ?>">
             <button type="submit" class="btn-primary btn "><?= tdc_icon('search',16) ?><span>Search</span></button>
         </form>
-        <div class="table-command-bar"><?php if($canImport):?><button type="button" id="importDoctorBtn" class="btn-secondary btn "><?= tdc_icon('upload', 14) ?><span>Import CSV</span></button><a class="btn-secondary btn " href="doctors.php?download=doctor-template"><?= tdc_icon('download', 14) ?><span>Download CSV Template</span></a><?php endif;?><?php if($canExport):?><a class="btn-secondary btn " href="doctors.php?download=doctors"><?= tdc_icon('download', 14) ?><span>Export CSV</span></a><button type="button" class="btn-primary btn " onclick="window.print()"><?= tdc_icon('printer', 14) ?><span>Print</span></button><?php endif;?><?php if ($canManage): ?><button type="button" id="addDoctorBtn" class="btn-success btn "><?= tdc_icon('plus', 14) ?><span>Add Doctor</span></button><?php endif; ?></div>
+        <div class="table-command-bar"><?php if($canImport):?><button type="button" id="importDoctorBtn" class="btn-success btn "><?= tdc_icon('upload', 14) ?><span>Import CSV / XLSX</span></button><a class="btn-secondary btn " href="doctors.php?download=doctor-template"><?= tdc_icon('download', 14) ?><span>Download CSV Template</span></a><?php endif;?><?php if($canExport):?><a class="btn-secondary btn " href="doctors.php?download=doctors"><?= tdc_icon('download', 14) ?><span>Export CSV</span></a><a class="btn-secondary btn " href="doctors.php?download=doctors-xlsx"><?= tdc_icon('download', 14) ?><span>Export XLSX</span></a><button type="button" class="btn-primary btn " onclick="window.print()"><?= tdc_icon('printer', 14) ?><span>Print</span></button><?php endif;?><?php if ($canManage): ?><button type="button" id="addDoctorBtn" class="btn-success btn "><?= tdc_icon('plus', 14) ?><span>Add Doctor</span></button><?php endif; ?></div>
     </div>
 
     <div class="data-table-wrap">
@@ -544,7 +672,7 @@ $workspaceUrl      = 'doctors.php?workspace=1' . ($workspaceDoctorId > 0 ? '&doc
                                 data-working-days="<?= tdc_e((string) ($d['WorkingDays'] ?? '1,2,3,4,5')) ?>"
                                 data-work-start="<?= tdc_e(substr((string) ($d['WorkStartTime'] ?? '09:00'), 0, 5)) ?>"
                                 data-work-end="<?= tdc_e(substr((string) ($d['WorkEndTime'] ?? '17:00'), 0, 5)) ?>"><?= tdc_icon('pencil', 15) ?></button>
-                            <form method="POST" action="doctors.php" data-confirm="Delete this doctor? This cannot be undone.">
+                            <form method="POST" action="doctors.php" data-confirm="Permanently delete this doctor and clear linked consultations, laboratory work, prescriptions, pharmacy sales, payments, and ledger history? Patient records will remain but lose this doctor assignment. This cannot be undone.">
                                 <input type="hidden" name="csrf_token" value="<?= tdc_e($csrfToken) ?>">
                                 <input type="hidden" name="form_action" value="delete">
                                 <input type="hidden" name="DoctorID" value="<?= (int) $d['DoctorID'] ?>">
@@ -560,7 +688,7 @@ $workspaceUrl      = 'doctors.php?workspace=1' . ($workspaceDoctorId > 0 ? '&doc
     </div>
 
     <?php if ($canManage): ?>
-    <?php if($canImport):?><div class="modal-overlay" id="importDoctorModal"><div class="modal-box"><div class="modal-head"><h3><?= tdc_icon('upload',20) ?><span>Import Doctors</span></h3><button type="button" class="modal-close" data-close-doctor-import aria-label="Close">×</button></div><form method="post" enctype="multipart/form-data"><div class="modal-body"><input type="hidden" name="csrf_token" value="<?=tdc_e($csrfToken)?>"><input type="hidden" name="form_action" value="import_csv"><div class="form-section"><div class="form-section-heading"><span><strong>CSV File</strong><span>Doctor accounts are linked separately in Setup after import.</span></span></div><div class="form-group"><label>Select CSV</label><input type="file" name="csv_file" accept=".csv,text/csv" required></div></div><div class="modal-actions"><button type="button" class="btn btn-secondary" data-close-doctor-import>Cancel</button><button class="btn-success btn "><?= tdc_icon('upload',16) ?><span>Import Doctors</span></button></div></div></form></div></div><?php endif;?>
+    <?php if($canImport):?><div class="modal-overlay" id="importDoctorModal"><div class="modal-box"><div class="modal-head"><h3><?= tdc_icon('upload',20) ?><span>Import Doctors</span></h3><button type="button" class="modal-close" data-close-doctor-import aria-label="Close">×</button></div><form method="post" enctype="multipart/form-data"><div class="modal-body"><input type="hidden" name="csrf_token" value="<?=tdc_e($csrfToken)?>"><input type="hidden" name="form_action" value="import_csv"><div class="form-section"><div class="form-section-heading"><span><strong>CSV or XLSX File</strong><span>Doctor accounts are linked separately in Setup after import.</span></span></div><div class="form-group"><label>Select CSV or XLSX</label><input type="file" name="csv_file" accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required></div><p class="form-hint">Required columns: doctor_name and consultation_fee. Existing doctor IDs are updated; new names are added.</p></div><div class="modal-actions"><button type="button" class="btn btn-secondary" data-close-doctor-import>Cancel</button><button class="btn-success btn "><?= tdc_icon('upload',16) ?><span>Import Doctors</span></button></div></div></form></div></div><?php endif;?>
     <div class="modal-overlay" id="doctorModalOverlay">
         <div class="modal-box">
             <div class="modal-head">
@@ -696,8 +824,8 @@ function showToast(message){
     openModal();
     <?php endif; ?>
 
-    <?php if ($justSaved || $justDeleted): ?>
-    showToast(<?= $justSaved ? json_encode('Doctor saved successfully.') : json_encode('Doctor deleted successfully.') ?>);
+    <?php if ($hasDoctorToast): ?>
+    showToast(<?= json_encode($doctorToast) ?>);
     if (window.history.replaceState) { window.history.replaceState({}, document.title, 'doctors.php'); }
     <?php endif; ?>
 })();

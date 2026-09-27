@@ -58,6 +58,7 @@ if (!tdc_can('pharmacy_billing.view')
 }
 
 require_once __DIR__ . '/../db.php';
+require_once __DIR__ . '/includes/billing-adjustments.php';
 
 $rawRef = trim((string) ($_GET['ref'] ?? ''));
 if ($rawRef === '' || !preg_match('/^[A-Za-z0-9]{2,20}(-[A-Za-z0-9]{1,10})?$/', $rawRef)) {
@@ -73,13 +74,20 @@ if ($baseRef === false || $baseRef === '') {
 }
 
 try {
-    // Select * so the slip still renders when the optional Quantity/Route
-    // migration has not been applied (columns detected below, never assumed).
+    $hasRouteColumn = tdc_has_column($pdo, 'prescriptions', 'Route');
+    $routeSelect = $hasRouteColumn ? ', p.Route AS Route' : '';
     $stmt = $pdo->prepare(
-        'SELECT *
-         FROM prescriptions
-         WHERE PrescriptionID = :exact OR PrescriptionID LIKE :pattern
-         ORDER BY PrescriptionID ASC'
+        'SELECT p.*' . $routeSelect . ',
+                pt.PatientName AS CurrentPatientName,
+                pt.PatientPhone AS CurrentPatientPhone,
+                pt.Gender AS CurrentGender,
+                pt.Age AS CurrentAge,
+                d.DoctorName AS DoctorName
+         FROM prescriptions p
+         LEFT JOIN patients pt ON pt.PatientID = p.PatientID
+         LEFT JOIN doctors d ON d.DoctorID = p.DoctorID
+         WHERE p.PrescriptionID = :exact OR p.PrescriptionID LIKE :pattern
+         ORDER BY p.PrescriptionID ASC'
     );
     $stmt->execute(['exact' => $baseRef, 'pattern' => $baseRef . '-%']);
     $lines = $stmt->fetchAll();
@@ -104,18 +112,39 @@ $first       = $lines[0];
 $companyName = (string) ($letterhead['CompanyName'] ?? 'Tarey Derma Clinic');
 $companyAddr = (string) ($letterhead['CompanyAddress'] ?? '');
 $companyTel  = (string) ($letterhead['PhoneNumbers'] ?? '');
+$doctorPhone = preg_replace('/^\s*TEL\s*:\s*/i', '', $companyTel) ?: $companyTel;
 $companyLogo = (string) ($letterhead['CompanyLogo'] ?? '');
 
-$totals = ['total' => 0.0, 'paid' => 0.0, 'due' => 0.0];
-foreach ($lines as $l) {
-    $totals['total'] = round($totals['total'] + (float) $l['TotalAmount'], 2);
-    $totals['paid']  = round($totals['paid'] + (float) $l['AmountPaid'], 2);
-    $totals['due']   = round($totals['due'] + (float) $l['DueBalance'], 2);
+$displayName = static function (string $value): string {
+    $value = trim($value);
+    return mb_strtoupper($value, 'UTF-8');
+};
+$displayPatientName = $displayName((string) ($first['CurrentPatientName'] ?? $first['PatientName'] ?? '—'));
+$displayDoctorName = $displayName((string) ($first['DoctorName'] ?? ''));
+$displayPhone = trim((string) ($first['CurrentPatientPhone'] ?? ''));
+$displayGender = trim((string) ($first['CurrentGender'] ?? $first['Gender'] ?? ''));
+$displayAge = trim((string) ($first['CurrentAge'] ?? $first['Age'] ?? ''));
+
+$totals = [
+    'total' => round((float) ($first['TotalAmount'] ?? 0), 2),
+    'paid'  => round((float) ($first['AmountPaid'] ?? 0), 2),
+    'due'   => round((float) ($first['DueBalance'] ?? 0), 2),
+];
+$adjustment = tdc_load_bill_adjustment($pdo, 'prescription', $baseRef);
+$gross = $adjustment ? (float)$adjustment['GrossAmount'] : $totals['total'];
+$discount = $adjustment ? (float)$adjustment['DiscountAmount'] : 0.0;
+$subtotal = max(0.0, $gross - $discount);
+$tax = $adjustment ? (float)$adjustment['TaxAmount'] : 0.0;
+$final = $adjustment ? (float)$adjustment['FinalAmount'] : $totals['total'];
+
+if ($totals['total'] <= 0.00001) {
+    http_response_code(403);
+    exit('Prescription billing is not finalized until Pharmacy records the pricing.');
 }
 
 $printedOn = date('d M Y, H:i');
-$hasQty    = array_key_exists('Quantity', $first) && $first['Quantity'] !== null && $first['Quantity'] !== '';
-$hasRoute  = array_key_exists('Route', $first);
+$hasQty    = array_key_exists('Quantity', $first);
+$hasRoute  = $hasRouteColumn && array_key_exists('Route', $first);
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -125,34 +154,36 @@ $hasRoute  = array_key_exists('Route', $first);
     <title>Prescription <?= tdc_print_e($baseRef) ?> — <?= tdc_print_e($companyName) ?></title>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
-        body { font-family: Arial, Helvetica, sans-serif; color: #1c2333; background: #f3f4f8; padding: 24px 12px; }
-        .sheet { max-width: 780px; margin: 0 auto; background: #ffffff; padding: 34px 40px; border: 1px solid #d7dae4; }
-        .letterhead { display: flex; align-items: center; gap: 18px; border-bottom: 3px solid #2E3192; padding-bottom: 16px; }
-        .letterhead img { width: 84px; height: 84px; object-fit: contain; }
-        .letterhead .lh-name { font-size: 24px; font-weight: 700; color: #2E3192; }
-        .letterhead .lh-meta { font-size: 12px; color: #55607a; margin-top: 4px; }
-        .slip-title { text-align: center; margin: 18px 0 14px; font-size: 15px; letter-spacing: .12em; text-transform: uppercase; color: #2E3192; font-weight: 700; }
-        .parties { display: flex; justify-content: space-between; gap: 24px; margin-bottom: 18px; font-size: 13px; }
-        .parties strong { display: block; color: #55607a; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; margin-bottom: 3px; }
-        table { width: 100%; border-collapse: collapse; font-size: 13px; }
-        th, td { border: 1px solid #d7dae4; padding: 7px 9px; text-align: left; vertical-align: top; }
-        th { background: #eef0f7; color: #2E3192; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; }
-        td.num, th.num { text-align: right; white-space: nowrap; }
-        .totals { margin-top: 16px; margin-left: auto; width: 280px; font-size: 13px; }
-        .totals div { display: flex; justify-content: space-between; padding: 5px 2px; }
-        .totals .grand { border-top: 2px solid #2E3192; font-weight: 700; color: #2E3192; }
-        .sig { margin-top: 56px; display: flex; justify-content: space-between; font-size: 12px; color: #55607a; }
-        .sig span { border-top: 1px solid #9aa2b8; padding-top: 5px; min-width: 170px; text-align: center; }
-        .foot { margin-top: 22px; font-size: 11px; color: #7c859d; text-align: center; }
-        .print-bar { max-width: 780px; margin: 0 auto 14px; text-align: right; }
-        .print-bar button { background: #2E3192; color: #fff; border: 0; padding: 9px 20px; font-size: 13px; cursor: pointer; }
-        .print-bar button:hover { background: #F15A24; }
-        @media print {
-            body { background: #ffffff; padding: 0; }
-            .print-bar { display: none; }
-            .sheet { border: 0; max-width: none; }
-        }
+        body { margin: 0; background: #f1f3f8; color: #172033; font-family: Arial, Helvetica, sans-serif; padding: 20px; }
+        .sheet { width: 210mm; min-height: 297mm; margin: 0 auto; background: #fff; padding: 18mm; border: 1px solid #d7dae4; }
+        .letterhead { display: flex; gap: 18px; align-items: center; border-bottom: 3px solid #2e3192; padding-bottom: 14px; }
+        .letterhead img { width: 72px; height: 72px; object-fit: contain; }
+        .letterhead .lh-name { font-size: 24px; font-weight: 700; color: #2e3192; }
+        .letterhead .lh-meta { font-size: 12px; color: #5c667b; margin-top: 4px; }
+        .slip-title { text-align: center; color: #2e3192; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; margin: 22px 0 18px; }
+        .meta { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 30px; margin-bottom: 20px; font-size: 13px; }
+        .meta div { border-bottom: 1px solid #e2e5ec; padding: 6px 0; line-height: 1.4; }
+        .meta strong { display: inline-block; min-width: 130px; color: #59647a; font-size: 11px; text-transform: uppercase; letter-spacing: .02em; }
+        .table { width: 100%; border-collapse: collapse; font-size: 13px; table-layout: fixed; }
+        .table th, .table td { border: 1px solid #cfd4df; padding: 9px; vertical-align: top; }
+        .table th { background: #eef0f7; color: #2e3192; text-align: left; font-size: 11px; text-transform: uppercase; }
+        .table th:nth-child(1), .table td:nth-child(1) { width: 7%; text-align: center; }
+        .table th:nth-child(2), .table td:nth-child(2) { width: 31%; }
+        .table th:nth-child(3), .table td:nth-child(3) { width: 15%; text-align: right; }
+        .table th:nth-child(4), .table td:nth-child(4) { width: 17%; }
+        .table th:nth-child(5), .table td:nth-child(5) { width: 17%; }
+        .table th:nth-child(6), .table td:nth-child(6) { width: 13%; }
+        .financial { width: 300px; margin: 22px 0 0 auto; font-size: 13px; }
+        .financial div { display: flex; justify-content: space-between; padding: 7px 0; border-bottom: 1px solid #e0e3ea; }
+        .financial .due { font-weight: 700; color: #2e3192; border-top: 2px solid #2e3192; }
+        .sign { display: flex; justify-content: space-between; margin-top: 70px; color: #5c667b; font-size: 12px; }
+        .sign span { border-top: 1px solid #9aa2b8; padding-top: 6px; width: 180px; text-align: center; }
+        .foot { text-align: center; color: #7b8497; font-size: 11px; margin-top: 28px; }
+        .print-bar { max-width: 210mm; margin: 0 auto 12px; text-align: right; }
+        .print-bar button { background: #2e3192; color: #fff; border: 0; padding: 10px 18px; cursor: pointer; }
+        @media print { body { background: #fff; padding: 0; } .print-bar { display: none; } .sheet { width: 100%; min-height: auto; border: 0; padding: 12mm; } }
     </style>
+    <link rel="stylesheet" href="assets/print-theme.css">
 </head>
 <body>
 <div class="print-bar">
@@ -176,62 +207,55 @@ $hasRoute  = array_key_exists('Route', $first);
 
     <div class="slip-title">Prescription &amp; Payment Slip</div>
 
-    <div class="parties">
-        <div>
-            <strong>Patient</strong>
-            <?= tdc_print_e($first['PatientName']) ?><br>
-            <?php if ((string) $first['PatientPhone'] !== ''): ?>Phone: <?= tdc_print_e((string) $first['PatientPhone']) ?><br><?php endif; ?>
-            <?php $genderAge = trim(implode(' / ', array_filter([(string) $first['Gender'], (string) $first['Age']]))); ?>
-            <?php if ($genderAge !== ''): ?><?= tdc_print_e($genderAge) ?><?php endif; ?>
-        </div>
-        <div style="text-align:right">
-            <strong>Bill reference</strong>
-            <?= tdc_print_e($baseRef) ?><br>
-            <strong>Date</strong><br>
-            <?= tdc_print_e(date('d M Y', strtotime((string) $first['PrescriptionDate']))) ?>
-        </div>
-    </div>
+    <?php $genderAge = trim(implode(' / ', array_filter([$displayGender, $displayAge]))); ?>
+    <section class="meta" aria-label="Patient and prescription information">
+        <div><strong>Patient ID</strong><?= tdc_print_e((string) ($first['PatientID'] ?? '—')) ?></div>
+        <div><strong>Prescription Number</strong><?= tdc_print_e($baseRef) ?></div>
+        <div><strong>Patient</strong><?= tdc_print_e($displayPatientName) ?></div>
+        <div><strong>Date</strong><?= tdc_print_e(date('d M Y', strtotime((string) $first['PrescriptionDate']))) ?></div>
+        <div><strong>Phone</strong><?= tdc_print_e($displayPhone !== '' ? $displayPhone : 'Not recorded') ?></div>
+        <div><strong>Visit Number</strong><?= tdc_print_e((string) (($first['VisitNumber'] ?? '') !== '' ? $first['VisitNumber'] : '—')) ?></div>
+        <div><strong>Gender / Age</strong><?= tdc_print_e($genderAge !== '' ? $genderAge : '—') ?></div>
+        <div><strong>Doctor</strong><?= tdc_print_e($displayDoctorName !== '' ? $displayDoctorName : '—') ?></div>
+    </section>
 
-    <table>
+    <table class="table">
         <thead>
             <tr>
                 <th class="num">#</th>
                 <th>Medication</th>
-                <?php if ($hasQtyRoute): ?><th class="num">Qty</th><th>Route</th><?php endif; ?>
-                <th>Dosage</th>
+                <th class="num">Quantity</th>
                 <th>Frequency</th>
                 <th>Duration</th>
+                <th>Route</th>
             </tr>
         </thead>
         <tbody>
             <?php foreach ($lines as $i => $l): ?>
             <tr>
                 <td class="num"><?= (int) $i + 1 ?></td>
-                <td>
-                    <?= tdc_print_e((string) $l['MedicationName']) ?>
-                    <?php if ((string) ($l['Instructions'] ?? '') !== ''): ?>
-                        <br><small style="color:#55607a"><?= tdc_print_e((string) $l['Instructions']) ?></small>
-                    <?php endif; ?>
-                </td>
-                <?php if ($hasQty): ?>
-                <td class="num"><?= (int) $l['Quantity'] ?></td>
-                <?php endif; ?>
-                <?php if ($hasRoute): ?>
-                <td><?= tdc_print_e((string) ($l['Route'] ?? '')) ?></td>
-                <?php endif; ?>
-                <td><?= tdc_print_e((string) ($l['Dosage'] ?? '')) ?></td>
+                <td><?= tdc_print_e((string) $l['MedicationName']) ?></td>
+                <td class="num"><?= $hasQty ? (int) $l['Quantity'] : '&mdash;' ?></td>
                 <td><?= tdc_print_e((string) ($l['Frequency'] ?? '')) ?></td>
                 <td><?= tdc_print_e((string) ($l['Duration'] ?? '')) ?></td>
+                <td><?= $hasRoute && trim((string) ($l['Route'] ?? '')) !== '' ? tdc_print_e((string) $l['Route']) : '&mdash;' ?></td>
             </tr>
+            <?php if (trim((string) ($l['Instructions'] ?? '')) !== ''): ?>
+            <tr><td colspan="6"><strong>Instructions:</strong> <?= tdc_print_e((string) $l['Instructions']) ?></td></tr>
+            <?php endif; ?>
             <?php endforeach; ?>
         </tbody>
     </table>
 
-    <div class="totals">
-        <div><span>Total</span><strong><?= number_format($totals['total'], 2) ?></strong></div>
-        <div><span>Amount paid</span><span><?= number_format($totals['paid'], 2) ?></span></div>
-        <div class="grand"><span>Balance due</span><span><?= number_format($totals['due'], 2) ?></span></div>
-    </div>
+    <section class="financial" aria-label="Payment summary">
+        <div><span>Gross Amount</span><strong><?= number_format($gross, 2) ?></strong></div>
+        <div><span>Discount</span><span><?= number_format($discount, 2) ?></span></div>
+        <div><span>Subtotal</span><span><?= number_format($subtotal, 2) ?></span></div>
+        <div><span>Tax</span><span><?= number_format($tax, 2) ?></span></div>
+        <div><span>Final Amount</span><strong><?= number_format($final, 2) ?></strong></div>
+        <div><span>Paid</span><span><?= number_format($totals['paid'], 2) ?></span></div>
+        <div class="due"><span>Balance Due</span><span><?= number_format($totals['due'], 2) ?></span></div>
+    </section>
 
     <div class="sig">
         <span>Patient signature</span>

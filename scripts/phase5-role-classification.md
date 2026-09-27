@@ -1,0 +1,33 @@
+# Phase 5 role-suite failure classification
+
+The 21 failures in `phase5-role-run.txt` were classified before changing the
+role suite or production behavior. The failures are test debt; they do not by
+themselves prove a permission or clinical workflow defect.
+
+| Test name | Role | Route/action | Expected | Actual | Classification | Root cause | Required change |
+|---|---|---|---|---|---|---|---|
+| Reception settles consultation into doctor queue | receptionuser | reception consultations / collect VisitID 2 | Full payment, Paid, zero due, 302 | Partial payment remained and route rendered 200 | B. OBSOLETE EXPECTATION | The fixture pays 15 against a 25 bill; partial payment is valid and payment never blocks care | Create a disposable visit and assert Partial/remaining due, or pay the full final amount |
+| Patient with clinical history cannot be deleted | superuser | patients delete PatientID 1 | Delete blocked | Cascade delete succeeded | B. OBSOLETE EXPECTATION | Current documented rule is transactional cascade deletion | Create a disposable delete target and assert only its linked rows are removed |
+| Doctor with workflow history cannot be deleted | superuser | doctors delete DoctorID 1 | Delete blocked | Cascade delete succeeded | B. OBSOLETE EXPECTATION | Current documented rule is transactional cascade deletion | Create a disposable doctor and assert scoped cascade cleanup |
+| Lab sees unpaid work | labuser | laboratory bare route | TESTPAID/TESTUNPAID and legacy archive | Modern workspace did not render legacy rows | E. TEST HARNESS DEFECT | Test uses legacy identifiers and omits workspace/tab parameters | Seed modern bridged orders and assert the modern queue; test legacy archive separately |
+| Laboratory starts paid fixture before result entry | labuser | laboratory form_action=start TESTPAID | 302 and In Progress | Modern route rendered 200; row was not a modern order | E. TEST HARNESS DEFECT | Legacy action/fixture sent to modern workspace | Use workspace_action with a disposable bridged order |
+| Bad CSRF cannot change lab results | labuser | laboratory legacy result POST | CSRF message and unchanged TESTPAID | Legacy row was not selected | E. TEST HARNESS DEFECT | Wrong form contract and stale row | Exercise the current modern result endpoint with a disposable bridge |
+| Legacy lab result requires processing state without changing payment | labuser | laboratory legacy result POST TESTUNPAID | Start-state validation | Row was not visible to modern result workflow | E. TEST HARNESS DEFECT | Legacy result assertion conflicts with separated modern identity | Test legacy read-only archive and modern workflow independently |
+| Lab saves results without changing bill | labuser | laboratory legacy save TESTPAID | Result changes, bill stays fixed | Legacy row was not selected | E. TEST HARNESS DEFECT | Old save fields do not represent modern parameter results | Create a bridge/result/parameter fixture and assert billing columns are unchanged |
+| Reception bills cannot overwrite results | receptionuser | reception laboratory POST TESTPAID | 403 and result preserved | Stale TESTPAID row assertion failed | E. TEST HARNESS DEFECT | Uses legacy row and old request shape | Use a real modern lab order and assert reception cannot write result fields |
+| Reception pays order for lab handoff | receptionuser | reception laboratory collect TESTUNPAID | Paid/Ready | Legacy fixture was absent from current queue | E. TEST HARNESS DEFECT | Fixture is excluded from authoritative modern queue | Seed a modern unpaid order and collect against its reference |
+| Lab now receives reception paid order | labuser | laboratory bare route | TESTUNPAID visible | Legacy row absent | E. TEST HARNESS DEFECT | Same stale legacy fixture | Assert modern queue visibility after payment |
+| SuperAdmin section and search reception.php consultations | superuser | reception section=consultations | 200 page | 302 redirect | B. OBSOLETE EXPECTATION | Current route redirects to the canonical workspace entry | Assert the canonical redirect target and then render it |
+| Non-root SuperAdmin opens reception consultations | superuser | reception section=consultations | 200 page | 302 redirect | B. OBSOLETE EXPECTATION | Same canonical route behavior | Assert redirect followed by authenticated page render |
+| receptionuser books supported visit | receptionuser | reception consultation booking | 302 and Waiting row | 200 and no matching row | E. TEST HARNESS DEFECT | Test posts obsolete booking field names/shape | Use the current booking form contract with a disposable patient and doctor |
+| superuser books supported visit | superuser | reception consultation booking | 302 and Waiting row | 200 and no matching row | E. TEST HARNESS DEFECT | Same obsolete request shape | Use current booking fields and a unique E2E reference |
+| Render reports | superuser | reports bare route | 200 | 302 redirect | B. OBSOLETE EXPECTATION | Bare reports route intentionally redirects to the default workspace | Assert redirect and canonical report page |
+| Doctor waiting export stays assigned | doctoruser | doctors export=csv | Test Patient export | Fixture is no longer the authoritative waiting fixture | A. STALE FIXTURE | Export case depends on historical patient/visit state | Create a disposable waiting visit and assert its own export row |
+| SuperAdmin real doctor action start | superuser | doctors workspace action start VisitID 1 | 302 | 200 | E. TEST HARNESS DEFECT | Uses historical VisitID and incomplete current action payload | Create a disposable waiting visit and submit current workspace fields |
+| SuperAdmin real doctor action save_notes | superuser | doctors workspace action save_notes VisitID 1 | In Consultation and diagnosis saved | 200 and historical row absent | E. TEST HARNESS DEFECT | Historical ID was deleted/mutated by earlier cases | Use an isolated disposable consultation fixture |
+| SuperAdmin real doctor action prescribe | superuser | doctors workspace prescribe VisitID 1 | 302 | 200 | E. TEST HARNESS DEFECT | Historical visit and old action payload | Use disposable visit and current prescription fields |
+| SuperAdmin real doctor action request_lab | superuser | doctors workspace request_lab VisitID 1 | 302 | 200 | E. TEST HARNESS DEFECT | Historical visit and old lab request fields | Use disposable visit plus modern catalog test IDs |
+
+No failure was classified as a confirmed authorization defect or confirmed
+production workflow defect. The suite still needs the fixture and request-shape
+changes above before it can be used as a release gate.

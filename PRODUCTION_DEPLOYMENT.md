@@ -2,7 +2,7 @@
 
 ## Important
 
-Do not upload the local `db.php` with XAMPP credentials. Do not run deployment commands against the live database until a backup exists. This application records manual payments only and makes no external payment requests.
+Do not upload the local `db.local.php` file with XAMPP credentials. `db.php` is the application connector and must remain in the upload; it reads the server-only `db.local.php` when present. Do not run deployment commands against the live database until a backup exists. This application records manual payments only and makes no external payment requests.
 
 ## Files
 
@@ -44,4 +44,7 @@ On hosting where CLI is unavailable, use a temporary protected bootstrap mechani
 
 ## Release warning
 
-The current repository remains NO-GO until payment reversal/correction, pharmacy lifecycle consolidation, and a clean schema-only production installer are completed and executed. Booking collision protection and the 265-check integration suite currently pass.
+The current repository remains NO-GO until pharmacy lifecycle consolidation is completed and executed in the target production environment. Payment reversal/correction is covered by the current local audit evidence, and the clean schema-only installer has been executed successfully in an isolated local database. Booking collision protection and the 265-check integration suite currently pass.
+
+Patient billing adjustments: run database/patient_billing_adjustments_migration.sql after the base schema. It is additive and preserves existing payment totals.
+

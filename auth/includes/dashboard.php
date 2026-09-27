@@ -1,5 +1,6 @@
 <?php
 $dashboardRole = (string) $_SESSION['role'];
+$dashboardSaleStatusFilter = tdc_has_column($pdo, 'pharmacysales', 'SaleStatus') ? "SaleStatus <> 'Voided'" : '1=1';
 $dashboardScalar = static function (string $sql) use ($pdo) { return $pdo->query($sql)->fetchColumn(); };
 $dashboardEscape = static function ($value): string { return htmlspecialchars((string) $value, ENT_QUOTES, 'UTF-8'); };
 $dashboardIcon = static function (string $name): string {
@@ -45,7 +46,7 @@ try {
             $dashboardRows[] = [$row['PatientName'], $row['PatientPhone'], date('d M Y', strtotime($row['RegisteredAt'])), $row['VisitNumber']];
         }
         if ($dashboardRole === 'superuser') {
-            $metrics[] = ['Sales today', $dashboardScalar("SELECT COUNT(DISTINCT SUBSTRING_INDEX(SaleID, '-', 1)) FROM pharmacysales WHERE DATE(SaleDate) = CURDATE()"), 'pharmacy.php?section=pos', 'Pharmacy transactions', 'cart', 'rose'];
+            $metrics[] = ['Sales today', $dashboardScalar("SELECT COUNT(DISTINCT SUBSTRING_INDEX(SaleID, '-', 1)) FROM pharmacysales WHERE {$dashboardSaleStatusFilter} AND DATE(SaleDate) = CURDATE()"), 'pharmacy.php?section=pos', 'Pharmacy transactions', 'cart', 'rose'];
             $metrics[] = ['Low stock', $dashboardScalar('SELECT COUNT(*) FROM inventory WHERE QuantityInStock <= ReorderLevel'), 'pharmacy.php?section=inventory&low=1', 'At or below reorder level', 'package', 'orange'];
             $metrics[] = ['Users', $dashboardScalar('SELECT COUNT(*) FROM users'), 'setup.php?section=users', 'System accounts', 'users', 'teal'];
             $metrics[] = ['Net income this month', number_format((float) $dashboardScalar("SELECT COALESCE(SUM(Credit-Debit), 0) FROM accounting WHERE AccountType IN ('Revenue','Expense') AND TransactionDate >= DATE_FORMAT(CURDATE(), '%Y-%m-01') AND TransactionDate < CURDATE() + INTERVAL 1 DAY"), 2), 'reports.php?section=income-statement', 'Posted revenue less expenses', 'chart', 'purple'];
@@ -86,7 +87,7 @@ try {
             foreach ($stmt->fetchAll() as $row) $dashboardRows[] = [$row['VisitReference'],$row['PatientName'],date('H:i',strtotime($row['VisitDate'])),$row['QueueStatus']];
         }
     } elseif (tdc_can('pharmacy.view')) {
-        $sales = "SELECT MIN(TotalAmount) total, MIN(AmountPaid) paid, MIN(DueBalance) due, MIN(SaleDate) sold FROM pharmacysales GROUP BY SUBSTRING_INDEX(SaleID, '-', 1)";
+        $sales = "SELECT MIN(TotalAmount) total, MIN(AmountPaid) paid, MIN(DueBalance) due, MIN(SaleDate) sold FROM pharmacysales WHERE {$dashboardSaleStatusFilter} GROUP BY SUBSTRING_INDEX(SaleID, '-', 1)";
         $metrics = [
             ['Sales today', $dashboardScalar("SELECT COUNT(*) FROM ($sales) s WHERE DATE(sold) = CURDATE()"), 'pharmacy.php?section=pos', 'Pharmacy transactions', 'cart', 'blue'],
             ['Sales value today', number_format((float) $dashboardScalar("SELECT COALESCE(SUM(total),0) FROM ($sales) s WHERE DATE(sold) = CURDATE()"), 2), 'pharmacy.php?section=pos', 'Total sales value', 'chart', 'green'],
@@ -98,7 +99,7 @@ try {
         $workLinks = [['Pending Prescriptions', 'Dispense doctor orders', 'pharmacy.php?section=prescriptions', 'pill', 'purple'], ['New Sale', 'Open point of sale', 'pharmacy.php?section=pos&new=1', 'cart', 'green'], ['Inventory', 'Manage medicine stock', 'pharmacy.php?section=inventory', 'package', 'orange'], ['Purchases', 'Receive supplier stock', 'pharmacy.php?section=purchases', 'receipt', 'blue']];
         $dashboardTitle = 'Recent sales';
         $dashboardColumns = ['Receipt', 'Customer', 'Total', 'Payment'];
-        foreach ($pdo->query("SELECT SUBSTRING_INDEX(SaleID, '-', 1) ref, MIN(CustomerName) customer, MIN(TotalAmount) total, MIN(PaymentStatus) payment FROM pharmacysales GROUP BY ref ORDER BY MIN(SaleDate) DESC LIMIT 8")->fetchAll() as $row) {
+        foreach ($pdo->query("SELECT SUBSTRING_INDEX(SaleID, '-', 1) ref, MIN(CustomerName) customer, MIN(TotalAmount) total, MIN(PaymentStatus) payment FROM pharmacysales WHERE {$dashboardSaleStatusFilter} GROUP BY ref ORDER BY MIN(SaleDate) DESC LIMIT 8")->fetchAll() as $row) {
             $dashboardRows[] = [$row['ref'], $row['customer'], number_format((float) $row['total'], 2), $row['payment']];
         }
     } elseif (tdc_can('laboratory.view')) {

@@ -210,6 +210,7 @@ ALTER TABLE `laboratory`
     ADD COLUMN IF NOT EXISTS `ReviewedAt` DATETIME DEFAULT NULL AFTER `ResultDate`;
 
 ALTER TABLE `pharmacysales`
+    ADD COLUMN IF NOT EXISTS `SaleStatus` ENUM('Valid','Voided') NOT NULL DEFAULT 'Valid' AFTER `PaymentStatus`,
     ADD COLUMN IF NOT EXISTS `PatientID` INT(11) DEFAULT NULL AFTER `CustomerPhone`,
     ADD COLUMN IF NOT EXISTS `VisitID` INT(11) DEFAULT NULL AFTER `PatientID`,
     ADD COLUMN IF NOT EXISTS `CostPerUnitSnapshot` DECIMAL(10,4) NULL DEFAULT NULL AFTER `LineTotal`,
@@ -401,3 +402,100 @@ WHERE u.`role_id` IS NULL OR u.`role_id` <> r.`RoleID`;
 -- ============================================================================
 -- END OF MIGRATION — safe to run once; safe to re-run.
 -- ============================================================================
+-- Additive, rerunnable. NULL means historical cost/price unknown. No backfill.
+SET @tdc_rx_cost_sql = (SELECT IF(COUNT(*)=0,'ALTER TABLE prescriptions ADD COLUMN CostPerUnitSnapshot DECIMAL(10,4) NULL DEFAULT NULL','SELECT 1') FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='prescriptions' AND COLUMN_NAME='CostPerUnitSnapshot');
+PREPARE tdc_rx_stmt FROM @tdc_rx_cost_sql;
+EXECUTE tdc_rx_stmt;
+DEALLOCATE PREPARE tdc_rx_stmt;
+SET @tdc_rx_price_sql = (SELECT IF(COUNT(*)=0,'ALTER TABLE prescriptions ADD COLUMN UnitPriceSnapshot DECIMAL(10,2) NULL DEFAULT NULL','SELECT 1') FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='prescriptions' AND COLUMN_NAME='UnitPriceSnapshot');
+PREPARE tdc_rx_stmt FROM @tdc_rx_price_sql;
+EXECUTE tdc_rx_stmt;
+DEALLOCATE PREPARE tdc_rx_stmt;
+
+
+-- ============================================================================
+-- SERVICES WORKFLOW SCHEMA (categories, subservices, assignments, billing)
+-- ============================================================================
+-- Tarey Derma Clinic - Services workflow
+-- Run once after the main schema/migrations. All statements are idempotent.
+CREATE TABLE IF NOT EXISTS service_categories (
+    ServiceCategoryID INT NOT NULL AUTO_INCREMENT,
+    CategoryName VARCHAR(150) NOT NULL,
+    Description VARCHAR(500) NULL,
+    IsActive TINYINT(1) NOT NULL DEFAULT 1,
+    CreatedAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UpdatedAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (ServiceCategoryID),
+    UNIQUE KEY uq_service_category_name (CategoryName)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+CREATE TABLE IF NOT EXISTS service_subservices (
+    ServiceID INT NOT NULL AUTO_INCREMENT,
+    ServiceCategoryID INT NOT NULL,
+    ServiceName VARCHAR(180) NOT NULL,
+    Description VARCHAR(500) NULL,
+    DefaultAmount DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+    IsActive TINYINT(1) NOT NULL DEFAULT 1,
+    CreatedAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UpdatedAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (ServiceID),
+    UNIQUE KEY uq_service_name_category (ServiceCategoryID, ServiceName),
+    KEY idx_services_category_active (ServiceCategoryID, IsActive),
+    CONSTRAINT fk_services_category FOREIGN KEY (ServiceCategoryID) REFERENCES service_categories(ServiceCategoryID) ON UPDATE CASCADE ON DELETE RESTRICT
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+CREATE TABLE IF NOT EXISTS service_assignments (
+    AssignmentID BIGINT NOT NULL AUTO_INCREMENT,
+    ServiceReference VARCHAR(50) NOT NULL,
+    PatientID INT NOT NULL,
+    DoctorID INT NULL,
+    ServiceID INT NOT NULL,
+    ServiceAmount DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+    AmountPaid DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+    DueBalance DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+    PaymentStatus ENUM('Unpaid','Partial','Paid') NOT NULL DEFAULT 'Unpaid',
+    AssignmentStatus ENUM('Assigned','In Progress','Completed','Cancelled') NOT NULL DEFAULT 'Assigned',
+    Notes TEXT NULL,
+    AssignedBy INT NULL,
+    AssignedAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UpdatedAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (AssignmentID),
+    UNIQUE KEY uq_service_reference (ServiceReference),
+    KEY idx_service_assignment_patient (PatientID, AssignmentStatus),
+    KEY idx_service_assignment_service (ServiceID),
+    CONSTRAINT fk_service_assignment_patient FOREIGN KEY (PatientID) REFERENCES patients(PatientID) ON UPDATE CASCADE ON DELETE RESTRICT,
+    CONSTRAINT fk_service_assignment_doctor FOREIGN KEY (DoctorID) REFERENCES doctors(DoctorID) ON UPDATE CASCADE ON DELETE SET NULL,
+    CONSTRAINT fk_service_assignment_service FOREIGN KEY (ServiceID) REFERENCES service_subservices(ServiceID) ON UPDATE CASCADE ON DELETE RESTRICT,
+    CONSTRAINT fk_service_assignment_user FOREIGN KEY (AssignedBy) REFERENCES users(id) ON UPDATE CASCADE ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+ALTER TABLE payments
+    MODIFY COLUMN PaymentType ENUM('Consultation','Laboratory','Pharmacy','POS','Supplier','Service') NOT NULL;
+ALTER TABLE payments ADD COLUMN IF NOT EXISTS ServiceAssignmentID BIGINT NULL AFTER PrescriptionReference;
+ALTER TABLE payments ADD KEY IF NOT EXISTS idx_payments_service_assignment (ServiceAssignmentID);
+ALTER TABLE payments ADD CONSTRAINT fk_payments_service_assignment FOREIGN KEY (ServiceAssignmentID) REFERENCES service_assignments(AssignmentID) ON UPDATE CASCADE ON DELETE SET NULL;
+
+
+-- Additive, bill-level patient discount/tax support. Existing totals and payments are untouched.
+CREATE TABLE IF NOT EXISTS patient_bill_adjustments (
+  AdjustmentID BIGINT NOT NULL AUTO_INCREMENT,
+  BillType VARCHAR(30) NOT NULL,
+  BillReference VARCHAR(100) NOT NULL,
+  GrossAmount DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+  DiscountType ENUM('None','Fixed','Percentage') NOT NULL DEFAULT 'None',
+  DiscountValue DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+  DiscountAmount DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+  DiscountReason VARCHAR(255) NULL,
+  AdjustmentNote TEXT NULL,
+  TaxRate DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+  TaxAmount DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+  FinalAmount DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+  AdjustedBy INT NULL,
+  AdjustedAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UpdatedAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (AdjustmentID),
+  UNIQUE KEY uq_patient_bill_adjustment (BillType, BillReference),
+  KEY idx_patient_bill_adjustment_reference (BillReference),
+  KEY idx_patient_bill_adjustment_user (AdjustedBy)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+

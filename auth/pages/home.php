@@ -357,8 +357,8 @@ $currentPage = basename((string) ($_SERVER['SCRIPT_NAME'] ?? 'home.php'));
         transform:translateY(0);
     }
 </style>
-<link rel="stylesheet" href="../assets/clinic.css">
-<script src="../assets/clinic.js" defer></script>
+<link rel="stylesheet" href="../assets/clinic.css?v=<?= rawurlencode((string) @filemtime(__DIR__ . '/../assets/clinic.css')) ?>">
+<script src="../assets/clinic.js?v=<?= rawurlencode((string) @filemtime(__DIR__ . '/../assets/clinic.js')) ?>" defer></script>
 </head>
 <body>
 

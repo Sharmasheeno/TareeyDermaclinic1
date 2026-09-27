@@ -1,0 +1,170 @@
+:root {
+    --tdc-indigo: #2e3192;
+    --tdc-indigo-dark: #1d225d;
+    --tdc-indigo-soft: #eef0f7;
+    --tdc-orange: #f15a24;
+    --tdc-ink: #172033;
+    --tdc-muted: #657089;
+    --tdc-line: #d7ddec;
+    --tdc-paper: #ffffff;
+}
+
+html, body, *, *::before, *::after {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+}
+
+@page { size: A4 portrait; margin: 0; }
+
+body {
+    color: var(--tdc-ink);
+    font-family: "Segoe UI", Arial, Helvetica, sans-serif;
+    background: #f1f3f8;
+}
+
+.print-bar, .print-toolbar, .toolbar {
+    max-width: 210mm;
+    margin: 0 auto 14px;
+    text-align: right;
+}
+
+.print-bar button, .print-toolbar button, .toolbar button {
+    border: 0;
+    border-radius: 8px;
+    padding: 10px 18px;
+    background: var(--tdc-indigo);
+    color: #fff;
+    font-weight: 700;
+    cursor: pointer;
+    box-shadow: 0 5px 14px rgba(46,49,146,.18);
+}
+
+.print-bar button:hover, .print-toolbar button:hover, .toolbar button:hover { background: var(--tdc-orange); }
+
+.sheet, .lab-result-paper {
+    background: var(--tdc-paper);
+    border: 1px solid var(--tdc-line);
+    border-radius: 18px;
+    box-shadow: 0 12px 30px rgba(29,48,94,.10);
+}
+
+.sheet { max-width: 210mm; margin: 0 auto; }
+
+.income-statement-preview {
+    border: 1px solid var(--tdc-line) !important;
+    border-radius: 18px !important;
+    overflow: hidden;
+    box-shadow: 0 12px 30px rgba(29,48,94,.10) !important;
+    color: var(--tdc-ink) !important;
+    font-family: "Segoe UI", Arial, Helvetica, sans-serif !important;
+}
+.income-statement-preview .income-report-header {
+    border-bottom: 3px solid var(--tdc-indigo) !important;
+    padding: 20px 24px 16px !important;
+}
+.income-statement-preview .income-report-clinic,
+.income-statement-preview .income-report-title,
+.income-statement-preview .income-report-heading { color: var(--tdc-indigo) !important; }
+.income-statement-preview .income-report-box { border-color: var(--tdc-indigo) !important; }
+
+.print-brand-bar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-height: 72px;
+    padding: 14px 20px;
+    background: linear-gradient(90deg, var(--tdc-indigo-dark), var(--tdc-indigo));
+    color: #fff;
+}
+.print-brand-mark {
+    display: grid;
+    place-items: center;
+    width: 42px;
+    height: 42px;
+    border-radius: 12px;
+    background: rgba(255,255,255,.14);
+    color: #fff;
+    font-size: 18px;
+    font-weight: 800;
+}
+.print-brand-name { font-size: 15px; font-weight: 800; line-height: 1.2; }
+.print-brand-name small { display: block; margin-top: 3px; font-size: 11px; font-weight: 600; }
+.print-brand-label { margin-left: auto; padding: 5px 11px; border: 1px solid rgba(255,255,255,.30); border-radius: 999px; font-size: 10px; font-weight: 800; letter-spacing: .06em; }
+.print-brand-bar:first-child { border-radius: 18px 18px 0 0; }
+
+/* Keep the selected Tarey brand visible in browser print preview and PDF output. */
+.receipt-topbar {
+    background: linear-gradient(90deg, var(--tdc-indigo-dark), var(--tdc-indigo)) !important;
+    color: #fff !important;
+}
+.receipt-status-pill {
+    background: rgba(255,255,255,.14) !important;
+    color: #fff !important;
+}
+.receipt-table th, .rx-table th, .table th {
+    background: var(--tdc-indigo-soft) !important;
+}
+
+.letterhead, .head {
+    position: relative;
+    border-bottom: 3px solid var(--tdc-indigo);
+    padding: 22px 24px 16px;
+}
+
+/* Receipt headers stay ink-efficient: do not add the decorative gradient rule. */
+.letterhead::before, .head::before { display: none !important; }
+
+.letterhead img, .head img { object-fit: contain; }
+.letterhead .lh-name, .clinic { color: var(--tdc-indigo); font-weight: 800; letter-spacing: -.01em; }
+.letterhead .lh-name { font-size: 24px; }
+.lh-meta, .sub { color: var(--tdc-muted); }
+.slip-title, .title { color: var(--tdc-indigo); font-weight: 800; letter-spacing: .10em; }
+
+.parties, .meta {
+    background: #f8f9fd;
+    border: 1px solid var(--tdc-line);
+    border-radius: 12px;
+    padding: 14px 16px;
+}
+
+table, .table, .receipt-table { border-collapse: separate; border-spacing: 0; overflow: hidden; }
+th, .table th, .receipt-table th {
+    background: var(--tdc-indigo-soft);
+    color: var(--tdc-indigo-dark);
+    font-weight: 800;
+}
+th:first-child, .table th:first-child, .receipt-table th:first-child { border-top-left-radius: 8px; }
+th:last-child, .table th:last-child, .receipt-table th:last-child { border-top-right-radius: 8px; }
+
+.totals .grand, .financial .due { color: var(--tdc-indigo); border-color: var(--tdc-indigo); }
+.foot { color: var(--tdc-muted); }
+
+@media print {
+    body { background: #fff !important; padding: 0 !important; }
+    .print-bar, .print-toolbar, .toolbar, .no-print { display: none !important; }
+    /* Do not let the browser's narrow print-preview viewport trigger mobile layout. */
+    .rx-meta-wrap, .receipt-summary { grid-template-columns: 1fr 1fr !important; }
+    .clinic-header { flex-direction: row !important; align-items: center !important; }
+    .clinic-logo { width: 118px !important; height: 118px !important; }
+    .clinic-name { white-space: nowrap !important; }
+    .sheet, .lab-result-paper {
+        width: 100% !important;
+        max-width: none !important;
+        min-height: auto !important;
+        margin: 0 !important;
+        border: 0 !important;
+        border-radius: 0 !important;
+        box-shadow: none !important;
+    }
+    .income-statement-preview {
+        width: 100% !important;
+        min-height: auto !important;
+        margin: 0 !important;
+        border: 0 !important;
+        border-radius: 0 !important;
+        box-shadow: none !important;
+    }
+    .letterhead, .head { break-inside: avoid; }
+    .print-brand-bar { break-inside: avoid; }
+    .print-brand-bar:first-child { border-radius: 0; }
+}

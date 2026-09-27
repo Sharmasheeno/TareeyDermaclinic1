@@ -1,5 +1,6 @@
 <?php
 declare(strict_types=1);
+require_once __DIR__ . '/billing-adjustments.php';
 
 /**
  * auth/includes/finance.php
@@ -56,9 +57,11 @@ function tdc_patient_outstanding_balance(PDO $pdo, int $patientId): float
                 WHERE PatientID = :pid3 AND Status <> 'Cancelled'
                 GROUP BY SUBSTRING_INDEX(PrescriptionID, '-', 1)
             ) x), 0)
+          + COALESCE((SELECT SUM(DueBalance) FROM service_assignments
+                WHERE PatientID = :pid4 AND AssignmentStatus <> 'Cancelled' AND DueBalance > 0), 0)
         , 2)"
     );
-    $stmt->execute(['pid1' => $patientId, 'pid2' => $patientId, 'pid3' => $patientId]);
+    $stmt->execute(['pid1' => $patientId, 'pid2' => $patientId, 'pid3' => $patientId, 'pid4' => $patientId]);
     return max(0.0, (float) $stmt->fetchColumn());
 }
 
@@ -95,6 +98,8 @@ function tdc_payment_source_label(array $payment): string
         $reference = trim((string) ($payment['PrescriptionReference'] ?? ''));
     } elseif ($type === 'POS') {
         $reference = trim((string) ($payment['SaleReference'] ?? ''));
+    } elseif ($type === 'Service') {
+        $reference = trim((string) ($payment['ServiceReference'] ?? ($payment['ServiceAssignmentID'] ?? '')));
     } elseif ($type === 'Supplier') {
         $reference = trim((string) ($payment['PurchaseReference'] ?? ''));
     }
@@ -104,10 +109,14 @@ function tdc_payment_source_label(array $payment): string
 /** Sum of confirmed (non-voided) payment amounts for one source link column. */
 function tdc_payments_confirmed_total(PDO $pdo, string $column, $value): float
 {
-    $allowed = ['VisitID', 'LaboratoryID', 'PrescriptionReference', 'SaleReference', 'PurchaseReference'];
+    $allowed = ['VisitID', 'LaboratoryID', 'PrescriptionReference', 'SaleReference', 'PurchaseReference', 'ServiceAssignmentID'];
     if (!in_array($column, $allowed, true) || $value === null || $value === '') return 0.0;
-    $stmt = $pdo->prepare("SELECT COALESCE(SUM(Amount), 0) FROM payments WHERE {$column} = :value AND PaymentStatus = 'Confirmed'");
-    $stmt->execute(['value' => $value]);
+    if (!tdc_has_column($pdo, 'payments', $column)) {
+        throw new RuntimeException("Payment schema is missing {$column}.");
+    }
+    $types = ['VisitID'=>'Consultation','LaboratoryID'=>'Laboratory','PrescriptionReference'=>'Pharmacy','SaleReference'=>'POS','PurchaseReference'=>'Supplier','ServiceAssignmentID'=>'Service'];
+    $stmt = $pdo->prepare("SELECT COALESCE(SUM(Amount), 0) FROM payments WHERE {$column} = :value AND PaymentType = :type AND PaymentStatus = 'Confirmed'");
+    $stmt->execute(['value' => $value, 'type'=>$types[$column]]);
     return round((float) $stmt->fetchColumn(), 2);
 }
 
@@ -122,12 +131,13 @@ function tdc_payments_sync_source(PDO $pdo, array $payment): void
 
     if ($type === 'Consultation' && !empty($payment['VisitID'])) {
         $visitId = (int) $payment['VisitID'];
-        $stmt = $pdo->prepare('SELECT ConsultationFee, QueueStatus FROM visits WHERE VisitID = ?');
+        $stmt = $pdo->prepare('SELECT ConsultationFee, VisitReference, QueueStatus FROM visits WHERE VisitID = ?');
         $stmt->execute([$visitId]);
         $visit = $stmt->fetch();
         if (!$visit) return;
         $paid = tdc_payments_confirmed_total($pdo, 'VisitID', $visitId);
-        $fee = (float) $visit['ConsultationFee'];
+        $adjustment = tdc_load_bill_adjustment($pdo, 'consultation', (string)($visit['VisitReference'] ?? ''));
+        $fee = $adjustment ? (float)$adjustment['FinalAmount'] : (float) $visit['ConsultationFee'];
         $due = max(0.0, round($fee - $paid, 2));
         $status = tdc_workflow_payment_status($fee, $paid);
         // Workflow status is restored when a payment drops below the fee,
@@ -148,7 +158,8 @@ function tdc_payments_sync_source(PDO $pdo, array $payment): void
         $lab = $stmt->fetch();
         if (!$lab) return;
         $paid = tdc_payments_confirmed_total($pdo, 'LaboratoryID', $labId);
-        $total = (float) $lab['TotalAmount'];
+        $adjustment = tdc_load_bill_adjustment($pdo, 'laboratory', $labId);
+        $total = $adjustment ? (float)$adjustment['FinalAmount'] : (float) $lab['TotalAmount'];
         $due = max(0.0, round($total - $paid, 2));
         $status = tdc_workflow_payment_status($total, $paid);
         if ($status === 'Paid' && $lab['WorkflowStatus'] === 'Awaiting Payment') $workflow = 'Ready';
@@ -167,7 +178,8 @@ function tdc_payments_sync_source(PDO $pdo, array $payment): void
         $stmt->execute(['pattern' => $base . '-%']);
         $bill = $stmt->fetch();
         if ($bill) {
-            $total = (float) $bill['TotalAmount'];
+            $adjustment = tdc_load_bill_adjustment($pdo, 'prescription', $base);
+            $total = $adjustment ? (float)$adjustment['FinalAmount'] : (float) $bill['TotalAmount'];
             $due = max(0.0, round($total - $paid, 2));
             $update = $pdo->prepare('UPDATE prescriptions SET AmountPaid = :paid, DueBalance = :due WHERE PrescriptionID LIKE :pattern');
             $update->execute(['paid' => $paid, 'due' => $due, 'pattern' => $base . '-%']);
@@ -199,6 +211,21 @@ function tdc_payments_sync_source(PDO $pdo, array $payment): void
         $update->execute(['paid' => $paid, 'due' => $due, 'pattern' => $base . '-%']);
         return;
     }
+
+    if ($type === 'Service' && !empty($payment['ServiceAssignmentID'])) {
+        $assignmentId = (int) $payment['ServiceAssignmentID'];
+        $stmt = $pdo->prepare('SELECT ServiceAmount,AssignmentStatus FROM service_assignments WHERE AssignmentID = ?');
+        $stmt->execute([$assignmentId]);
+        $assignment = $stmt->fetch();
+        if (!$assignment) return;
+        $paid = tdc_payments_confirmed_total($pdo, 'ServiceAssignmentID', $assignmentId);
+        $total = (float) $assignment['ServiceAmount'];
+        $due = max(0.0, round($total - $paid, 2));
+        $status = tdc_workflow_payment_status($total, $paid);
+        $update = $pdo->prepare('UPDATE service_assignments SET AmountPaid = ?, DueBalance = ?, PaymentStatus = ? WHERE AssignmentID = ?');
+        $update->execute([$paid, $due, $status, $assignmentId]);
+        tdc_reconcile_patient_due_balance($pdo, (int) $payment['PatientID']);
+    }
 }
 
 /** Keep one POS sale bill's paid/due/status in sync with the ledger. */
@@ -224,13 +251,16 @@ function tdc_payments_sync_sale_lines(PDO $pdo, string $saleBase, float $total):
  * @throws RuntimeException on double reversal, over-reversal, invalid
  *         input, or unknown payments.
  */
-function tdc_payments_reverse(PDO $pdo, int $paymentId, string $reason, ?float $amount = null): array
+function tdc_payments_reverse(PDO $pdo, int $paymentId, string $reason, ?float $amount = null, bool $manageTransaction = true): array
 {
     $reason = trim($reason);
     if ($reason === '') throw new RuntimeException('A reversal reason is required.');
     if (mb_strlen($reason) > 500) throw new RuntimeException('The reversal reason is too long.');
+    $requiredColumns = ['PaymentID', 'PaymentReference', 'PatientID', 'VisitID', 'LaboratoryID', 'PrescriptionReference', 'ServiceAssignmentID', 'PaymentType', 'Amount', 'PaymentMethod', 'PaymentStatus', 'ReceivedBy', 'PaidAt', 'Notes', 'ReversalOfPaymentID', 'ReversalReference', 'ReversalReason'];
+    $missingColumns = array_values(array_filter($requiredColumns, static fn(string $column): bool => !tdc_has_column($pdo, 'payments', $column)));
+    if ($missingColumns !== []) throw new RuntimeException('Payment reversal schema unavailable: ' . implode(', ', $missingColumns));
 
-    $pdo->beginTransaction();
+    if ($manageTransaction) $pdo->beginTransaction();
     try {
         $stmt = $pdo->prepare('SELECT * FROM payments WHERE PaymentID = :id FOR UPDATE');
         $stmt->execute(['id' => $paymentId]);
@@ -255,11 +285,11 @@ function tdc_payments_reverse(PDO $pdo, int $paymentId, string $reason, ?float $
         $reversalRef = tdc_workflow_next_reference($pdo, 'payments', 'PaymentReference', 'PAY');
         $insert = $pdo->prepare(
             'INSERT INTO payments
-                (PaymentReference, PatientID, VisitID, LaboratoryID, PrescriptionReference, SaleReference, PurchaseReference,
+                (PaymentReference, PatientID, VisitID, LaboratoryID, PrescriptionReference, ServiceAssignmentID, SaleReference, PurchaseReference,
                  PaymentType, Amount, PaymentMethod, PaymentStatus, ReceivedBy, PaidAt, Notes,
                  ReversalOfPaymentID, ReversalReference, ReversalReason)
              VALUES
-                (:reference, :patient, :visit, :laboratory, :prescription, :sale, :purchase,
+                (:reference, :patient, :visit, :laboratory, :prescription, :service, :sale, :purchase,
                  :type, :amount, :method, \'Confirmed\', :receivedBy, NOW(), :notes,
                  :reversalOf, :reversalRef, :reason)'
         );
@@ -269,6 +299,7 @@ function tdc_payments_reverse(PDO $pdo, int $paymentId, string $reason, ?float $
             'visit'         => $original['VisitID'],
             'laboratory'    => $original['LaboratoryID'],
             'prescription'  => $original['PrescriptionReference'],
+            'service'       => $original['ServiceAssignmentID'] ?? null,
             'sale'          => $original['SaleReference'] ?? null,
             'purchase'      => $original['PurchaseReference'] ?? null,
             'type'          => $original['PaymentType'],
@@ -286,10 +317,10 @@ function tdc_payments_reverse(PDO $pdo, int $paymentId, string $reason, ?float $
         tdc_audit($pdo, 'payment.reversed', 'payment', (string) $original['PaymentReference'],
             'Reversed ' . number_format($amount, 2) . ' of ' . $original['PaymentReference'] . ' (' . $original['PaymentType'] . '): ' . $reason,
             ['reversalReference' => $reversalRef, 'amount' => $amount, 'reason' => $reason]);
-        $pdo->commit();
+        if ($manageTransaction) $pdo->commit();
         return ['reference' => $reversalRef, 'amount' => $amount, 'payment' => $original];
     } catch (Throwable $e) {
-        if ($pdo->inTransaction()) $pdo->rollBack();
+        if ($manageTransaction && $pdo->inTransaction()) $pdo->rollBack();
         throw $e;
     }
 }

@@ -6,17 +6,16 @@ declare(strict_types=1);
  * ---------------------------------------------------------------------
  * Shared patient Age <-> Date-of-Birth helpers.
  *
- * Age is the PRIMARY input for patient registration: when the desk
- * enters an age, the date of birth is derived automatically. Age alone
- * cannot mathematically determine an exact birthday, so the derivation
- * uses one documented, deterministic rule:
+ * Date of birth is the authoritative input for patient registration. When
+ * a legacy/unknown-DOB workflow supplies only an age, the fallback
+ * derivation uses one documented, deterministic rule:
  *
  *     DOB = today's month/day, shifted back by the entered years
  *     (e.g. today 2026-09-15, age 56 -> 1970-09-15)
  *
  * DOB stays manually editable. When a valid DOB is supplied it wins and
- * Age is recomputed from it, which keeps the pair consistent and leaves
- * existing historical DOB values untouched.
+ * Age is recomputed from it, which keeps the legacy integer Age column
+ * consistent and leaves existing historical DOB values untouched.
  *
  * Every declaration is guarded with function_exists() so this file can be
  * included from any page that already declares its own date helpers.

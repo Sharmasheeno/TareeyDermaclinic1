@@ -58,6 +58,8 @@ $sectionPermissions = [
 if ($section !== '' && !tdc_can($sectionPermissions[$section])) tdc_forbidden();
 
 $errors = [];
+$importResult = $_SESSION['tdc_user_import_result'] ?? null;
+unset($_SESSION['tdc_user_import_result']);
 $notice = isset($_GET['saved']) ? 'Changes saved successfully.' : (isset($_GET['status']) ? 'Status updated successfully.' : '');
 $validMethods = array_column(tdc_payment_methods($pdo), 'MethodName');
 
@@ -76,9 +78,73 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $action = (string) ($_POST['setup_action'] ?? '');
         try {
             if ($action === 'import_users') {
-                tdc_require_permission('setup.users.manage');$rows=tdc_csv_upload_rows($_FILES['csv_file']??[],['legal_name','username','role_key','temporary_password']);if(!$rows)throw new RuntimeException('The CSV file contains no user rows.');$pdo->beginTransaction();$imported=0;
-                foreach($rows as $index=>$row){$name=trim((string)($row['legal_name']??''));$username=trim((string)($row['username']??''));$roleKey=trim((string)($row['role_key']??''));$password=(string)($row['temporary_password']??'');$doctorId=(int)($row['doctor_id']??0);$active=(string)($row['is_active']??'1')==='0'?0:1;if(mb_strlen($name)<2||!preg_match('/^[a-zA-Z0-9_.]{3,100}$/',$username)||mb_strlen($password)<8)throw new RuntimeException('Row '.($index+2).': valid name, username and password of at least 8 characters are required.');$stmt=$pdo->prepare('SELECT RoleID FROM roles WHERE RoleKey=? AND IsActive=1');$stmt->execute([$roleKey]);$roleId=(int)$stmt->fetchColumn();if(!$roleId)throw new RuntimeException('Row '.($index+2).": role '$roleKey' is not active.");$stmt=$pdo->prepare('SELECT COUNT(*) FROM users WHERE username=?');$stmt->execute([$username]);if((int)$stmt->fetchColumn())throw new RuntimeException('Row '.($index+2).": username '$username' already exists.");if($doctorId){$stmt=$pdo->prepare("SELECT COUNT(*) FROM rolepermissions rp JOIN permissions p ON p.PermissionID=rp.PermissionID WHERE rp.RoleID=? AND p.PermissionKey='doctor.workspace'");$stmt->execute([$roleId]);if(!(int)$stmt->fetchColumn())throw new RuntimeException('Row '.($index+2).': linked doctor accounts require Doctor Workspace permission.');}$pdo->prepare('INSERT INTO users (userlegalname,role,role_id,username,password,is_active,is_root) VALUES (?,?,?,?,?,?,0)')->execute([$name,$roleKey,$roleId,$username,password_hash($password,PASSWORD_DEFAULT),$active]);$userId=(int)$pdo->lastInsertId();if($doctorId){$stmt=$pdo->prepare('UPDATE doctors SET UserID=? WHERE DoctorID=? AND UserID IS NULL');$stmt->execute([$userId,$doctorId]);if(!$stmt->rowCount())throw new RuntimeException('Row '.($index+2).': doctor profile is invalid or already linked.');}$imported++;}
-                tdc_audit($pdo,'setup.users.imported','users',null,"Imported $imported user accounts.");$pdo->commit();setup_redirect('users');
+                tdc_require_permission('setup.users.manage');
+                $rows = tdc_csv_upload_rows($_FILES['csv_file'] ?? [], ['legal_name', 'username', 'role_key'], [
+                    'legal_name', 'username', 'role_key', 'doctor_id', 'is_active', 'temporary_password', 'last_login_at',
+                ]);
+                if (!$rows) throw new RuntimeException('The CSV file contains no user rows.');
+                $pdo->beginTransaction();
+                $created = 0;
+                $updated = 0;
+                foreach ($rows as $index => $row) {
+                    $rowNumber = $index + 2;
+                    $name = trim((string) ($row['legal_name'] ?? ''));
+                    $username = trim((string) ($row['username'] ?? ''));
+                    $roleKey = trim((string) ($row['role_key'] ?? ''));
+                    $password = (string) ($row['temporary_password'] ?? '');
+                    $doctorId = (int) ($row['doctor_id'] ?? 0);
+                    $active = (string) ($row['is_active'] ?? '1') === '0' ? 0 : 1;
+
+                    if (mb_strlen($name) < 2 || !preg_match('/^[a-zA-Z0-9_.]{3,100}$/', $username)) {
+                        throw new RuntimeException("Row {$rowNumber}: valid name and username are required.");
+                    }
+                    $stmt = $pdo->prepare('SELECT RoleID FROM roles WHERE RoleKey=? AND IsActive=1');
+                    $stmt->execute([$roleKey]);
+                    $roleId = (int) $stmt->fetchColumn();
+                    if (!$roleId) throw new RuntimeException("Row {$rowNumber}: role '{$roleKey}' is not active.");
+
+                    $stmt = $pdo->prepare('SELECT id,is_root FROM users WHERE username=? LIMIT 1');
+                    $stmt->execute([$username]);
+                    $existing = $stmt->fetch() ?: null;
+                    $userId = $existing ? (int) $existing['id'] : 0;
+                    if (!$existing && mb_strlen($password) < 8) {
+                        throw new RuntimeException("Row {$rowNumber}: a new user requires a password of at least 8 characters.");
+                    }
+                    if ($password !== '' && mb_strlen($password) < 8) {
+                        throw new RuntimeException("Row {$rowNumber}: password must be at least 8 characters.");
+                    }
+                    if ($existing && (int) $existing['is_root'] && $roleKey !== 'superuser') {
+                        throw new RuntimeException("Row {$rowNumber}: the protected root SuperAdmin role cannot be changed.");
+                    }
+                    if ($doctorId) {
+                        $stmt = $pdo->prepare("SELECT COUNT(*) FROM rolepermissions rp JOIN permissions p ON p.PermissionID=rp.PermissionID WHERE rp.RoleID=? AND p.PermissionKey='doctor.workspace'");
+                        $stmt->execute([$roleId]);
+                        if (!(int) $stmt->fetchColumn()) throw new RuntimeException("Row {$rowNumber}: linked doctor accounts require Doctor Workspace permission.");
+                    }
+
+                    if ($existing) {
+                        $sql = 'UPDATE users SET userlegalname=?,role=?,role_id=?,is_active=?' . ($password !== '' ? ',password=?' : '') . ' WHERE id=?';
+                        $args = [$name, $roleKey, $roleId, $active];
+                        if ($password !== '') $args[] = password_hash($password, PASSWORD_DEFAULT);
+                        $args[] = $userId;
+                        $pdo->prepare($sql)->execute($args);
+                        $updated++;
+                    } else {
+                        $pdo->prepare('INSERT INTO users (userlegalname,role,role_id,username,password,is_active,is_root) VALUES (?,?,?,?,?,?,0)')->execute([$name, $roleKey, $roleId, $username, password_hash($password, PASSWORD_DEFAULT), $active]);
+                        $userId = (int) $pdo->lastInsertId();
+                        $created++;
+                    }
+
+                    if ($doctorId) {
+                        $stmt = $pdo->prepare('UPDATE doctors SET UserID=? WHERE DoctorID=? AND (UserID IS NULL OR UserID=?)');
+                        $stmt->execute([$userId, $doctorId, $userId]);
+                        if (!$stmt->rowCount()) throw new RuntimeException("Row {$rowNumber}: doctor profile is invalid or already linked.");
+                    }
+                }
+                tdc_audit($pdo, 'setup.users.imported', 'users', null, "Created {$created} and updated {$updated} user accounts.");
+                $pdo->commit();
+                $_SESSION['tdc_user_import_result'] = ['created' => $created, 'updated' => $updated];
+                setup_redirect('users');
             } elseif ($action === 'save_profile') {
                 tdc_require_permission('setup.organization.manage');
                 $profile = ['clinic_name'=>trim((string)($_POST['clinic_name']??'')),'phone'=>trim((string)($_POST['phone']??'')),'email'=>trim((string)($_POST['email']??'')),'address'=>trim((string)($_POST['address']??'')),'currency'=>trim((string)($_POST['currency']??'')),'timezone'=>trim((string)($_POST['timezone']??''))];
@@ -111,6 +177,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 tdc_require_permission('setup.users.manage');$id=(int)($_POST['user_id']??0);$active=(int)($_POST['is_active']??0);
                 $stmt=$pdo->prepare('SELECT username,is_root FROM users WHERE id=?');$stmt->execute([$id]);$target=$stmt->fetch();if(!$target)throw new RuntimeException('User not found.');if((int)$target['is_root']&&!$active)throw new RuntimeException('The root SuperAdmin cannot be deactivated.');if($id===(int)$_SESSION['user_id']&&!$active)throw new RuntimeException('You cannot deactivate your current account.');
                 $pdo->prepare('UPDATE users SET is_active=? WHERE id=?')->execute([$active,$id]);tdc_audit($pdo,'setup.user.status','users',(string)$id,($active?'Activated ':'Deactivated ').$target['username']);setup_redirect('users','status');
+            } elseif ($action === 'delete_user') {
+                tdc_require_permission('setup.users.manage');
+                $id = (int) ($_POST['user_id'] ?? 0);
+                if (!$id || $id === (int) $_SESSION['user_id']) throw new RuntimeException('You cannot delete the account currently signed in.');
+                $stmt = $pdo->prepare('SELECT username,is_root FROM users WHERE id=?'); $stmt->execute([$id]); $target = $stmt->fetch();
+                if (!$target) throw new RuntimeException('User not found.');
+                if ((int) $target['is_root']) throw new RuntimeException('The protected root SuperAdmin account cannot be deleted.');
+                $pdo->beginTransaction();
+                // Preserve clinical and audit history while removing the login identity.
+                $pdo->prepare('UPDATE doctors SET UserID=NULL WHERE UserID=?')->execute([$id]);
+                $pdo->prepare('UPDATE lab_results SET CollectedBy=NULL,CompletedBy=NULL,ReviewedBy=NULL WHERE CollectedBy=? OR CompletedBy=? OR ReviewedBy=?')->execute([$id,$id,$id]);
+                $pdo->prepare('UPDATE lab_result_attachments SET UploadedBy=NULL WHERE UploadedBy=?')->execute([$id]);
+                $pdo->prepare('UPDATE lab_result_review SET PerformedBy=NULL WHERE PerformedBy=?')->execute([$id]);
+                tdc_audit($pdo,'setup.user.deleted','users',(string)$id,'Deleted user login '.$target['username'].'; linked history was retained.');
+                $pdo->prepare('DELETE FROM users WHERE id=?')->execute([$id]);
+                $pdo->commit(); setup_redirect('users','status');
             } elseif ($action === 'save_role') {
                 tdc_require_permission('setup.roles.manage');$id=(int)($_POST['role_id']??0);$name=trim((string)($_POST['role_name']??''));$description=trim((string)($_POST['description']??''));$copyId=(int)($_POST['copy_role_id']??0);$active=isset($_POST['is_active'])?1:0;
                 if(mb_strlen($name)<2||mb_strlen($name)>100)throw new RuntimeException('Role name must be 2-100 characters.');if(mb_strlen($description)>500)throw new RuntimeException('Role description is too long.');
@@ -132,6 +214,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             } else throw new RuntimeException('Unsupported Setup action.');
         } catch (RuntimeException $e) { if($pdo->inTransaction())$pdo->rollBack();$errors[]=$e->getMessage(); }
         catch (PDOException $e) { if($pdo->inTransaction())$pdo->rollBack();error_log('[SETUP] '.$e->getMessage());$errors[]=$e->getCode()==='23000'?'That name or username already exists.':'The change could not be saved.'; }
+        catch (Throwable $e) { if($pdo->inTransaction())$pdo->rollBack(); error_log('[SETUP UNEXPECTED] '.$e->getMessage()); $errors[]='The setup change could not be completed. Please try again.'; }
     }
     $_SESSION['csrf_token']=bin2hex(random_bytes(32));
 }
@@ -165,11 +248,12 @@ try{$auditStmt=$pdo->prepare($auditSql);$auditStmt->execute($auditParams);$audit
 
 $legalName=(string)$_SESSION['userlegalname'];$displayName=$legalName;$avatarLetters=strtoupper(substr($displayName,0,2));$csrfToken=(string)$_SESSION['csrf_token'];$currentPage='setup.php';
 ?>
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Setup | Tarey Derma Clinic</title><link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Google+Sans:ital,opsz,wght@0,17..18,400..700;1,17..18,400..700&display=swap" rel="stylesheet"><link rel="stylesheet" href="../assets/clinic.css"><script src="../assets/clinic.js" defer></script></head><body>
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Setup | Tarey Derma Clinic</title><link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Google+Sans:ital,opsz,wght@0,17..18,400..700;1,17..18,400..700&display=swap" rel="stylesheet"><link rel="stylesheet" href="../assets/clinic.css?v=<?= rawurlencode((string) @filemtime(__DIR__ . '/../assets/clinic.css')) ?>"><script src="../assets/clinic.js?v=<?= rawurlencode((string) @filemtime(__DIR__ . '/../assets/clinic.js')) ?>" defer></script></head><body>
 <header class="app-header" id="topnav"><div class="utility-bar"><a class="brand-chip" href="home.php"><img src="../uploads/tareydermacliniclogo.png" alt="Tarey Derma Clinic"></a><div class="utility-right"><div class="nav-item" data-menu="notifications"><button type="button" class="icon-btn" aria-label="Notifications"><svg viewBox="0 0 24 24"><path d="M18 16v-5a6 6 0 10-12 0v5l-2 2v1h16v-1l-2-2z"/><path d="M9.5 21a2.5 2.5 0 005 0"/></svg><span class="badge"></span></button><div class="dropdown-menu notif-menu"><?php require __DIR__.'/../includes/notifications.php'; ?></div></div><?php require __DIR__.'/../includes/profile.php'; ?></div></div><nav class="menu-bar"><ul class="nav-items"><?php foreach(tdc_navigation(NAV_ITEMS) as $item): ?><li class="nav-item<?= $item['href']===$currentPage?' active':'' ?>"><a class="nav-link" href="<?= setup_e($item['href']) ?>"><?= tdc_navigation_icon($item['href']) ?><span><?= setup_e($item['label']) ?></span></a></li><?php endforeach; ?></ul></nav></header>
 <main class="page-body setup-page"><div class="welcome-eyebrow">System Administration</div><div class="setup-title-row"><div><h1 class="welcome-title"><?= $section===''?'Setup':setup_e(ucwords(str_replace('-',' ',$section))) ?></h1><p class="welcome-sub"><?= $section===''?'System Configuration':'Manage this configuration using live system data.' ?></p></div></div>
 <?php $setupNav=[['','Overview','overview'],['organization','Organization','building'],['users','Users','users'],['roles','Roles','shield'],['permissions','Permissions','key'],['clinical','Clinical','clinical'],['laboratory','Laboratory','lab'],['pharmacy','Pharmacy','pill'],['payment-methods','Financial','payment'],['audit','Audit','audit']];?><nav class="setup-section-nav" aria-label="Setup sections"><?php foreach($setupNav as [$target,$label,$icon]):if($target!==''&&!tdc_can($sectionPermissions[$target]))continue;?><a href="setup.php<?=$target!==''?'?section='.urlencode($target):''?>" class="<?=$section===$target?'active':''?>"><?=setup_icon($icon)?><span><?=setup_e($label)?></span></a><?php endforeach;?></nav>
 <?php if($notice): ?><div class="setup-notice" role="status"><?= setup_e($notice) ?></div><?php endif; ?><?php if($errors): ?><div class="error-msg" role="alert"><?= setup_e(implode(' ',$errors)) ?></div><?php endif; ?>
+<?php if(is_array($importResult)): ?><div class="setup-notice" role="status">Import completed. Created: <?= (int) ($importResult['created'] ?? 0) ?>. Updated: <?= (int) ($importResult['updated'] ?? 0) ?>. Skipped: 0. Failed: 0.</div><?php endif; ?>
 
 <?php if($section===''): ?>
 <p class="setup-intro">Manage clinic structure, users, access control, clinical master data, financial configuration and system preferences.</p>
@@ -207,7 +291,7 @@ $legalName=(string)$_SESSION['userlegalname'];$displayName=$legalName;$avatarLet
 <?php else:?>
 <div class="data-table-wrap"><table class="data-table" id="departments-table"><thead><tr><th>Department</th><th>Description</th><th>Status</th><th class="cell-actions">Actions</th></tr></thead><tbody>
 <?php foreach($departments as $item):?>
-<tr><td><strong><?=setup_e($item['DepartmentName'])?></strong></td><td><?=setup_e($item['Description']?:'—')?></td><td><span class="status-badge<?=$item['IsActive']?' success':' neutral'?>"><?=$item['IsActive']?'Active':'Inactive'?></span></td><td class="cell-actions"><button type="button" class="btn btn-warning btn-sm" data-edit-master='<?=setup_e(json_encode(['id'=>$item['DepartmentID'],'name'=>$item['DepartmentName'],'description'=>$item['Description'],'active'=>$item['IsActive'],'modal'=>'departmentModal','label'=>'Department']))?>'>Edit</button></td></tr>
+<tr><td><strong><?=setup_e($item['DepartmentName'])?></strong></td><td><?=setup_e($item['Description']?:'—')?></td><td><span class="status-badge<?=$item['IsActive']?' success':' neutral'?>"><?=$item['IsActive']?'Active':'Inactive'?></span></td><td class="cell-actions"><button type="button" class="btn btn-secondary btn-sm" data-edit-master='<?=setup_e(json_encode(['id'=>$item['DepartmentID'],'name'=>$item['DepartmentName'],'description'=>$item['Description'],'active'=>$item['IsActive'],'modal'=>'departmentModal','label'=>'Department']))?>'>Edit</button></td></tr>
 <?php endforeach;?>
 </tbody></table></div>
 <?php endif;?>
@@ -221,10 +305,10 @@ $legalName=(string)$_SESSION['userlegalname'];$displayName=$legalName;$avatarLet
 </div><div class="modal-actions"><button type="button" class="btn btn-secondary" data-modal-close>Cancel</button><button class="btn-success  btn "><?= tdc_icon('check',16) ?><span>Save Department</span></button></div></form></div></div>
 
 <?php elseif($section==='users'): ?>
-<div class="setup-page-command-bar"><div class="table-filter"><input type="search" data-table-filter="setup-users-table" placeholder="Filter users by name, username or role..."></div><div class="table-command-bar"><button type="button" class="btn-success btn " id="importUsersBtn"><?= tdc_icon('upload',16) ?><span>Import CSV</span></button><a class="btn-secondary btn " href="setup.php?section=users&amp;download=user-template"><?= tdc_icon('download',16) ?><span>Download CSV Template</span></a><a class="btn-secondary btn " href="setup.php?section=users&amp;download=users"><?= tdc_icon('download',16) ?><span>Export CSV</span></a><button type="button" class="btn-info btn " onclick="window.print()"><?= tdc_icon('printer',16) ?><span>Print / Save PDF</span></button><button type="button" class="btn-success  btn " id="addSetupUserBtn"><?= tdc_icon('plus',16) ?><span>Add User</span></button></div></div>
+<div class="setup-page-command-bar"><div class="table-filter"><input type="search" data-table-filter="setup-users-table" placeholder="Filter users by name, username or role..."></div><div class="table-command-bar"><button type="button" class="btn-success btn " id="importUsersBtn"><?= tdc_icon('upload',16) ?><span>Import CSV</span></button><a class="btn-secondary btn " href="setup.php?section=users&amp;download=user-template"><?= tdc_icon('download',16) ?><span>Download CSV Template</span></a><a class="btn-secondary btn " href="setup.php?section=users&amp;download=users"><?= tdc_icon('download',16) ?><span>Export CSV</span></a><button type="button" class="btn-primary btn " onclick="window.print()"><?= tdc_icon('printer',16) ?><span>Print / Save PDF</span></button><button type="button" class="btn-success  btn " id="addSetupUserBtn"><?= tdc_icon('plus',16) ?><span>Add User</span></button></div></div>
 <div class="modal-overlay" id="importUsersModal"><div class="modal-box"><div class="modal-head"><h3><?= tdc_icon('upload',20) ?><span>Import Users</span></h3><button type="button" class="modal-close" data-modal-close aria-label="Close">×</button></div><form method="post" enctype="multipart/form-data"><div class="modal-body"><input type="hidden" name="csrf_token" value="<?=setup_e($csrfToken)?>"><input type="hidden" name="setup_action" value="import_users"><section class="form-section"><div class="form-section-heading"><span><strong>CSV File</strong><span>Passwords are accepted only for creating imported accounts and are never exported.</span></span></div><div class="form-group"><label>Select CSV</label><input type="file" name="csv_file" accept=".csv,text/csv" required></div></section><div class="modal-actions"><button type="button" class="btn btn-secondary" data-modal-close>Cancel</button><button class="btn-success btn "><?= tdc_icon('upload',16) ?><span>Import Users</span></button></div></div></form></div></div>
 <div class="modal-overlay" id="userSetupModal"><div class="modal-box patient-modal"><div class="modal-head"><h3 id="userSetupTitle">Add User</h3><button type="button" class="modal-close" data-modal-close aria-label="Close">×</button></div><form method="post"><div class="modal-body"><input type="hidden" name="csrf_token" value="<?=setup_e($csrfToken)?>"><input type="hidden" name="setup_action" value="save_user"><input type="hidden" name="user_id" id="su_user_id"><section class="form-section"><div class="form-section-heading"><span><strong>Account Identity</strong><span>Legal name and unique sign-in username.</span></span></div><div class="form-row"><div class="form-group"><label>Legal Name</label><input id="su_name" name="userlegalname" required></div><div class="form-group"><label>Username</label><input id="su_username" name="username" required autocomplete="off"></div></div></section><section class="form-section"><div class="form-section-heading"><span><strong>Access & Link</strong><span>Assign one live role and an optional doctor profile.</span></span></div><div class="form-row"><div class="form-group"><label>Role</label><select id="su_role" name="role_id" required><option value="">Select role</option><?php foreach($roles as $role):if(!$role['IsActive'])continue;?><option value="<?=$role['RoleID']?>"><?=setup_e($role['RoleName'])?></option><?php endforeach;?></select></div><div class="form-group"><label>Doctor Profile (Optional)</label><select id="su_doctor" name="DoctorID"><option value="">Not linked</option><?php foreach($doctors as $doctor):?><option value="<?=$doctor['DoctorID']?>"><?=setup_e($doctor['DoctorName'])?><?=$doctor['UserID']?' · linked':''?></option><?php endforeach;?></select></div></div><div class="form-group"><label id="su_password_label">Temporary Password</label><input id="su_password" type="password" name="password" minlength="8" autocomplete="new-password"><div class="modal-hint">Leave blank while editing to keep the current password.</div></div></section><div class="modal-actions"><button type="button" class="btn btn-secondary" data-modal-close>Cancel</button><button class="btn-success  btn "><?= tdc_icon('check',16) ?><span>Save User</span></button></div></div></form></div></div>
-<section class="setup-table-panel"><div class="workspace-panel-heading"><div><h2>System Users</h2><p>Role, account status and staff linkage.</p></div></div><div class="data-table-wrap"><table class="data-table" id="setup-users-table"><thead><tr><th>Name</th><th>Username</th><th>Role</th><th>Linked Doctor</th><th>Status</th><th>Last Login</th><th class="cell-actions">Actions</th></tr></thead><tbody><?php if(!$users):?><tr><td colspan="7"><div class="setup-empty"><span class="setup-module-icon"><?=setup_icon('users')?></span><h3>No users found</h3><p>Add a user account to grant access to the clinic system.</p></div></td></tr><?php else:foreach($users as $user):?><tr><td><?=setup_e($user['userlegalname'])?> <?=$user['is_root']?'<span class="status-badge">Root</span>':''?></td><td>@<?=setup_e($user['username'])?></td><td><?=setup_e($user['RoleName']??$user['RoleKey'])?></td><td><?=$user['DoctorName']?setup_e($user['DoctorName']):'<span class="cell-sub">Not linked</span>'?></td><td><span class="status-badge<?=$user['is_active']?' success':' neutral'?>"><?=$user['is_active']?'Active':'Inactive'?></span></td><td><?=setup_e($user['last_login_at']?date('d M Y H:i',strtotime($user['last_login_at'])):'Never')?></td><td class="cell-actions"><div class="setup-actions"><?php if(!$user['is_root']):?><button type="button" class="btn-warning btn  btn-sm" data-edit-user='<?=setup_e(json_encode(['id'=>$user['id'],'userlegalname'=>$user['userlegalname'],'username'=>$user['username'],'role_id'=>$user['role_id'],'DoctorID'=>$user['DoctorID']]))?>'><?= tdc_icon('pencil',16) ?><span>Edit</span></button><?php endif;?><?php if(!$user['is_root']&&(int)$user['id']!==(int)$_SESSION['user_id']):?><form method="post" class="setup-inline-action"><input type="hidden" name="csrf_token" value="<?=setup_e($csrfToken)?>"><input type="hidden" name="setup_action" value="user_status"><input type="hidden" name="user_id" value="<?=$user['id']?>"><input type="hidden" name="is_active" value="<?=$user['is_active']?0:1?>"><button type="button" class="btn btn-sm <?=$user['is_active']?'btn-danger':'btn-success'?>" data-toggle-user="<?=$user['is_active']?1:0?>"><?=$user['is_active']?'Deactivate':'Activate'?></button></form><?php elseif($user['is_root']):?><span class="status-badge">Protected</span><?php else:?><span class="cell-sub">Current account</span><?php endif;?></div></td></tr><?php endforeach;endif;?></tbody></table></div></section>
+<section class="setup-table-panel"><div class="workspace-panel-heading"><div><h2>System Users</h2><p>Role, account status and staff linkage.</p></div></div><div class="data-table-wrap"><table class="data-table" id="setup-users-table"><thead><tr><th>Name</th><th>Username</th><th>Role</th><th>Linked Doctor</th><th>Status</th><th>Last Login</th><th class="cell-actions">Actions</th></tr></thead><tbody><?php if(!$users):?><tr><td colspan="7"><div class="setup-empty"><span class="setup-module-icon"><?=setup_icon('users')?></span><h3>No users found</h3><p>Add a user account to grant access to the clinic system.</p></div></td></tr><?php else:foreach($users as $user):?><tr><td><?=setup_e($user['userlegalname'])?> <?=$user['is_root']?'<span class="status-badge">Root</span>':''?></td><td>@<?=setup_e($user['username'])?></td><td><?=setup_e($user['RoleName']??$user['RoleKey'])?></td><td><?=$user['DoctorName']?setup_e($user['DoctorName']):'<span class="cell-sub">Not linked</span>'?></td><td><span class="status-badge<?=$user['is_active']?' success':' neutral'?>"><?=$user['is_active']?'Active':'Inactive'?></span></td><td><?=setup_e($user['last_login_at']?date('d M Y H:i',strtotime($user['last_login_at'])):'Never')?></td><td class="cell-actions"><div class="setup-actions"><?php if(!$user['is_root']):?><button type="button" class="btn-secondary btn  btn-sm" data-edit-user='<?=setup_e(json_encode(['id'=>$user['id'],'userlegalname'=>$user['userlegalname'],'username'=>$user['username'],'role_id'=>$user['role_id'],'DoctorID'=>$user['DoctorID']]))?>'><?= tdc_icon('pencil',16) ?><span>Edit</span></button><?php endif;?><?php if(!$user['is_root']&&(int)$user['id']!==(int)$_SESSION['user_id']):?><form method="post" class="setup-inline-action"><input type="hidden" name="csrf_token" value="<?=setup_e($csrfToken)?>"><input type="hidden" name="setup_action" value="user_status"><input type="hidden" name="user_id" value="<?=$user['id']?>"><input type="hidden" name="is_active" value="<?=$user['is_active']?0:1?>"><button type="button" class="btn btn-sm <?=$user['is_active']?'btn-danger':'btn-success'?>" data-toggle-user="<?=$user['is_active']?1:0?>"><?=$user['is_active']?'Deactivate':'Activate'?></button></form><form method="post" class="setup-inline-action"><input type="hidden" name="csrf_token" value="<?=setup_e($csrfToken)?>"><input type="hidden" name="setup_action" value="delete_user"><input type="hidden" name="user_id" value="<?=$user['id']?>"><button type="button" class="btn btn-danger btn-sm" data-delete-user>Delete</button></form><?php elseif($user['is_root']):?><span class="status-badge">Protected</span><?php else:?><span class="cell-sub">Current account</span><?php endif;?></div></td></tr><?php endforeach;endif;?></tbody></table></div></section>
 
 <?php elseif($section==='roles'): ?>
 <section class="setup-table-panel">
@@ -261,7 +345,7 @@ $legalName=(string)$_SESSION['userlegalname'];$displayName=$legalName;$avatarLet
 <?php else:?>
 <div class="data-table-wrap"><table class="data-table" id="doctors-table"><thead><tr><th>Doctor</th><th>Specialization</th><th>Consultation Fee</th><th>User Account</th><th>Status</th><th class="cell-actions">Actions</th></tr></thead><tbody>
 <?php foreach($doctors as $doctor):?>
-<tr><td><strong><?=setup_e($doctor['DoctorName'])?></strong></td><td><?=$doctor['Specialty']?setup_e($doctor['Specialty']):'<span class="cell-sub">Not set</span>'?></td><td><?=setup_e(number_format((float)$doctor['ConsultationFee'],2))?></td><td><?=$doctor['UserID']&&$doctor['username']?'@'.setup_e($doctor['username']):'<span class="status-badge warn">Not linked</span>'?></td><td><span class="status-badge<?=$doctor['UserID']?'':' warn'?>"><?=$doctor['UserID']?'Linked':'Not linked'?></span></td><td class="cell-actions"><button type="button" class="btn-warning btn  btn-sm" data-edit-doctor='<?=setup_e(json_encode(['id'=>$doctor['DoctorID'],'name'=>$doctor['DoctorName'],'fee'=>$doctor['ConsultationFee'],'specialty'=>$doctor['Specialty'],'user'=>$doctor['UserID']]))?>'><?= tdc_icon('pencil',16) ?><span>Edit</span></button></td></tr>
+<tr><td><strong><?=setup_e($doctor['DoctorName'])?></strong></td><td><?=$doctor['Specialty']?setup_e($doctor['Specialty']):'<span class="cell-sub">Not set</span>'?></td><td><?=setup_e(number_format((float)$doctor['ConsultationFee'],2))?></td><td><?=$doctor['UserID']&&$doctor['username']?'@'.setup_e($doctor['username']):'<span class="status-badge warn">Not linked</span>'?></td><td><span class="status-badge<?=$doctor['UserID']?'':' warn'?>"><?=$doctor['UserID']?'Linked':'Not linked'?></span></td><td class="cell-actions"><button type="button" class="btn-secondary btn  btn-sm" data-edit-doctor='<?=setup_e(json_encode(['id'=>$doctor['DoctorID'],'name'=>$doctor['DoctorName'],'fee'=>$doctor['ConsultationFee'],'specialty'=>$doctor['Specialty'],'user'=>$doctor['UserID']]))?>'><?= tdc_icon('pencil',16) ?><span>Edit</span></button></td></tr>
 <?php endforeach;?>
 </tbody></table></div>
 <?php endif;?>
@@ -274,7 +358,7 @@ $legalName=(string)$_SESSION['userlegalname'];$displayName=$legalName;$avatarLet
 <?php else:?>
 <div class="data-table-wrap"><table class="data-table" id="specializations-table"><thead><tr><th>Specialization</th><th>Description</th><th>Status</th><th class="cell-actions">Actions</th></tr></thead><tbody>
 <?php foreach($specializations as $item):?>
-<tr><td><strong><?=setup_e($item['SpecializationName'])?></strong></td><td><?=setup_e($item['Description']?:'—')?></td><td><span class="status-badge<?=$item['IsActive']?' success':' neutral'?>"><?=$item['IsActive']?'Active':'Inactive'?></span></td><td class="cell-actions"><button type="button" class="btn-warning btn  btn-sm" data-edit-master='<?=setup_e(json_encode(['id'=>$item['SpecializationID'],'name'=>$item['SpecializationName'],'description'=>$item['Description'],'active'=>$item['IsActive'],'modal'=>'specializationModal','label'=>'Specialization']))?>'><?= tdc_icon('pencil',16) ?><span>Edit</span></button></td></tr>
+<tr><td><strong><?=setup_e($item['SpecializationName'])?></strong></td><td><?=setup_e($item['Description']?:'—')?></td><td><span class="status-badge<?=$item['IsActive']?' success':' neutral'?>"><?=$item['IsActive']?'Active':'Inactive'?></span></td><td class="cell-actions"><button type="button" class="btn-secondary btn  btn-sm" data-edit-master='<?=setup_e(json_encode(['id'=>$item['SpecializationID'],'name'=>$item['SpecializationName'],'description'=>$item['Description'],'active'=>$item['IsActive'],'modal'=>'specializationModal','label'=>'Specialization']))?>'><?= tdc_icon('pencil',16) ?><span>Edit</span></button></td></tr>
 <?php endforeach;?>
 </tbody></table></div>
 <?php endif;?>
@@ -301,7 +385,7 @@ $legalName=(string)$_SESSION['userlegalname'];$displayName=$legalName;$avatarLet
 <?php else:?>
 <div class="data-table-wrap"><table class="data-table" id="lab-table"><thead><tr><th>Test</th><th>Category</th><th>Description</th><th>Price</th><th>Availability</th><th>Status</th><th class="cell-actions">Actions</th></tr></thead><tbody>
 <?php foreach($labServices as $service):?>
-<tr><td><strong><?=setup_e($service['ServiceName'])?></strong></td><td><?=setup_e($service['Category']?:'—')?></td><td><?=setup_e($service['Description']?:'—')?></td><td><?=setup_e(number_format((float)$service['Price'],2))?></td><td><span class="status-badge<?=$service['IsAvailable']?'':' warn'?>"><?=$service['IsAvailable']?'In-house':'Unavailable'?></span></td><td><span class="status-badge<?=$service['IsActive']?' success':' neutral'?>"><?=$service['IsActive']?'Active':'Inactive'?></span></td><td class="cell-actions"><button type="button" class="btn-warning btn  btn-sm" data-edit-lab='<?=setup_e(json_encode(['id'=>$service['ServiceID'],'name'=>$service['ServiceName'],'category'=>$service['Category'],'description'=>$service['Description'],'price'=>$service['Price'],'available'=>$service['IsAvailable'],'active'=>$service['IsActive']]))?>'><?= tdc_icon('pencil',16) ?><span>Edit</span></button></td></tr>
+<tr><td><strong><?=setup_e($service['ServiceName'])?></strong></td><td><?=setup_e($service['Category']?:'—')?></td><td><?=setup_e($service['Description']?:'—')?></td><td><?=setup_e(number_format((float)$service['Price'],2))?></td><td><span class="status-badge<?=$service['IsAvailable']?'':' warn'?>"><?=$service['IsAvailable']?'In-house':'Unavailable'?></span></td><td><span class="status-badge<?=$service['IsActive']?' success':' neutral'?>"><?=$service['IsActive']?'Active':'Inactive'?></span></td><td class="cell-actions"><button type="button" class="btn-secondary btn  btn-sm" data-edit-lab='<?=setup_e(json_encode(['id'=>$service['ServiceID'],'name'=>$service['ServiceName'],'category'=>$service['Category'],'description'=>$service['Description'],'price'=>$service['Price'],'available'=>$service['IsAvailable'],'active'=>$service['IsActive']]))?>'><?= tdc_icon('pencil',16) ?><span>Edit</span></button></td></tr>
 <?php endforeach;?>
 </tbody></table></div>
 <?php endif;?>
@@ -339,7 +423,7 @@ $legalName=(string)$_SESSION['userlegalname'];$displayName=$legalName;$avatarLet
 <?php else:?>
 <div class="data-table-wrap"><table class="data-table" id="payments-table"><thead><tr><th>Method</th><th>Description</th><th>Status</th><th class="cell-actions">Actions</th></tr></thead><tbody>
 <?php foreach($paymentMethods as $method):?>
-<tr><td><strong><?=setup_e($method['MethodName'])?></strong></td><td><?=setup_e($method['Description']?:'—')?></td><td><span class="status-badge<?=$method['IsActive']?' success':' neutral'?>"><?=$method['IsActive']?'Active':'Inactive'?></span></td><td class="cell-actions"><button type="button" class="btn-warning btn  btn-sm" data-edit-payment='<?=setup_e(json_encode(['id'=>$method['PaymentMethodID'],'name'=>$method['MethodName'],'description'=>$method['Description'],'active'=>$method['IsActive']]))?>'><?= tdc_icon('pencil',16) ?><span>Edit</span></button></td></tr>
+<tr><td><strong><?=setup_e($method['MethodName'])?></strong></td><td><?=setup_e($method['Description']?:'—')?></td><td><span class="status-badge<?=$method['IsActive']?' success':' neutral'?>"><?=$method['IsActive']?'Active':'Inactive'?></span></td><td class="cell-actions"><button type="button" class="btn-secondary btn  btn-sm" data-edit-payment='<?=setup_e(json_encode(['id'=>$method['PaymentMethodID'],'name'=>$method['MethodName'],'description'=>$method['Description'],'active'=>$method['IsActive']]))?>'><?= tdc_icon('pencil',16) ?><span>Edit</span></button></td></tr>
 <?php endforeach;?>
 </tbody></table></div>
 <?php endif;?>
@@ -433,6 +517,9 @@ document.querySelectorAll('[data-edit-user]').forEach(button=>button.addEventLis
 document.querySelectorAll('[data-toggle-user]').forEach(button=>button.addEventListener('click',async()=>{const active=button.dataset.toggleUser==='1';
 const ok=await window.TDCSetup.confirm({title:active?'Deactivate user?':'Activate user?',message:active?'This account will no longer be able to sign in. Historical records are unchanged.':'This account will be able to sign in again.',confirmLabel:active?'Deactivate':'Activate',destructive:active});
 if(!ok)return;button.closest('form')?.submit();}));
+document.querySelectorAll('[data-delete-user]').forEach(button=>button.addEventListener('click',async()=>{
+const ok=await window.TDCSetup.confirm({title:'Delete user permanently?',message:'The login will be removed permanently. Linked doctor access will be cleared, while clinical and audit history is retained.',confirmLabel:'Delete User',destructive:true});
+if(ok)button.closest('form')?.submit();}));
 document.getElementById('importUsersBtn')?.addEventListener('click',()=>window.TDCSetup.openForm('importUsersModal'));
 })();
 </script>

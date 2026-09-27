@@ -120,40 +120,34 @@ function tdc_csv_cell(string $value): string
     return $value;
 }
 
-/**
- * Fetch the set of existing patient phone keys (normalized) once, for batch
- * duplicate detection during CSV import.
- *
- * @return array<string,true>
- */
-function tdc_existing_phone_keys(PDO $pdo): array
+function tdc_inventory_csv_headers(): array
 {
-    $keys = [];
-    foreach ($pdo->query('SELECT PatientPhone FROM patients WHERE PatientPhone IS NOT NULL AND PatientPhone <> ""') as $row) {
-        $norm = tdc_norm_phone((string) $row['PatientPhone']);
-        if ($norm !== '') {
-            $keys[$norm] = true;
-        }
-    }
-    return $keys;
+    return [
+        'item_id',
+        'item_name',
+        'quantity_in_stock',
+        'sales_unit',
+        'selling_price',
+        'reorder_level',
+        'expiry_date',
+        'default_purchase_unit',
+        'units_per_package',
+    ];
 }
 
-/**
- * Find an existing patient matching a (normalized) phone, used by the manual
- * registration form's duplicate warning. Returns the matched row or null.
- */
-function tdc_existing_patient_by_phone(PDO $pdo, string $phone): ?array
+function tdc_inventory_csv_row_from_db(array $item): array
 {
-    $norm = tdc_norm_phone($phone);
-    if ($norm === '') {
-        return null;
-    }
-    foreach ($pdo->query('SELECT PatientID, PatientName, PatientPhone FROM patients WHERE PatientPhone IS NOT NULL AND PatientPhone <> ""') as $row) {
-        if (tdc_norm_phone((string) $row['PatientPhone']) === $norm) {
-            return $row;
-        }
-    }
-    return null;
+    return [
+        (string) ($item['ItemID'] ?? ''),
+        (string) ($item['ItemName'] ?? ''),
+        (string) ($item['QuantityInStock'] ?? '0'),
+        (string) ($item['SalesUnit'] ?? ''),
+        number_format((float) ($item['SellingPrice'] ?? 0), 2, '.', ''),
+        (string) ($item['ReorderLevel'] ?? '0'),
+        (string) ($item['ExpiryDate'] ?? ''),
+        (string) ($item['DefaultPurchaseUnit'] ?? ''),
+        (string) ($item['UnitsPerPackage'] ?? ''),
+    ];
 }
 
 function tdc_csv_download(string $filename, array $headers, array $rows): never
@@ -175,7 +169,52 @@ function tdc_csv_download(string $filename, array $headers, array $rows): never
     exit;
 }
 
-function tdc_csv_upload_rows(array $file, array $requiredHeaders, int $maxRows = 2000): array
+/**
+ * Download a dependency-free XLSX workbook using inline string cells.
+ * Keeping values as strings preserves patient IDs, phone numbers and dates
+ * exactly as exported while remaining readable by Excel and the XLSX reader.
+ */
+function tdc_xlsx_download(string $filename, array $headers, array $rows): never
+{
+    $tmp = tempnam(sys_get_temp_dir(), 'tdc-xlsx-');
+    if ($tmp === false) {
+        throw new RuntimeException('The XLSX export could not be prepared.');
+    }
+    $zip = new ZipArchive();
+    if ($zip->open($tmp, ZipArchive::CREATE | ZipArchive::OVERWRITE) !== true) {
+        @unlink($tmp);
+        throw new RuntimeException('The XLSX export could not be created.');
+    }
+    $xml = static fn(string $value): string => htmlspecialchars($value, ENT_XML1 | ENT_COMPAT, 'UTF-8');
+    $sheetRows = array_merge([$headers], $rows);
+    $sheetXml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>';
+    foreach ($sheetRows as $rowIndex => $row) {
+        $excelRow = $rowIndex + 1;
+        $sheetXml .= '<row r="' . $excelRow . '">';
+        foreach (array_values($row) as $columnIndex => $value) {
+            $column = '';
+            $n = $columnIndex + 1;
+            while ($n > 0) { $remainder = ($n - 1) % 26; $column = chr(65 + $remainder) . $column; $n = (int) (($n - $remainder) / 26); }
+            $sheetXml .= '<c r="' . $column . $excelRow . '" t="inlineStr"><is><t>' . $xml((string) ($value ?? '')) . '</t></is></c>';
+        }
+        $sheetXml .= '</row>';
+    }
+    $sheetXml .= '</sheetData></worksheet>';
+    $zip->addFromString('[Content_Types].xml', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>');
+    $zip->addFromString('_rels/.rels', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>');
+    $zip->addFromString('xl/workbook.xml', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Patients" sheetId="1" r:id="rId1"/></sheets></workbook>');
+    $zip->addFromString('xl/_rels/workbook.xml.rels', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>');
+    $zip->addFromString('xl/worksheets/sheet1.xml', $sheetXml);
+    $zip->close();
+    header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    header('Content-Disposition: attachment; filename="' . preg_replace('/[^a-zA-Z0-9._-]/', '-', $filename) . '"');
+    header('X-Content-Type-Options: nosniff');
+    readfile($tmp);
+    @unlink($tmp);
+    exit;
+}
+
+function tdc_csv_upload_rows(array $file, array $requiredHeaders, ?array $allowedHeaders = null, int $maxRows = 2000, array $headerAliases = [], array $ignoredHeaders = []): array
 {
     if (($file['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) throw new RuntimeException('Select a valid CSV file.');
     if ((int) ($file['size'] ?? 0) > 2 * 1024 * 1024) throw new RuntimeException('CSV files must be 2 MB or smaller.');
@@ -185,14 +224,140 @@ function tdc_csv_upload_rows(array $file, array $requiredHeaders, int $maxRows =
     $headers = fgetcsv($handle);
     if (!$headers) { fclose($handle); throw new RuntimeException('The CSV file is empty.'); }
     $headers = array_map(static fn($value): string => strtolower(trim((string) $value, " \t\n\r\0\x0B\xEF\xBB\xBF")), $headers);
-    foreach ($requiredHeaders as $required) if (!in_array(strtolower($required), $headers, true)) { fclose($handle); throw new RuntimeException("CSV column '$required' is required."); }
+    $originalHeaderCount = count($headers);
+    $headerAliases = array_change_key_case($headerAliases, CASE_LOWER);
+    $ignoredHeaders = array_map('strtolower', $ignoredHeaders);
+    $normalizedHeaders = [];
+    $keptIndexes = [];
+    foreach ($headers as $index => $header) {
+        $normalized = $headerAliases[$header] ?? $header;
+        if (in_array($normalized, $ignoredHeaders, true)) continue;
+        $normalizedHeaders[] = $normalized;
+        $keptIndexes[] = $index;
+    }
+    $headers = $normalizedHeaders;
+    if (count($headers) !== count(array_unique($headers))) {
+        fclose($handle);
+        throw new RuntimeException('The CSV header contains duplicate column names.');
+    }
+    $requiredHeaders = array_values(array_unique(array_map('strtolower', $requiredHeaders)));
+    $allowedHeaders = $allowedHeaders === null ? null : array_values(array_unique(array_map('strtolower', $allowedHeaders)));
+    $missingHeaders = array_values(array_diff($requiredHeaders, $headers));
+    $unexpectedHeaders = $allowedHeaders === null ? [] : array_values(array_diff($headers, $allowedHeaders));
+    if ($missingHeaders || $unexpectedHeaders) {
+        fclose($handle);
+        $details = [];
+        if ($missingHeaders) $details[] = 'Missing columns: ' . implode(', ', $missingHeaders) . '.';
+        if ($unexpectedHeaders) $details[] = 'Unexpected columns: ' . implode(', ', $unexpectedHeaders) . '.';
+        if ($allowedHeaders !== null) $details[] = 'Expected columns: ' . implode(', ', $allowedHeaders) . '.';
+        throw new RuntimeException('Import failed: the uploaded CSV does not match this module format. ' . implode(' ', $details));
+    }
     $rows = [];
     while (($values = fgetcsv($handle)) !== false) {
-        if (count($rows) >= $maxRows) { fclose($handle); throw new RuntimeException("CSV import is limited to $maxRows rows."); }
         if (!array_filter($values, static fn($value): bool => trim((string) $value) !== '')) continue;
-        $values = array_pad($values, count($headers), '');
-        $rows[] = array_combine($headers, array_slice($values, 0, count($headers)));
+        $rowNumber = count($rows) + 2;
+        if (count($values) !== count($keptIndexes) && count($values) !== $originalHeaderCount) {
+            fclose($handle);
+            throw new RuntimeException("CSV row $rowNumber has " . count($values) . ' fields; expected ' . count($keptIndexes) . '.');
+        }
+        if (count($rows) >= $maxRows) { fclose($handle); throw new RuntimeException("CSV import is limited to $maxRows rows."); }
+        if (count($values) === count($keptIndexes) && count($keptIndexes) !== $originalHeaderCount) {
+            $rows[] = array_combine($headers, $values);
+        } else {
+            $keptValues = array_map(static fn(int $index): string => (string)($values[$index] ?? ''), $keptIndexes);
+            $rows[] = array_combine($headers, $keptValues);
+        }
     }
     fclose($handle);
     return $rows;
+}
+
+/**
+ * Read the first worksheet from an .xlsx upload using PHP's bundled XML/ZIP
+ * extensions. The returned rows use the same normalized headers as the CSV
+ * importer, so module validation and duplicate handling stay identical.
+ */
+function tdc_xlsx_upload_rows(array $file, array $requiredHeaders, ?array $allowedHeaders = null, int $maxRows = 2000, array $headerAliases = [], array $ignoredHeaders = []): array
+{
+    if (($file['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) throw new RuntimeException('Select a valid CSV or XLSX file.');
+    if ((int) ($file['size'] ?? 0) > 10 * 1024 * 1024) throw new RuntimeException('XLSX files must be 10 MB or smaller.');
+    if (strtolower(pathinfo((string) ($file['name'] ?? ''), PATHINFO_EXTENSION)) !== 'xlsx') throw new RuntimeException('Only XLSX files are supported by this reader.');
+    $zip = new ZipArchive();
+    if ($zip->open((string) $file['tmp_name']) !== true) throw new RuntimeException('The uploaded XLSX file could not be opened.');
+    try {
+        $workbookXml = $zip->getFromName('xl/workbook.xml');
+        $relsXml = $zip->getFromName('xl/_rels/workbook.xml.rels');
+        if ($workbookXml === false || $relsXml === false) throw new RuntimeException('The XLSX file is missing its workbook structure.');
+        $workbook = simplexml_load_string($workbookXml, SimpleXMLElement::class, LIBXML_NONET);
+        $rels = simplexml_load_string($relsXml, SimpleXMLElement::class, LIBXML_NONET);
+        if (!$workbook || !$rels) throw new RuntimeException('The XLSX workbook structure is invalid.');
+        $mainNs = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main';
+        $relNs = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
+        $workbook->registerXPathNamespace('m', $mainNs);
+        $rels->registerXPathNamespace('p', 'http://schemas.openxmlformats.org/package/2006/relationships');
+        $sheet = $workbook->xpath('//m:sheets/m:sheet[1]')[0] ?? null;
+        $relationshipId = $sheet ? (string) $sheet->attributes($relNs)->id : '';
+        $target = '';
+        foreach ($rels->xpath('//p:Relationship') ?: [] as $relationship) {
+            if ((string) $relationship['Id'] === $relationshipId) { $target = (string) $relationship['Target']; break; }
+        }
+        if ($target === '') throw new RuntimeException('The XLSX file does not contain a readable worksheet.');
+        $target = ltrim(str_replace('\\', '/', $target), '/');
+        if (strpos($target, 'xl/') !== 0) $target = 'xl/' . $target;
+        $sheetXml = $zip->getFromName($target);
+        if ($sheetXml === false) throw new RuntimeException('The first XLSX worksheet could not be read.');
+        $sharedStrings = [];
+        $sharedXml = $zip->getFromName('xl/sharedStrings.xml');
+        if ($sharedXml !== false && ($shared = simplexml_load_string($sharedXml, SimpleXMLElement::class, LIBXML_NONET))) {
+            $shared->registerXPathNamespace('m', $mainNs);
+            foreach ($shared->children($mainNs)->si ?: [] as $item) { $text = ''; foreach ($item->children($mainNs)->t ?: [] as $t) $text .= (string) $t; $sharedStrings[] = trim($text); }
+        }
+        $sheet = simplexml_load_string($sheetXml, SimpleXMLElement::class, LIBXML_NONET);
+        if (!$sheet) throw new RuntimeException('The XLSX worksheet is invalid.');
+        $sheet->registerXPathNamespace('m', $mainNs);
+        $allRows = [];
+        foreach ($sheet->xpath('//m:sheetData/m:row') ?: [] as $xmlRow) {
+            $row = [];
+            foreach ($xmlRow->c as $cell) {
+                $reference = (string) $cell['r'];
+                $column = preg_replace('/\d+/', '', $reference);
+                $value = '';
+                $type = (string) $cell['t'];
+                if ($type === 'inlineStr') { $text = ''; foreach ($cell->is->children($mainNs)->t ?: [] as $t) $text .= (string) $t; $value = trim($text); }
+                else {
+                    $value = (string) $cell->v;
+                    if ($type === 's' && $value !== '' && isset($sharedStrings[(int) $value])) $value = $sharedStrings[(int) $value];
+                }
+                $row[$column] = $value;
+            }
+            if ($row) $allRows[] = $row;
+        }
+        if (!$allRows) throw new RuntimeException('The XLSX worksheet is empty.');
+        $headerAliases = array_change_key_case($headerAliases, CASE_LOWER);
+        $ignoredHeaders = array_map('strtolower', $ignoredHeaders);
+        $requiredHeaders = array_values(array_unique(array_map('strtolower', $requiredHeaders)));
+        $allowedHeaders = $allowedHeaders === null ? null : array_values(array_unique(array_map('strtolower', $allowedHeaders)));
+        $headerIndex = -1; $headers = []; $keptColumns = [];
+        foreach ($allRows as $index => $candidate) {
+            $normalized = [];
+            foreach ($candidate as $column => $header) {
+                $key = strtolower(trim((string) $header, " \t\n\r\0\x0B\xEF\xBB\xBF"));
+                $key = $headerAliases[$key] ?? $key;
+                if (!in_array($key, $ignoredHeaders, true)) { $normalized[$column] = $key; }
+            }
+            if (!array_diff($requiredHeaders, array_values($normalized))) { $headerIndex = $index; $headers = array_values($normalized); $keptColumns = array_keys($normalized); break; }
+        }
+        if ($headerIndex < 0) throw new RuntimeException('Import failed: the XLSX worksheet does not contain the required columns: ' . implode(', ', $requiredHeaders) . '.');
+        if (count($headers) !== count(array_unique($headers))) throw new RuntimeException('The XLSX header contains duplicate column names.');
+        $unexpected = $allowedHeaders === null ? [] : array_values(array_diff($headers, $allowedHeaders));
+        if ($unexpected) throw new RuntimeException('Import failed: unexpected columns: ' . implode(', ', $unexpected) . '.');
+        $rows = [];
+        foreach (array_slice($allRows, $headerIndex + 1) as $xmlRow) {
+            $values = []; foreach ($keptColumns as $column) $values[] = (string) ($xmlRow[$column] ?? '');
+            if (!array_filter($values, static fn($value): bool => trim((string) $value) !== '')) continue;
+            if (count($rows) >= $maxRows) throw new RuntimeException("XLSX import is limited to $maxRows rows.");
+            $rows[] = array_combine($headers, $values);
+        }
+        return $rows;
+    } finally { $zip->close(); }
 }

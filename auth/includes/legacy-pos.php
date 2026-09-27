@@ -90,6 +90,9 @@ function tdc_reconcile_legacy_pos_payment(PDO $pdo, string $saleReference, strin
     if (strlen($reason) > 500) {
         throw new RuntimeException('Reason must be 500 characters or fewer.');
     }
+    if (!tdc_has_column($pdo, 'payments', 'SaleReference')) {
+        throw new RuntimeException('Payment schema is missing SaleReference; legacy POS payment reconciliation requires an additive schema change.');
+    }
 
     $started = false;
     try {

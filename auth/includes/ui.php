@@ -138,11 +138,12 @@ if (!function_exists('tdc_search_field')) {
     function tdc_search_field($name, $value, $placeholder, $target = ''): string
     {
         $targetAttr = $target !== '' ? ' data-table-filter="' . tdc_ui_h($target) . '"' : '';
-        return '<label class="table-filter">' . tdc_icon('search', 15)
+        $clear = (string) $value !== '' ? '<button type="button" class="tdc-search__clear" data-search-clear aria-label="Clear search" title="Clear search">&times;</button>' : '';
+        return '<label class="table-filter tdc-search">' . tdc_icon('search', 15)
             . '<input type="search" name="' . tdc_ui_h($name) . '"' . $targetAttr
             . ' value="' . tdc_ui_h($value) . '" placeholder="' . tdc_ui_h($placeholder) . '"'
             . ' aria-label="' . tdc_ui_h($placeholder) . '" autocomplete="off">'
-            . '</label>';
+            . $clear . '</label>';
     }
 }
 
@@ -351,6 +352,6 @@ if (!function_exists('tdc_export_buttons')) {
 
 function tdc_navigation_icon(string $page): string
 {
-    $icons = ['home.php'=>'grid','reception.php'=>'bell','patients.php'=>'users','doctors.php'=>'stethoscope','laboratory.php'=>'flask','pharmacy.php'=>'pill','accounting.php'=>'wallet','reports.php'=>'chart','setup.php'=>'sliders'];
+    $icons = ['home.php'=>'grid','reception.php'=>'bell','patients.php'=>'users','doctors.php'=>'stethoscope','laboratory.php'=>'flask','pharmacy.php'=>'pill','services.php'=>'grid','accounting.php'=>'wallet','reports.php'=>'chart','setup.php'=>'sliders'];
     return tdc_icon($icons[$page] ?? 'grid',18);
 }

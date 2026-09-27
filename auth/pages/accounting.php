@@ -263,6 +263,28 @@ function tdc_scalar(PDO $pdo, string $sql, array $params = [])
 }
 
 /**
+ * Central source-workflow balance summary. Service balances are derived from
+ * their own bills so Accounting, Reports and the operational screens agree.
+ * Pharmacy and supplier line items are grouped by their bill reference to
+ * avoid counting the same bill once per line.
+ */
+function tdc_accounting_due_summary(PDO $pdo): array
+{
+    $query = static function (PDO $pdo, string $sql): array {
+        $row = $pdo->query($sql)->fetch() ?: [];
+        return ['count' => (int) ($row['bill_count'] ?? 0), 'due' => round((float) ($row['due_total'] ?? 0), 2)];
+    };
+
+    return [
+        'consultation' => $query($pdo, "SELECT COUNT(*) bill_count, COALESCE(SUM(DueBalance),0) due_total FROM visits WHERE QueueStatus <> 'Cancelled' AND DueBalance > 0"),
+        'laboratory'   => $query($pdo, "SELECT COUNT(*) bill_count, COALESCE(SUM(DueBalance),0) due_total FROM laboratory WHERE WorkflowStatus <> 'Cancelled' AND DueBalance > 0"),
+        'pharmacy'     => $query($pdo, "SELECT COUNT(*) bill_count, COALESCE(SUM(due),0) due_total FROM (SELECT SUBSTRING_INDEX(SaleID,'-',1) ref, MIN(DueBalance) due FROM pharmacysales WHERE SaleStatus <> 'Voided' GROUP BY SUBSTRING_INDEX(SaleID,'-',1) UNION ALL SELECT SUBSTRING_INDEX(PrescriptionID,'-',1) ref, MIN(DueBalance) due FROM prescriptions WHERE Status <> 'Cancelled' AND (PharmacySaleReference IS NULL OR PharmacySaleReference = '') GROUP BY SUBSTRING_INDEX(PrescriptionID,'-',1)) bills WHERE due > 0"),
+        'service'      => $query($pdo, "SELECT COUNT(*) bill_count, COALESCE(SUM(DueBalance),0) due_total FROM service_assignments WHERE AssignmentStatus <> 'Cancelled' AND DueBalance > 0"),
+        'supplier'     => $query($pdo, "SELECT COUNT(*) bill_count, COALESCE(SUM(due),0) due_total FROM (SELECT SUBSTRING_INDEX(PurchaseID,'-',1) ref, MIN(DueBalance) due FROM purchases GROUP BY SUBSTRING_INDEX(PurchaseID,'-',1)) bills WHERE due > 0"),
+    ];
+}
+
+/**
  * Generates the next zero-padded reference for a VARCHAR primary key,
  * e.g. tdc_next_ref($pdo, 'accounting', 'AccountID', 'ACC') -> "ACC000007".
  * Repeats of the same id across many ledger lines are expected and are
@@ -671,6 +693,16 @@ if (empty($_SESSION['csrf_token'])) {
     $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
 }
 
+$centralDueSummary = tdc_accounting_due_summary($pdo);
+$centralReceivableDue = round(
+    $centralDueSummary['consultation']['due']
+    + $centralDueSummary['laboratory']['due']
+    + $centralDueSummary['pharmacy']['due']
+    + $centralDueSummary['service']['due'],
+    2
+);
+$centralPayableDue = $centralDueSummary['supplier']['due'];
+
 // =======================================================================
 // SECTION 8 — Request-scoped state
 // =======================================================================
@@ -800,8 +832,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($section, ALLOWED_SECTIONS
         }
     }
 
-    // Rotate CSRF token after every POST (success paths already rotated + exited above via header()).
-    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+    // Keep the session CSRF token stable for other open authenticated forms.
 }
 
 // =======================================================================
@@ -1120,28 +1151,44 @@ if ($section === 'payments') {
     $paymentSearch      = trim((string) ($_GET['q'] ?? ''));
     $paymentTypeFilter  = (string) ($_GET['type'] ?? '');
     $paymentStateFilter = (string) ($_GET['state'] ?? '');
-    $allowedTypes  = ['Consultation', 'Laboratory', 'Pharmacy', 'POS', 'Supplier'];
+    $allowedTypes  = ['Consultation', 'Laboratory', 'Pharmacy', 'POS', 'Supplier', 'Service'];
     $allowedStates = ['Reversible', 'Reversed', 'Reversal'];
+    $hasPaymentSaleReference = tdc_has_column($pdo, 'payments', 'SaleReference');
+    $hasPaymentPurchaseReference = tdc_has_column($pdo, 'payments', 'PurchaseReference');
+    $hasPaymentReversal = tdc_has_column($pdo, 'payments', 'ReversalOfPaymentID')
+        && tdc_has_column($pdo, 'payments', 'ReversalReference')
+        && tdc_has_column($pdo, 'payments', 'ReversalReason');
     if (!in_array($paymentTypeFilter, $allowedTypes, true))  $paymentTypeFilter  = '';
     if (!in_array($paymentStateFilter, $allowedStates, true)) $paymentStateFilter = '';
 
     $conditions = [];
     $params     = [];
     if ($paymentSearch !== '') {
-        $conditions[] = '(p.PaymentReference LIKE :q1 OR p.Notes LIKE :q2 OR p.ReversalReason LIKE :q3
-                          OR p.VisitID LIKE :q4 OR p.LaboratoryID LIKE :q5 OR p.PrescriptionReference LIKE :q6
-                          OR p.SaleReference LIKE :q7 OR p.PurchaseReference LIKE :q8 OR pat.PatientName LIKE :q9)';
-        for ($i = 1; $i <= 9; $i++) $params['q' . $i] = '%' . $paymentSearch . '%';
+        $searchParts = ['p.PaymentReference LIKE :q1', 'p.Notes LIKE :q2', 'p.VisitID LIKE :q4', 'p.LaboratoryID LIKE :q5', 'p.PrescriptionReference LIKE :q6', 'pat.PatientName LIKE :q9'];
+        if ($hasPaymentReversal) $searchParts[] = 'p.ReversalReason LIKE :q3';
+        if ($hasPaymentSaleReference) $searchParts[] = 'p.SaleReference LIKE :q7';
+        if ($hasPaymentPurchaseReference) $searchParts[] = 'p.PurchaseReference LIKE :q8';
+        $conditions[] = '(' . implode(' OR ', $searchParts) . ')';
+        foreach ([1, 2, 3, 4, 5, 6, 7, 8, 9] as $i) $params['q' . $i] = '%' . $paymentSearch . '%';
     }
     if ($paymentTypeFilter !== '') {
         $conditions[] = 'p.PaymentType = :type';
         $params['type'] = $paymentTypeFilter;
     }
     if ($paymentStateFilter === 'Reversed') {
+        if (!$hasPaymentReversal) $paymentStateFilter = '';
+    }
+    if ($paymentStateFilter === 'Reversed') {
         $conditions[] = "EXISTS (SELECT 1 FROM payments r WHERE r.ReversalOfPaymentID = p.PaymentID AND r.PaymentStatus = 'Confirmed')";
     } elseif ($paymentStateFilter === 'Reversal') {
+        if (!$hasPaymentReversal) $paymentStateFilter = '';
+    }
+    if ($paymentStateFilter === 'Reversal') {
         $conditions[] = 'p.ReversalOfPaymentID IS NOT NULL';
     } elseif ($paymentStateFilter === 'Reversible') {
+        if (!$hasPaymentReversal) $paymentStateFilter = '';
+    }
+    if ($paymentStateFilter === 'Reversible') {
         $conditions[] = "p.PaymentStatus = 'Confirmed' AND p.ReversalOfPaymentID IS NULL AND p.Amount > 0"
             . " AND ABS(p.Amount + COALESCE((SELECT SUM(r2.Amount) FROM payments r2 WHERE r2.ReversalOfPaymentID = p.PaymentID AND r2.PaymentStatus = 'Confirmed'), 0)) > 0.005";
     }
@@ -1162,14 +1209,16 @@ if ($section === 'payments') {
     $where = $conditions !== [] ? 'WHERE ' . implode(' AND ', $conditions) : '';
 
     $stmt = $pdo->prepare(
-        "SELECT p.PaymentID, p.PaymentReference, p.PaymentType, p.Amount, p.PaymentMethod, p.PaymentStatus, p.PaidAt, p.Notes,
-                p.ReversalOfPaymentID, p.ReversalReference, p.ReversalReason, p.PatientID, p.VisitID, p.LaboratoryID,
-                p.PrescriptionReference, p.SaleReference, p.PurchaseReference,
+        "SELECT p.PaymentID, p.PaymentReference, p.PaymentType, p.Amount, p.PaymentMethod, p.PaymentStatus, p.PaidAt, p.Notes, p.ServiceAssignmentID,
+            " . ($hasPaymentReversal ? 'p.ReversalOfPaymentID, p.ReversalReference, p.ReversalReason' : 'NULL AS ReversalOfPaymentID, NULL AS ReversalReference, NULL AS ReversalReason') . ",
+            p.PatientID, p.VisitID, p.LaboratoryID, p.PrescriptionReference,
+            " . ($hasPaymentSaleReference ? 'p.SaleReference' : 'NULL AS SaleReference') . ",
+            " . ($hasPaymentPurchaseReference ? 'p.PurchaseReference' : 'NULL AS PurchaseReference') . ",
                 pat.PatientName,
                 v.VisitReference,
-                (SELECT MIN(SupplierName) FROM purchases pu WHERE p.PurchaseReference IS NOT NULL AND pu.PurchaseID LIKE CONCAT(p.PurchaseReference, '-%')) AS SupplierName,
+            " . ($hasPaymentPurchaseReference ? "(SELECT MIN(SupplierName) FROM purchases pu WHERE p.PurchaseReference IS NOT NULL AND pu.PurchaseID LIKE CONCAT(p.PurchaseReference, '-%'))" : 'NULL') . " AS SupplierName,
                 u.username AS ReceivedByUser,
-                COALESCE((SELECT SUM(r.Amount) FROM payments r WHERE r.ReversalOfPaymentID = p.PaymentID AND r.PaymentStatus = 'Confirmed'), 0) AS ReversedAmount
+            " . ($hasPaymentReversal ? "COALESCE((SELECT SUM(r.Amount) FROM payments r WHERE r.ReversalOfPaymentID = p.PaymentID AND r.PaymentStatus = 'Confirmed'), 0)" : '0') . " AS ReversedAmount
          FROM payments p
          LEFT JOIN patients pat ON pat.PatientID = p.PatientID
          LEFT JOIN visits v ON v.VisitID = p.VisitID
@@ -1202,15 +1251,9 @@ if ($section === 'payments') {
         'reversed'    => round(abs((float) ($totals['ReversalTotal'] ?? 0)), 2),
         'outstanding' => 0.0,
     ];
-    $paymentTotals['outstanding'] = round((float) tdc_scalar(
-        $pdo,
-        "SELECT ROUND(
-            COALESCE((SELECT SUM(DueBalance) FROM patients WHERE DueBalance > 0), 0)
-          + COALESCE((SELECT SUM(x.DueBalance) FROM (
-                SELECT MIN(DueBalance) AS DueBalance FROM purchases
-                GROUP BY SUBSTRING_INDEX(PurchaseID, '-', 1)
-            ) x WHERE x.DueBalance > 0), 0), 2)"
-    ), 2);
+    // Outstanding is derived from the same service bills shown in the
+    // centralized balance panel, rather than the patients cache.
+    $paymentTotals['outstanding'] = $centralReceivableDue;
 }
 
 // --- 10D. Hub summary (only computed on the landing page) -----------------
@@ -1236,9 +1279,20 @@ if ($section === null) {
     );
     $hubNetIncomeMonth = $revenueMonth - $expenseMonth;
 
-    $hubCashBalance   = (float) tdc_scalar($pdo, "SELECT COALESCE(SUM(Debit) - SUM(Credit), 0) FROM accounting WHERE BookType = 'Cash Book'");
-    $hubReceivableDue = (float) tdc_scalar($pdo, "SELECT COALESCE(SUM(Debit) - SUM(Credit), 0) FROM accounting WHERE BookType = 'Accounts Receivable'");
-    $hubPayableDue    = (float) tdc_scalar($pdo, "SELECT COALESCE(SUM(Credit) - SUM(Debit), 0) FROM accounting WHERE BookType = 'Accounts Payable'");
+    // Operational receipts are posted to the Sales Book, while the payment
+    // account itself is the authoritative clearing balance. Do not filter by
+    // the journal book label or the overview can incorrectly show zero.
+    $hubCashBalance = (float) tdc_scalar(
+        $pdo,
+        "SELECT COALESCE(SUM(Debit) - SUM(Credit), 0)
+           FROM accounting
+          WHERE AccountType = 'Asset' AND AccountID LIKE 'PAY-%'"
+    );
+
+    // Keep the overview totals tied to the same centralized service summary
+    // used by Payments & Collections.
+    $hubReceivableDue = $centralReceivableDue;
+    $hubPayableDue = $centralPayableDue;
 
     $hubEntryCountMonth = (int) tdc_scalar(
         $pdo,
@@ -1377,10 +1431,13 @@ $justPaymentReversed = isset($_GET['reversed']);
     .status-badge.warn{ border-color:var(--orange); color:var(--orange); }
     .status-badge.danger{ border-color:#c0392b; color:#c0392b; }
     .status-badge.muted{ border-color:var(--navy-30); color:var(--navy-55); }
-    .account-type-badge{ display:inline-block; padding:3px 8px; border:1.5px solid var(--navy-30); color:var(--navy); font-size:11px; font-weight:700; letter-spacing:.03em; white-space:nowrap; }
-    .account-type-badge.type-revenue{ border-color:#1b7a3d; color:#1b7a3d; }
-    .account-type-badge.type-expense{ border-color:var(--orange); color:var(--orange); }
-    .account-type-badge.type-liability,.account-type-badge.type-equity{ border-color:#7b61a8; color:#6b4c96; }
+    .account-type-badge{ display:inline-flex; align-items:center; gap:6px; padding:5px 10px; border:1px solid transparent; border-radius:999px; color:var(--navy); background:var(--navy-10); font-size:11px; font-weight:700; letter-spacing:.03em; white-space:nowrap; }
+    .account-type-badge::before{ content:''; width:6px; height:6px; border-radius:50%; background:currentColor; opacity:.85; }
+    .account-type-badge.type-asset{ border-color:#bfc9f0; color:#3446a3; background:#eef2ff; }
+    .account-type-badge.type-revenue{ border-color:#a9dfbd; color:#167342; background:#ecfdf3; }
+    .account-type-badge.type-expense{ border-color:#f4c6a9; color:#b8471f; background:#fff5ed; }
+    .account-type-badge.type-liability{ border-color:#d4c3ee; color:#6b4c96; background:#f6f0ff; }
+    .account-type-badge.type-equity{ border-color:#a9d9da; color:#137276; background:#effafa; }
 
     .row-actions{ display:flex; gap:8px; flex-wrap:wrap; }
     .row-actions form{ display:inline; }
@@ -1404,6 +1461,7 @@ $justPaymentReversed = isset($_GET['reversed']);
     .due-display{ font-weight:700; font-size:15px; color:var(--navy); padding:11px 0; }
     .due-display.balanced{ color:#1b7a3d; }
     .due-display.unbalanced{ color:#c0392b; }
+    .due-display.incomplete{ color:#68759b; }
     .form-actions{ display:flex; gap:10px; max-width:1200px; }
 
     .info-grid{ display:grid; grid-template-columns:repeat(auto-fill, minmax(180px, 1fr)); gap:18px 24px; max-width:1200px; margin-bottom:32px; padding:24px; border:2px solid var(--navy); }
@@ -1452,10 +1510,23 @@ $justPaymentReversed = isset($_GET['reversed']);
     .filter-actions { display:flex; align-items:center; gap:6px; }
     
     .chart-of-accounts-toolbar { display:flex; gap:8px; align-items:center; flex-wrap:nowrap; width:100%; max-width:800px; }
+    .ledger-filter-toolbar { display:grid !important; grid-template-columns:minmax(260px,2fr) minmax(145px,1fr) 145px 145px auto; align-items:end; gap:8px; flex:1 1 auto; max-width:none; }
+    .ledger-filter-toolbar input, .ledger-filter-toolbar select { min-width:0; width:100%; }
+    .section-toolbar:has(.ledger-filter-toolbar) { align-items:end; }
+    .section-toolbar:has(.ledger-filter-toolbar) > .btn-success { flex:0 0 auto; }
+    @media(max-width:1050px){ .ledger-filter-toolbar { grid-template-columns:minmax(220px,1fr) minmax(130px,1fr) 135px 135px auto; } }
+    @media(max-width:760px){ .ledger-filter-toolbar { display:flex !important; flex-direction:column; align-items:stretch; } .ledger-filter-toolbar > * { width:100%; } }
     @media(max-width:720px){ .chart-of-accounts-toolbar{ flex-direction:column; align-items:stretch; } .chart-of-accounts-toolbar > * { width:100% !important; flex:none !important; } }
+    .accounting-view-modal .modal-box { width:min(1080px, calc(100vw - 32px)); max-width:1080px; max-height:88vh; overflow:hidden; }
+    .accounting-view-modal .accounting-modal-content { max-height:calc(88vh - 72px); overflow:auto; padding:22px; background:var(--bg-soft); }
+    .accounting-view-modal .accounting-modal-content .page-body { padding:0; max-width:none; }
+    .accounting-view-modal .accounting-modal-content .back-link { display:none; }
+    .accounting-view-modal .accounting-modal-content .data-table-wrap { max-width:none; }
+    .accounting-view-modal .accounting-modal-content .statement-actions,
+    .accounting-view-modal .accounting-modal-content .no-print { display:none; }
 </style>
-<link rel="stylesheet" href="../assets/clinic.css">
-<script src="../assets/clinic.js" defer></script>
+<link rel="stylesheet" href="../assets/clinic.css?v=<?= rawurlencode((string) @filemtime(__DIR__ . '/../assets/clinic.css')) ?>">
+<script src="../assets/clinic.js?v=<?= rawurlencode((string) @filemtime(__DIR__ . '/../assets/clinic.js')) ?>" defer></script>
 </head>
 <body>
 
@@ -1514,14 +1585,33 @@ $justPaymentReversed = isset($_GET['reversed']);
             <div class="kpi-value<?= $hubCashBalance < 0 ? ' negative' : '' ?>"><?= number_format($hubCashBalance, 2) ?></div>
         </div>
         <div class="kpi-card">
-            <div class="kpi-label">Accounts Receivable</div>
+            <div class="kpi-label">Accounts Receivable (Customer Due)</div>
             <div class="kpi-value<?= $hubReceivableDue < 0 ? ' negative' : '' ?>"><?= number_format($hubReceivableDue, 2) ?></div>
         </div>
         <div class="kpi-card">
-            <div class="kpi-label">Accounts Payable</div>
+            <div class="kpi-label">Accounts Payable (Supplier Due)</div>
             <div class="kpi-value<?= $hubPayableDue < 0 ? ' negative' : '' ?>"><?= number_format($hubPayableDue, 2) ?></div>
         </div>
     </div>
+
+    <section class="table-section" style="margin-top:24px;">
+        <div class="section-heading"><div><div class="welcome-title" style="font-size:20px;">Centralized balances</div><div class="welcome-sub">Outstanding customer dues and supplier payables calculated from every service bill.</div></div></div>
+        <div class="data-table-wrap">
+            <table class="data-table">
+                <thead><tr><th>Service</th><th>Open bills</th><th>Amount due</th><th>Details</th></tr></thead>
+                <tbody>
+                    <tr><td>Consultation</td><td><?= (int) $centralDueSummary['consultation']['count'] ?></td><td><?= number_format($centralDueSummary['consultation']['due'], 2) ?></td><td><a class="btn-secondary btn-sm" href="reports.php?section=billing-consultation">View billing</a></td></tr>
+                    <tr><td>Laboratory</td><td><?= (int) $centralDueSummary['laboratory']['count'] ?></td><td><?= number_format($centralDueSummary['laboratory']['due'], 2) ?></td><td><a class="btn-secondary btn-sm" href="reports.php?section=billing-laboratory">View billing</a></td></tr>
+                    <tr><td>Pharmacy</td><td><?= (int) $centralDueSummary['pharmacy']['count'] ?></td><td><?= number_format($centralDueSummary['pharmacy']['due'], 2) ?></td><td><a class="btn-secondary btn-sm" href="reports.php?section=billing-pharmacy">View billing</a></td></tr>
+                    <tr><td>Services</td><td><?= (int) $centralDueSummary['service']['count'] ?></td><td><?= number_format($centralDueSummary['service']['due'], 2) ?></td><td><a class="btn-secondary btn-sm" href="reports.php?section=billing-services">View billing</a></td></tr>
+                    <tr><td>Supplier purchases</td><td><?= (int) $centralDueSummary['supplier']['count'] ?></td><td><?= number_format($centralDueSummary['supplier']['due'], 2) ?></td><td><a class="btn-secondary btn-sm" href="pharmacy.php?section=purchases">View purchases</a></td></tr>
+                    <tr><th colspan="2">Total customer receivable</th><th><?= number_format($centralReceivableDue, 2) ?></th><th><a class="btn-primary btn-sm" href="reports.php?section=outstanding">View all dues</a></th></tr>
+                    <tr><th colspan="2">Total supplier payable</th><th><?= number_format($centralPayableDue, 2) ?></th><th><a class="btn-primary btn-sm" href="pharmacy.php?section=purchases">View payables</a></th></tr>
+                    <tr><th colspan="2">Total open balances</th><th><?= number_format($centralReceivableDue + $centralPayableDue, 2) ?></th><th>Customer + supplier</th></tr>
+                </tbody>
+            </table>
+        </div>
+    </section>
 
     <div class="setup-grid">
         <a href="accounting.php?section=ledger" class="setup-card">
@@ -1584,14 +1674,28 @@ $justPaymentReversed = isset($_GET['reversed']);
             <div class="kpi-card"><div class="kpi-label">Gross Received</div><div class="kpi-value"><?= number_format($paymentTotals['amount'], 2) ?></div></div>
             <div class="kpi-card"><div class="kpi-label">Reversed</div><div class="kpi-value negative"><?= number_format($paymentTotals['reversed'], 2) ?></div></div>
             <div class="kpi-card"><div class="kpi-label">Net Received</div><div class="kpi-value"><?= number_format($paymentTotals['amount'] - $paymentTotals['reversed'], 2) ?></div></div>
-            <div class="kpi-card"><div class="kpi-label">Outstanding</div><div class="kpi-value<?= $paymentTotals['outstanding'] > 0 ? ' negative' : '' ?>"><?= number_format($paymentTotals['outstanding'], 2) ?></div></div>
+            <div class="kpi-card"><div class="kpi-label">Outstanding Customer Due</div><div class="kpi-value<?= $paymentTotals['outstanding'] > 0 ? ' negative' : '' ?>"><?= number_format($paymentTotals['outstanding'], 2) ?></div></div>
+        </div>
+
+        <div class="data-table-wrap" style="margin-bottom:24px;">
+            <table class="data-table">
+                <thead><tr><th>Service due summary</th><th>Open bills</th><th>Outstanding</th><th>Report</th></tr></thead>
+                <tbody>
+                    <tr><td>Consultation</td><td><?= (int) $centralDueSummary['consultation']['count'] ?></td><td><?= number_format($centralDueSummary['consultation']['due'], 2) ?></td><td><a class="btn-secondary btn-sm" href="reports.php?section=billing-consultation">Open</a></td></tr>
+                    <tr><td>Laboratory</td><td><?= (int) $centralDueSummary['laboratory']['count'] ?></td><td><?= number_format($centralDueSummary['laboratory']['due'], 2) ?></td><td><a class="btn-secondary btn-sm" href="reports.php?section=billing-laboratory">Open</a></td></tr>
+                    <tr><td>Pharmacy</td><td><?= (int) $centralDueSummary['pharmacy']['count'] ?></td><td><?= number_format($centralDueSummary['pharmacy']['due'], 2) ?></td><td><a class="btn-secondary btn-sm" href="reports.php?section=billing-pharmacy">Open</a></td></tr>
+                    <tr><td>Services</td><td><?= (int) $centralDueSummary['service']['count'] ?></td><td><?= number_format($centralDueSummary['service']['due'], 2) ?></td><td><a class="btn-secondary btn-sm" href="reports.php?section=billing-services">Open</a></td></tr>
+                    <tr><td>Supplier payables</td><td><?= (int) $centralDueSummary['supplier']['count'] ?></td><td><?= number_format($centralDueSummary['supplier']['due'], 2) ?></td><td><a class="btn-secondary btn-sm" href="pharmacy.php?section=purchases">Open</a></td></tr>
+                    <tr><th>Total open balances</th><th><?= (int) ($centralDueSummary['consultation']['count'] + $centralDueSummary['laboratory']['count'] + $centralDueSummary['pharmacy']['count'] + $centralDueSummary['supplier']['count']) ?></th><th><?= number_format($centralReceivableDue + $centralPayableDue, 2) ?></th><th>Customer + supplier</th></tr>
+                </tbody>
+            </table>
         </div>
 
         <div class="section-toolbar">
             <form method="GET" action="accounting.php" class="filter-box">
                 <input type="hidden" name="section" value="payments">
                 <input type="text" name="q" placeholder="Search payment, note, or source..." value="<?= tdc_e($paymentSearch) ?>">
-                <select name="type"><option value="">All Types</option><?php foreach (['Consultation','Laboratory','Pharmacy','POS','Supplier'] as $type): ?><option value="<?= tdc_e($type) ?>" <?= $paymentTypeFilter === $type ? 'selected' : '' ?>><?= tdc_e($type) ?></option><?php endforeach; ?></select>
+                <select name="type"><option value="">All Types</option><?php foreach (['Consultation','Laboratory','Pharmacy','POS','Supplier','Service'] as $type): ?><option value="<?= tdc_e($type) ?>" <?= $paymentTypeFilter === $type ? 'selected' : '' ?>><?= tdc_e($type) ?></option><?php endforeach; ?></select>
                 <select name="state"><option value="">All States</option><?php foreach (['Reversible','Reversed','Reversal'] as $state): ?><option value="<?= tdc_e($state) ?>" <?= $paymentStateFilter === $state ? 'selected' : '' ?>><?= tdc_e($state) ?></option><?php endforeach; ?></select>
                 <input type="date" name="from" aria-label="From date" value="<?= tdc_e($paymentFrom) ?>">
                 <input type="date" name="to" aria-label="To date" value="<?= tdc_e($paymentTo) ?>">
@@ -1764,7 +1868,7 @@ $justPaymentReversed = isset($_GET['reversed']);
                 <div class="form-group"><label>Total Debit</label><div class="due-display" id="jf_TotalDebit">0.00</div></div>
                 <div class="form-group"><label>Total Credit</label><div class="due-display" id="jf_TotalCredit">0.00</div></div>
                 <div class="form-group"><label>Difference</label><div class="due-display" id="jf_Difference">0.00</div></div>
-                <div class="form-group"><label>Status</label><div class="due-display" id="jf_BalanceStatus" style="font-size:12px;">—</div></div>
+                <div class="form-group"><label>Status</label><div class="due-display incomplete" id="jf_BalanceStatus" style="font-size:12px;">Incomplete — enter debit and credit lines</div></div>
             </div>
 
             <div class="form-actions">
@@ -1779,7 +1883,7 @@ $justPaymentReversed = isset($_GET['reversed']);
         <div class="welcome-sub">Every posted journal entry. Voiding posts a reversing entry — nothing is ever deleted.</div>
 
         <div class="section-toolbar">
-            <form method="GET" action="accounting.php" class="filter-box">
+            <form method="GET" action="accounting.php" class="filter-box ledger-filter-toolbar">
                 <input type="hidden" name="section" value="ledger">
                 <input type="text" name="q" placeholder="Search description, reference, or ID..." value="<?= tdc_e($ledgerSearch) ?>">
                 <select name="book">
@@ -1792,8 +1896,77 @@ $justPaymentReversed = isset($_GET['reversed']);
                 <input type="date" name="to" value="<?= tdc_e($ledgerTo) ?>">
                 <button type="submit" class="btn-primary btn "><?= tdc_icon('search',16) ?><span>Filter</span></button>
             </form>
-            <?php if (tdc_can('accounting.journal.post')): ?><a href="accounting.php?section=ledger&new=1" class="btn-success btn ">+ Manual Journal</a><?php endif; ?>
+            <?php if (tdc_can('accounting.journal.post')): ?><button type="button" id="openManualJournal" class="btn-success btn ">+ Manual Journal</button><?php endif; ?>
         </div>
+
+        <?php if (tdc_can('accounting.journal.post')): ?>
+        <div id="manualJournalModal" class="accounting-modal" hidden aria-hidden="true">
+            <div class="accounting-modal-backdrop" data-close-journal></div>
+            <div class="accounting-modal-dialog" role="dialog" aria-modal="true" aria-labelledby="manualJournalTitle">
+                <div class="accounting-modal-header"><div id="manualJournalTitle">Manual Journal Entry</div><button type="button" class="accounting-modal-close" data-close-journal aria-label="Close">&times;</button></div>
+                <div id="manualJournalBody" class="accounting-modal-body"><div class="accounting-modal-loading">Loading journal form…</div></div>
+            </div>
+        </div>
+        <style>
+            .accounting-modal{position:fixed;inset:0;z-index:1000;display:grid;place-items:center}.accounting-modal[hidden]{display:none}.accounting-modal-backdrop{position:absolute;inset:0;background:rgba(13,21,65,.58);backdrop-filter:blur(3px)}.accounting-modal-dialog{position:relative;width:min(1120px,calc(100vw - 32px));max-height:calc(100vh - 40px);overflow:auto;background:#f8f9ff;border:1px solid #dbe2f2;border-radius:18px;box-shadow:0 24px 70px rgba(13,21,65,.28)}.accounting-modal-header{position:sticky;top:0;z-index:2;display:flex;justify-content:space-between;align-items:center;padding:18px 24px;background:#30339a;color:#fff;font-size:20px;font-weight:700}.accounting-modal-close{border:0;background:rgba(255,255,255,.16);color:#fff;border-radius:8px;width:34px;height:34px;font-size:25px;cursor:pointer}.accounting-modal-body{padding:24px}.accounting-modal-body .welcome-title,.accounting-modal-body .welcome-sub{display:none}.accounting-modal-body .form-actions{position:sticky;bottom:0;background:#f8f9ff;padding-top:16px}.accounting-modal-loading{padding:40px;text-align:center;color:#58679a}
+        </style>
+        <script>
+        (function(){
+            const open=document.getElementById('openManualJournal'), modal=document.getElementById('manualJournalModal'), body=document.getElementById('manualJournalBody');
+            if(!open||!modal)return;
+            const close=()=>{modal.hidden=true;modal.setAttribute('aria-hidden','true');document.body.classList.remove('modal-open');};
+            modal.querySelectorAll('[data-close-journal]').forEach(el=>el.addEventListener('click',close));
+            document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!modal.hidden)close();});
+            open.addEventListener('click',async()=>{
+                modal.hidden=false;modal.setAttribute('aria-hidden','false');document.body.classList.add('modal-open');
+                body.innerHTML='<div class="accounting-modal-loading">Loading journal form…</div>';
+                try{
+                    const html=await fetch('accounting.php?section=ledger&new=1',{credentials:'same-origin'}).then(r=>r.text());
+                    const doc=new DOMParser().parseFromString(html,'text/html'), form=doc.getElementById('journalForm');
+                    if(!form)throw new Error('Journal form unavailable');
+                    body.innerHTML='';
+                    const list=doc.getElementById('existingAccountNames'); if(list) body.appendChild(list.cloneNode(true));
+                    body.appendChild(form);
+                    const cancel=form.querySelector('.form-actions a[href*="section=ledger"]'); if(cancel) cancel.addEventListener('click',e=>{e.preventDefault();close();});
+                    // Select the journal form initializer itself. The modal loader
+                    // also contains the lookup code, so use the initializer's
+                    // declaration rather than a generic function-name search.
+                    const setup=[...doc.scripts].find(s=>s.textContent.includes('const accountTypeMap ='));
+                    if(setup){const script=document.createElement('script');script.textContent=setup.textContent;document.body.appendChild(script);script.remove();}
+                    const journalForm=body.querySelector('#journalForm');
+                    if(journalForm && journalForm.dataset.initialized !== '1'){
+                        const refreshJournal=()=>{
+                            let debit=0,credit=0;
+                            journalForm.querySelectorAll('.line-item-row').forEach(row=>{
+                                debit+=parseFloat(row.querySelector('.debit-input')?.value)||0;
+                                credit+=parseFloat(row.querySelector('.credit-input')?.value)||0;
+                            });
+                            journalForm.querySelector('#jf_TotalDebit').textContent=debit.toFixed(2);
+                            journalForm.querySelector('#jf_TotalCredit').textContent=credit.toFixed(2);
+                            journalForm.querySelector('#jf_Difference').textContent=(debit-credit).toFixed(2);
+                            const balanced=debit>0&&Math.abs(debit-credit)<0.01;
+                            journalForm.querySelector('#jf_BalanceStatus').textContent=balanced?'✓ Balanced':(debit===0&&credit===0?'Incomplete — enter debit and credit lines':'✗ Not Balanced');
+                            const description=journalForm.querySelector('[name="Description"]')?.value.trim()||'';
+                            journalForm.querySelector('#jf_SubmitBtn').disabled=!balanced||!description;
+                        };
+                        journalForm.addEventListener('input',refreshJournal);
+                        journalForm.addEventListener('change',refreshJournal);
+                        journalForm.querySelector('#addLineBtn')?.addEventListener('click',()=>{
+                            const source=journalForm.querySelector('.line-item-row'), next=source?.cloneNode(true);
+                            if(!next) return;
+                            next.querySelectorAll('input').forEach(input=>{input.value='';input.disabled=false;});
+                            next.querySelectorAll('select').forEach(select=>{select.selectedIndex=0;select.disabled=false;});
+                            journalForm.querySelector('#lineItemsBody')?.appendChild(next);
+                            refreshJournal();
+                        });
+                        refreshJournal();
+                        journalForm.dataset.initialized='fallback';
+                    }
+                }catch(e){body.innerHTML='<div class="error-msg">Unable to load the journal form. Please refresh and try again.</div>';}
+            });
+        })();
+        </script>
+        <?php endif; ?>
 
         <div class="data-table-wrap">
             <table class="data-table">
@@ -1816,7 +1989,7 @@ $justPaymentReversed = isset($_GET['reversed']);
                         <td><?= tdc_e(date('Y-m-d', strtotime((string) $je['TransactionDate']))) ?></td>
                         <td>
                             <div class="row-actions">
-                                <a href="accounting.php?section=ledger&view=<?= urlencode($je['EntryRef']) ?>" class="btn-sm">View</a>
+                                <a href="accounting.php?section=ledger&view=<?= urlencode($je['EntryRef']) ?>" class="btn-sm accounting-view-trigger">View</a>
                                 <?php if (tdc_can('accounting.journal.reverse')): ?><form method="POST" action="accounting.php?section=ledger" data-confirm="Reverse this entry? A new offsetting entry will be posted — the original is never deleted. This cannot be undone.">
                                     <input type="hidden" name="csrf_token" value="<?= tdc_e($csrfToken) ?>">
                                     <input type="hidden" name="form_action" value="void">
@@ -1894,7 +2067,7 @@ $justPaymentReversed = isset($_GET['reversed']);
                     <?php else: foreach ($viewAccountLines as $l): ?>
                     <tr>
                         <td><?= tdc_e(date('Y-m-d', strtotime((string) $l['TransactionDate']))) ?></td>
-                        <td><a href="accounting.php?section=ledger&view=<?= urlencode($l['EntryRef']) ?>"><?= tdc_e($l['EntryRef']) ?></a></td>
+                                <td><a class="accounting-view-trigger" href="accounting.php?section=ledger&view=<?= urlencode($l['EntryRef']) ?>"><?= tdc_e($l['EntryRef']) ?></a></td>
                         <td style="white-space:normal;max-width:320px;"><?= tdc_e($l['Description']) ?></td>
                         <td><?= tdc_e($l['BookType'] ?? '—') ?></td>
                         <td><?= (float) $l['Debit'] > 0 ? number_format((float) $l['Debit'], 2) : '—' ?></td>
@@ -1940,8 +2113,8 @@ $justPaymentReversed = isset($_GET['reversed']);
                         <td><?= (int) $acct['EntryCount'] ?></td>
                         <td>
                             <div class="row-actions">
-                                <a href="accounting.php?section=accounts&view=<?= urlencode($acct['AccountID']) ?>" class="btn-sm">View</a>
-                                <?php if (tdc_can('setup.financial.manage') && !tdc_is_system_account((string) $acct['AccountID'])): ?><button type="button" class="btn-warning btn-sm rename-account-btn"
+                                <a href="accounting.php?section=accounts&view=<?= urlencode($acct['AccountID']) ?>" class="btn-sm accounting-view-trigger">View</a>
+                                <?php if (tdc_can('setup.financial.manage') && !tdc_is_system_account((string) $acct['AccountID'])): ?><button type="button" class="btn-secondary btn-sm rename-account-btn"
                                     data-id="<?= tdc_e($acct['AccountID']) ?>" data-name="<?= tdc_e($acct['AccountName']) ?>"><?= tdc_icon('pencil',16) ?><span>Rename</span></button><?php endif; ?>
                             </div>
                         </td>
@@ -1977,11 +2150,37 @@ $justPaymentReversed = isset($_GET['reversed']);
             </div>
         </div>
 
+        <div class="modal-overlay accounting-view-modal" id="accountingViewModal" aria-hidden="true">
+            <div class="modal-box">
+                <div class="modal-head">
+                    <h3 id="accountingViewTitle">Accounting details</h3>
+                    <button type="button" class="modal-close" id="accountingViewClose" aria-label="Close">
+                        <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"/></svg>
+                    </button>
+                </div>
+                <div class="accounting-modal-content" id="accountingViewContent"><p class="muted">Loading details…</p></div>
+            </div>
+        </div>
+
     <?php endif; ?>
 
 <?php endif; ?>
 
 </main>
+
+<?php if ($section === 'ledger'): ?>
+<div class="modal-overlay accounting-view-modal" id="accountingViewModal" aria-hidden="true">
+    <div class="modal-box">
+        <div class="modal-head">
+            <h3 id="accountingViewTitle">Journal entry details</h3>
+            <button type="button" class="modal-close" id="accountingViewClose" aria-label="Close">
+                <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"/></svg>
+            </button>
+        </div>
+        <div class="accounting-modal-content" id="accountingViewContent"><p class="muted">Loading details…</p></div>
+    </div>
+</div>
+<?php endif; ?>
 
 <div id="js-toast" role="alert" aria-live="assertive">
     <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.03-9.78a.75.75 0 00-1.06-1.06L8.75 10.44l-1.72-1.72a.75.75 0 00-1.06 1.06l2.25 2.25a.75.75 0 001.06 0l4.75-4.75z" clip-rule="evenodd"/></svg>
@@ -2103,6 +2302,12 @@ function showToast(message){
         this.querySelectorAll('.debit-input, .credit-input').forEach(function(input) {
             input.disabled = false;
         });
+        // Disabled selects are omitted from a native form submission.  Existing
+        // accounts lock this field for editing, but the selected type is still
+        // required by the server validator for every submitted line.
+        this.querySelectorAll('.account-type-select').forEach(function(select) {
+            select.disabled = false;
+        });
     });
 
     /* -- renumber -------------------------------------------------------- */
@@ -2164,8 +2369,8 @@ function showToast(message){
 
         const statusEl = document.getElementById('jf_BalanceStatus');
         if (totalDebit === 0 && totalCredit === 0) {
-            statusEl.textContent = '\u2014';
-            statusEl.className = 'due-display';
+            statusEl.textContent = 'Incomplete — enter debit and credit lines';
+            statusEl.className = 'due-display incomplete';
         } else if (Math.abs(diff) < 0.01 && totalDebit > 0) {
             statusEl.textContent = '\u2713 Balanced';
             statusEl.className = 'due-display balanced';
@@ -2195,6 +2400,7 @@ function showToast(message){
         recalcAll();
         template.querySelector('.account-name-input').focus();
     });
+    document.getElementById('journalForm').dataset.initialized = '1';
 
     dateInput.addEventListener('input', recalcAll);
     descInput.addEventListener('input', recalcAll);
@@ -2248,6 +2454,46 @@ function showToast(message){
     document.getElementById('paymentReversalCancelBtn').addEventListener('click', close);
     overlay.addEventListener('click', function(e){ if (e.target === overlay) close(); });
     document.addEventListener('keydown', function(e){ if (e.key === 'Escape') close(); });
+})();
+<?php endif; ?>
+
+<?php if (in_array($section, ['ledger', 'accounts'], true)): ?>
+(function(){
+    const overlay = document.getElementById('accountingViewModal');
+    const content = document.getElementById('accountingViewContent');
+    const title = document.getElementById('accountingViewTitle');
+    const closeButton = document.getElementById('accountingViewClose');
+    if (!overlay || !content) return;
+    function close(){ overlay.classList.remove('show'); overlay.setAttribute('aria-hidden', 'true'); }
+    function open(link){
+        overlay.classList.add('show');
+        overlay.setAttribute('aria-hidden', 'false');
+        content.innerHTML = '<p class="muted">Loading details…</p>';
+        fetch(link.href, {headers:{'X-Requested-With':'XMLHttpRequest'}}).then(function(response){
+            if (!response.ok) throw new Error('Unable to load details');
+            return response.text();
+        }).then(function(html){
+            const doc = new DOMParser().parseFromString(html, 'text/html');
+            const page = doc.querySelector('.page-body');
+            if (!page) throw new Error('Details unavailable');
+            page.querySelectorAll('.modal-overlay, script, .logout-fab, .app-header').forEach(function(node){ node.remove(); });
+            content.innerHTML = page.innerHTML;
+            const heading = content.querySelector('.welcome-title');
+            title.textContent = heading ? heading.textContent.trim() : 'Accounting details';
+        }).catch(function(){
+            close();
+            window.location.href = link.href;
+        });
+    }
+    document.addEventListener('click', function(event){
+        const link = event.target.closest('.accounting-view-trigger');
+        if (!link) return;
+        event.preventDefault();
+        open(link);
+    });
+    closeButton?.addEventListener('click', close);
+    overlay.addEventListener('click', function(event){ if (event.target === overlay) close(); });
+    document.addEventListener('keydown', function(event){ if (event.key === 'Escape') close(); });
 })();
 <?php endif; ?>
 

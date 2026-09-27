@@ -5,6 +5,8 @@ import { tmpdir } from 'node:os';
 const BASE = 'http://127.0.0.1:8137';
 const PORT = 9341;
 const REF = 'QA-E2E-REF-0001';
+const E2E_USERNAME = process.env.TDC_E2E_USERNAME || 'e2e_local_superuser';
+const E2E_PASSWORD = process.env.TDC_E2E_PASSWORD || '';
 const R = [];
 const rec = (area, name, ok, detail) => R.push({ area: area, name: name, ok: !!ok, detail: detail === undefined ? '' : String(detail) });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -93,7 +95,7 @@ async function ensureLoggedIn() {
   const st = await ev('({path:location.pathname})');
   if (!st || String(st.path).indexOf('auth.php') === -1) return false;
   await go(BASE + '/auth/auth.php', 900);
-  await ev('document.querySelector(\'#username\').value=\'uat_superadmin\';document.querySelector(\'#password\').value=\'TareySA#926!\';document.querySelector(\'#loginForm\').submit();1');
+  await ev(`document.querySelector('#username').value=${JSON.stringify(E2E_USERNAME)};document.querySelector('#password').value=${JSON.stringify(E2E_PASSWORD)};document.querySelector('#loginForm').submit();1`);
   await sleep(1800);
   return true;
 }
@@ -106,7 +108,7 @@ async function main() {
   await command('Runtime.enable');
 
   await go(BASE + '/auth/auth.php', 900);
-  await ev('document.querySelector(\'#username\').value=\'uat_superadmin\';document.querySelector(\'#password\').value=\'TareySA#926!\';document.querySelector(\'#loginForm\').submit();1');
+  await ev(`document.querySelector('#username').value=${JSON.stringify(E2E_USERNAME)};document.querySelector('#password').value=${JSON.stringify(E2E_PASSWORD)};document.querySelector('#loginForm').submit();1`);
   await sleep(1800);
   const who = await ev('({path:location.pathname})');
   rec('auth', 'login as superuser (is_root=0)', who && who.path && who.path.indexOf('auth.php') === -1, JSON.stringify(who));
@@ -168,7 +170,7 @@ async function main() {
       rows:document.querySelectorAll('.data-table tbody tr').length
     };
   })()`);
-  const need = ['Appointment','Patient','Gender','Age','Phone','Visit date','Queue','Actions'];
+  const need = ['Visit Reference','Patient','Doctor','Appointment Date/Time','Consultation Fee','Paid','Due','Payment Status','Queue Status','Actions'];
   const missing = need.filter((h) => !dw || !dw.heads || dw.heads.indexOf(h) === -1);
   rec('doctor-waiting', 'table columns present', missing.length === 0, 'missing=' + missing.join(',') + ' heads=' + JSON.stringify(dw && dw.heads));
   rec('doctor-waiting', 'toolbar: from/to date, search, entries', dw && dw.from && dw.to && dw.search && dw.perPage, JSON.stringify(dw));

@@ -1,14 +1,54 @@
 <?php
 declare(strict_types=1);
+require_once __DIR__ . '/billing-adjustments.php';
 
 require_once __DIR__ . '/finance.php';
+
+const TDC_APPOINTMENT_MINUTES = 30;
+
+/** Parse date-only appointment input while accepting legacy datetime values. */
+function tdc_parse_appointment_datetime(string $rawDate, ?DateTimeZone $timezone = null): ?DateTime
+{
+    $timezone ??= new DateTimeZone('Africa/Mogadishu');
+    $rawDate = trim($rawDate);
+    if ($rawDate === '') return null;
+    $date = DateTime::createFromFormat('Y-m-d', $rawDate, $timezone);
+    if ($date && $date->format('Y-m-d') === $rawDate) {
+        $date->setTime(9, 0, 0);
+        return $date;
+    }
+    $date = DateTime::createFromFormat('Y-m-d\\TH:i', $rawDate, $timezone);
+    return $date && $date->format('Y-m-d\\TH:i') === $rawDate ? $date : null;
+}
+
+function tdc_doctor_has_booking_conflict(PDO $pdo, int $doctorId, DateTimeInterface $visitDate, ?int $excludeVisitId = null): bool
+{
+    $sql = "SELECT COUNT(*) FROM visits WHERE DoctorID=? AND QueueStatus<>'Cancelled' AND VisitDate < DATE_ADD(?, INTERVAL " . TDC_APPOINTMENT_MINUTES . " MINUTE) AND DATE_ADD(VisitDate, INTERVAL " . TDC_APPOINTMENT_MINUTES . " MINUTE) > ?";
+    if ($excludeVisitId !== null) $sql .= ' AND VisitID <> ?';
+    $stmt = $pdo->prepare($sql);
+    $formatted = $visitDate->format('Y-m-d H:i:s');
+    $params = [$doctorId, $formatted, $formatted];
+    if ($excludeVisitId !== null) $params[] = $excludeVisitId;
+    $stmt->execute($params);
+    return (int) $stmt->fetchColumn() > 0;
+}
+
+function tdc_doctor_is_available(array $doctor, DateTimeInterface $visitDate): bool
+{
+    $day = (string) $visitDate->format('N');
+    $time = $visitDate->format('H:i');
+    $days = array_filter(explode(',', (string) ($doctor['WorkingDays'] ?? '')));
+    $start = substr((string) ($doctor['WorkStartTime'] ?? ''), 0, 5);
+    $end = substr((string) ($doctor['WorkEndTime'] ?? ''), 0, 5);
+    return in_array($day, $days, true) && $time >= $start && $time <= $end;
+}
 
 function tdc_workflow_next_reference(PDO $pdo, string $table, string $column, string $prefix): string
 {
     $allowed = [
         'visits.VisitReference', 'payments.PaymentReference',
         'prescriptions.PrescriptionID', 'laboratory.LaboratoryID',
-        'pharmacysales.SaleID', 'accounting.EntryID',
+        'pharmacysales.SaleID', 'service_assignments.ServiceReference', 'accounting.EntryID',
     ];
     if (!in_array("{$table}.{$column}", $allowed, true)) {
         throw new InvalidArgumentException('Unsupported reference source.');
@@ -109,15 +149,48 @@ function tdc_workflow_notify_permission(PDO $pdo, string $permissionKey, string 
 function tdc_workflow_record_payment(PDO $pdo, int $patientId, string $type, float $amount, int $receivedBy, array $links = []): ?string
 {
     if ($amount <= 0) return null;
+
     $ref = (string) ($links['PaymentReference'] ?? '');
     if ($ref === '') {
         $ref = tdc_workflow_next_reference($pdo, 'payments', 'PaymentReference', 'PAY');
     }
-    $stmt = $pdo->prepare('INSERT INTO payments (PaymentReference,PatientID,VisitID,LaboratoryID,PrescriptionReference,SaleReference,PurchaseReference,PaymentType,Amount,PaymentMethod,ReceivedBy) VALUES (?,?,?,?,?,?,?,?,?,?,?)');
-    $stmt->execute([
-        $ref, $patientId, $links['VisitID'] ?? null, $links['LaboratoryID'] ?? null, $links['PrescriptionReference'] ?? null,
-        $links['SaleReference'] ?? null, $links['PurchaseReference'] ?? null, $type, $amount, $links['PaymentMethod'] ?? 'Cash', $receivedBy,
-    ]);
+
+    $duplicateCheck = $pdo->prepare(
+        'SELECT COUNT(*) FROM payments WHERE PaymentType = ? AND PatientID = ? AND Amount = ? AND PaymentMethod = ? AND ReceivedBy = ? AND PaymentStatus = "Confirmed" AND LaboratoryID IS NOT NULL AND LaboratoryID = ? LIMIT 1'
+    );
+    if ($type === 'Laboratory' && !empty($links['LaboratoryID'])) {
+        $duplicateCheck->execute([$type, $patientId, round($amount, 2), $links['PaymentMethod'] ?? 'Cash', $receivedBy, (string) $links['LaboratoryID']]);
+        if ((int) $duplicateCheck->fetchColumn() > 0) {
+            return null;
+        }
+    }
+
+    $columns = ['PaymentReference', 'PatientID', 'PaymentType', 'Amount', 'PaymentMethod', 'ReceivedBy'];
+    $values = [$ref, $patientId, $type, $amount, $links['PaymentMethod'] ?? 'Cash', $receivedBy];
+    $optionalLinks = [
+        'VisitID' => $links['VisitID'] ?? null,
+        'LaboratoryID' => $links['LaboratoryID'] ?? null,
+        'PrescriptionReference' => $links['PrescriptionReference'] ?? null,
+    ];
+    if ($type === 'POS') {
+        $optionalLinks['SaleReference'] = $links['SaleReference'] ?? null;
+    } elseif ($type === 'Supplier') {
+        $optionalLinks['PurchaseReference'] = $links['PurchaseReference'] ?? null;
+    } elseif ($type === 'Service') {
+        $optionalLinks['ServiceAssignmentID'] = $links['ServiceAssignmentID'] ?? null;
+    }
+    foreach ($optionalLinks as $column => $value) {
+        if ($value === null || $value === '') continue;
+        if (!tdc_has_column($pdo, 'payments', $column)) {
+            throw new RuntimeException("Payment schema is missing {$column} for {$type} payment.");
+        }
+        $columns[] = $column;
+        $values[] = $value;
+    }
+    $columnSql = implode(',', $columns);
+    $placeholders = implode(',', array_fill(0, count($values), '?'));
+    $stmt = $pdo->prepare("INSERT INTO payments ({$columnSql}) VALUES ({$placeholders})");
+    $stmt->execute($values);
     // The stored patient balance is always reconciled from the source
     // records whenever the ledger changes.
     tdc_reconcile_patient_due_balance($pdo, $patientId);
@@ -176,3 +249,85 @@ function tdc_workflow_post_expense(PDO $pdo, string $accountId, string $accountN
     $stmt = $pdo->prepare("INSERT INTO accounting (EntryID,AccountID,AccountName,AccountType,BookType,ReferenceID,Description,Debit,Credit,Balance) VALUES (?,?,?,'Asset','Purchases Book',?,?,0,?,?)");
     $stmt->execute([$creditEntry,$receivingId,$receivingName,$reference,$description,$amount,-$amount]);
 }
+
+/** Create an optional appointment while the patient intake transaction is open. */
+function tdc_create_patient_appointment(PDO $pdo, int $patientId, array $input, int $receptionistId): int
+{
+    $doctorId = ctype_digit((string) ($input['AppointmentDoctorID'] ?? '')) ? (int) $input['AppointmentDoctorID'] : 0;
+    $rawDate = trim((string) ($input['AppointmentDate'] ?? ''));
+    $date = tdc_parse_appointment_datetime($rawDate);
+    $doctorStmt = $pdo->prepare('SELECT DoctorID,UserID,ConsultationFee,WorkingDays,WorkStartTime,WorkEndTime FROM doctors WHERE DoctorID=?');
+    $doctorStmt->execute([$doctorId]);
+    $doctor = $doctorStmt->fetch();
+    if (!$doctor || empty($doctor['UserID'])) throw new RuntimeException('Select a doctor linked to a Doctor user account.');
+    if ($date && preg_match('/^\d{4}-\d{2}-\d{2}$/', $rawDate)) {
+        [$hour, $minute] = array_pad(explode(':', substr((string) $doctor['WorkStartTime'], 0, 5)), 2, 0);
+        $date->setTime((int) $hour, (int) $minute, 0);
+    }
+    if (!$date) throw new RuntimeException('Choose a valid appointment date.');
+    if (strlen($rawDate) > 10 && $date < new DateTime('now', new DateTimeZone('Africa/Mogadishu'))) throw new RuntimeException('Appointment time cannot be in the past.');
+    if ($date < new DateTime('today', new DateTimeZone('Africa/Mogadishu'))) throw new RuntimeException('Appointment date cannot be in the past.');
+    if (!tdc_doctor_is_available($doctor, $date)) throw new RuntimeException('The selected doctor is not available on the selected date.');
+    $isFreeConsultation = !empty($input['AppointmentFreeConsultation']);
+    $amount = is_numeric($input['AppointmentAmountPaid'] ?? null) ? round((float) $input['AppointmentAmountPaid'], 2) : -1;
+    $fee = round((float) $doctor['ConsultationFee'], 2);
+    if ($isFreeConsultation) {
+        // A waiver is visit-level state, not a fabricated 100% discount.
+        $amount = 0.0;
+        $finalFee = 0.0;
+        $adjustment = null;
+    } else {
+        $adjustment = tdc_calculate_bill_adjustment($fee, (string)($input['AppointmentDiscountType'] ?? 'None'), (float)($input['AppointmentDiscountValue'] ?? 0), (float)($input['AppointmentTaxRate'] ?? 0));
+        $finalFee = $adjustment['final_amount'];
+    }
+    if (!$isFreeConsultation && $adjustment['discount_amount'] > 0 && trim((string)($input['AppointmentDiscountReason'] ?? '')) === '') throw new RuntimeException('A discount reason is required.');
+    if ($amount < 0 || $amount > $finalFee) throw new RuntimeException('Amount paid cannot exceed the final appointment amount.');
+    $method = trim((string) ($input['AppointmentPaymentMethod'] ?? ''));
+    $methods = $pdo->query('SELECT MethodName FROM paymentmethods WHERE IsActive=1 ORDER BY DisplayOrder,MethodName')->fetchAll(PDO::FETCH_COLUMN);
+    if ($amount > 0 && !in_array($method, $methods, true)) throw new RuntimeException('Select an active payment method for the appointment payment.');
+    if (tdc_doctor_has_booking_conflict($pdo, $doctorId, $date)) throw new RuntimeException('The doctor already has an appointment during this time.');
+    $status = tdc_workflow_payment_status($finalFee, $amount);
+    $queue = $status === 'Paid' ? 'Waiting' : 'Pending Payment';
+    $reference = tdc_workflow_next_reference($pdo, 'visits', 'VisitReference', 'VIS');
+    $stmt = $pdo->prepare('INSERT INTO visits (VisitReference,PatientID,DoctorID,ReceptionistUserID,VisitDate,ConsultationFee,AmountPaid,DueBalance,PaymentStatus,QueueStatus,ChiefComplaint,IsFreeConsultation) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)');
+    $stmt->execute([$reference,$patientId,$doctorId,$receptionistId,$date->format('Y-m-d H:i:s'),$finalFee,$amount,max(0,$finalFee-$amount),$status,$queue,trim((string) ($input['AppointmentReason'] ?? '')) ?: null,$isFreeConsultation ? 1 : 0]);
+    $visitId = (int) $pdo->lastInsertId();
+    if (!$isFreeConsultation) tdc_save_bill_adjustment($pdo, 'consultation', $reference, $fee, $adjustment['discount_type'], $adjustment['discount_value'], $adjustment['tax_rate'], $amount, (string)($input['AppointmentDiscountReason'] ?? ''), (string)($input['AppointmentAdjustmentNote'] ?? ''));
+    $pdo->prepare('UPDATE patients SET AllocatedDoctor=?,VisitNumber=VisitNumber+1 WHERE PatientID=?')->execute([$doctorId,$patientId]);
+    tdc_reconcile_patient_due_balance($pdo, $patientId);
+    $paymentRef = tdc_workflow_record_payment($pdo, $patientId, 'Consultation', $amount, $receptionistId, ['VisitID'=>$visitId,'PaymentMethod'=>$method ?: 'Cash']);
+    if ($paymentRef) tdc_workflow_post_revenue($pdo, 'REV-CONSULT', 'Consultation Revenue', $paymentRef, 'Appointment payment for '.$reference, $amount);
+    if ($status === 'Paid') tdc_workflow_notify($pdo, (int) $doctor['UserID'], 'doctoruser', 'consultation_booked', 'New appointment booked', $reference.' is fully paid and waiting', 'doctors.php?visit='.$visitId);
+    return $visitId;
+}
+
+/** Update an existing booked visit without creating a new visit or payment. */
+function tdc_update_patient_appointment(PDO $pdo, int $patientId, int $visitId, array $input): void
+{
+    $stmt = $pdo->prepare('SELECT VisitID, PatientID, DoctorID, VisitDate, QueueStatus FROM visits WHERE VisitID=? AND PatientID=? LIMIT 1');
+    $stmt->execute([$visitId, $patientId]);
+    $visit = $stmt->fetch();
+    if (!$visit || (string) $visit['QueueStatus'] === 'Cancelled') throw new RuntimeException('The selected appointment no longer exists or has been cancelled.');
+    if (in_array((string) $visit['QueueStatus'], ['In Consultation', 'Completed'], true)) throw new RuntimeException('Only upcoming appointments can be edited.');
+    $doctorId = ctype_digit((string) ($input['AppointmentDoctorID'] ?? '')) ? (int) $input['AppointmentDoctorID'] : 0;
+    $rawDate = trim((string) ($input['AppointmentDate'] ?? ''));
+    $date = tdc_parse_appointment_datetime($rawDate);
+    $doctorStmt = $pdo->prepare('SELECT DoctorID,UserID,WorkingDays,WorkStartTime,WorkEndTime FROM doctors WHERE DoctorID=?');
+    $doctorStmt->execute([$doctorId]);
+    $doctor = $doctorStmt->fetch();
+    if (!$doctor || empty($doctor['UserID'])) throw new RuntimeException('Select a doctor linked to a Doctor user account.');
+    if ($date && preg_match('/^\d{4}-\d{2}-\d{2}$/', $rawDate)) {
+        [$hour, $minute] = array_pad(explode(':', substr((string) $doctor['WorkStartTime'], 0, 5)), 2, 0);
+        $date->setTime((int) $hour, (int) $minute, 0);
+    }
+    if (!$date) throw new RuntimeException('Choose a valid appointment date.');
+    if ($date < new DateTime('today', new DateTimeZone('Africa/Mogadishu'))) throw new RuntimeException('Appointment date cannot be in the past.');
+    if (!tdc_doctor_is_available($doctor, $date)) throw new RuntimeException('The selected doctor is not available on the selected date.');
+    if (tdc_doctor_has_booking_conflict($pdo, $doctorId, $date, $visitId)) throw new RuntimeException('The doctor already has an appointment during this time.');
+    if (strlen($rawDate) > 10 && $date < new DateTime('now', new DateTimeZone('Africa/Mogadishu'))) throw new RuntimeException('Appointment time cannot be in the past.');
+    $pdo->prepare('UPDATE visits SET DoctorID=?, VisitDate=?, ChiefComplaint=? WHERE VisitID=? AND PatientID=?')
+        ->execute([$doctorId, $date->format('Y-m-d H:i:s'), trim((string) ($input['AppointmentReason'] ?? '')) ?: null, $visitId, $patientId]);
+    $pdo->prepare('UPDATE patients SET AllocatedDoctor=? WHERE PatientID=?')->execute([$doctorId, $patientId]);
+}
+
+
