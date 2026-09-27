@@ -375,8 +375,8 @@ body { min-width: 0; min-height: 100vh; margin: 0; background: var(--background)
 .filter-box, .search-box { display: flex; align-items: center; flex: 1 1 620px; min-width: 0; max-width: 100%; gap: 8px; flex-wrap: wrap; }
 .tdc-search { position: relative; display: flex; align-items: center; gap: 8px; min-height: var(--control-height); flex: 1 1 280px; width: 100%; padding: 0 10px; border: 1px solid var(--border-ui); border-radius: var(--radius); background: var(--surface); color: var(--text-muted); }
 .tdc-search > svg { flex: 0 0 auto; stroke: currentColor; }
-.tdc-search > input { flex: 1 1 auto; min-width: 0; width: auto !important; min-height: 40px !important; padding: 8px 0 !important; border: 0 !important; background: transparent !important; box-shadow: none !important; }
-.tdc-search:focus-within { border-color: var(--primary); box-shadow: 0 0 0 2px rgba(46,49,146,.2); }
+.tdc-search > input { flex: 1 1 auto; min-width: 0; width: 100% !important; min-height: 40px !important; padding: 8px 0 !important; border: 0 !important; outline: none !important; background: transparent !important; box-shadow: none !important; }
+.tdc-search:focus-within { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(46,49,146,.16); outline: none !important; }
 .tdc-search__clear { flex: 0 0 auto; width: 24px; height: 24px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--text-muted); cursor: pointer; font-size: 18px; line-height: 20px; }
 .tdc-search__clear:hover, .tdc-search__clear:focus { background: var(--neutral-soft); color: var(--primary); }
 .tdc-payment-error { display: block; margin-top: 4px; color: #b42318; font-size: 11px; line-height: 1.35; }
@@ -507,7 +507,8 @@ body.modal-open { overflow: hidden; }
 .statement-header { border-bottom: 1px solid var(--border-ui) !important; background: var(--surface-secondary); }
 .balance-check { border-width: 1px !important; border-radius: var(--radius); }
 
-:focus-visible { outline: 2px solid var(--orange) !important; outline-offset: 3px; }
+:focus-visible:not(input):not(select):not(textarea):not(.tdc-search):not(.table-filter):not(.date-range-field) { outline: 2px solid var(--orange) !important; outline-offset: 3px; }
+input:focus-visible, select:focus-visible, textarea:focus-visible, .tdc-search:focus-visible, .table-filter:focus-visible { outline: none !important; }
 
 @media (max-width: 1050px) {
     .dashboard-metrics, .kpi-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
@@ -1031,7 +1032,7 @@ body.modal-open { overflow: hidden; }
 .report-workspace-kicker { margin-bottom:8px; color:var(--text-secondary); font-size:11px; font-weight:700; }
 .report-workspace-main h2 { margin:0 0 8px; color:var(--text-primary); font-size:22px; }
 .report-workspace-main p { max-width:560px; margin:0 0 20px; color:var(--text-secondary); font-size:13px; line-height:1.5; }
-@media (max-width: 760px) { .report-workspace { grid-template-columns:1fr; } .report-side-nav { order:0; } .report-workspace-main { order:1; } }
+@media (max-width: 760px) { .report-workspace, .report-workspace-live { grid-template-columns:minmax(0,1fr); } .report-side-nav { order:0; } .report-workspace-main { order:1; } }
 .report-jump-nav { display:flex; flex-wrap:wrap; gap:8px; margin:20px 0 26px; padding:10px; border:1px solid var(--border-ui); border-radius:var(--radius-card); background:var(--surface); }
 .report-jump-nav a { display:inline-flex; align-items:center; gap:6px; padding:8px 12px; border:1px solid var(--border-ui); border-radius:999px; color:var(--text-secondary); background:var(--surface); text-decoration:none; font-size:12px; font-weight:650; transition:border-color var(--transition),color var(--transition),background var(--transition); }
 .report-jump-nav a:hover { color:var(--primary); border-color:var(--primary); background:var(--primary-soft); }
@@ -1101,3 +1102,327 @@ body.modal-open { overflow: hidden; }
 .appointment-calendar-day.is-today { outline: 1px solid #8d93b4; outline-offset: -2px; }
 .appointment-calendar-day.is-selected,.appointment-calendar-slots .is-selected { background:#30339a!important;color:white!important; }
 .appointment-calendar-day:disabled { pointer-events:none; }
+
+/* =====================================================================
+   GLOBAL REPORT FILTER TOOLBAR & RESPONSIVE SEARCH
+   ===================================================================== */
+.report-toolbar,
+.report-filter-toolbar {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-bottom: 18px;
+    width: 100%;
+}
+
+.report-context {
+    align-self: flex-start;
+    color: var(--navy-55, #68709b);
+    font-size: 12px;
+    font-weight: 600;
+    margin-top: 2px;
+}
+
+.report-filters,
+.report-filter-form {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: 12px;
+    width: 100%;
+    margin: 0;
+    padding: 0;
+}
+
+/* Quick Period */
+.report-filters .quick-period-control {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    flex: 0 0 120px;
+    width: 120px;
+    margin: 0;
+}
+.report-filters .quick-period-control span {
+    display: block;
+    color: var(--navy-55, #68709b);
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+    line-height: 1.2;
+}
+.report-filters .quick-period-control select {
+    width: 100%;
+    height: 40px;
+    min-height: 40px;
+    padding: 8px 10px;
+    border: 1px solid var(--border-ui, #d6dcef);
+    border-radius: var(--radius, 8px);
+    background: var(--surface, #ffffff);
+    color: var(--text-primary, #172033);
+    font-family: inherit;
+    font-size: 13px;
+    box-sizing: border-box;
+    transition: border-color var(--transition, 0.15s ease), box-shadow var(--transition, 0.15s ease);
+}
+.report-filters .quick-period-control select:focus {
+    outline: none !important;
+    border-color: var(--primary, #303192) !important;
+    box-shadow: 0 0 0 3px rgba(48, 49, 146, 0.16) !important;
+}
+
+/* Date Range Fields (From / To Date) */
+.report-filters .date-range-field {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    flex: 0 0 165px;
+    width: 165px;
+    max-width: 175px;
+    min-width: 150px;
+    margin: 0;
+}
+.report-filters .date-range-field span,
+.report-filters .date-range-field label {
+    display: block;
+    color: var(--navy-55, #68709b);
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+    line-height: 1.2;
+}
+.report-filters .date-range-field input[type="date"] {
+    width: 100%;
+    height: 40px;
+    min-height: 40px;
+    padding: 8px 11px;
+    border: 1px solid var(--border-ui, #d6dcef);
+    border-radius: var(--radius, 8px);
+    background: var(--surface, #ffffff);
+    color: var(--text-primary, #172033);
+    font-family: inherit;
+    font-size: 13px;
+    box-sizing: border-box;
+    transition: border-color var(--transition, 0.15s ease), box-shadow var(--transition, 0.15s ease);
+}
+.report-filters .date-range-field input[type="date"]:focus {
+    outline: none !important;
+    border-color: var(--primary, #303192) !important;
+    box-shadow: 0 0 0 3px rgba(48, 49, 146, 0.16) !important;
+}
+
+/* Dedicated Search Field Wrapper & Input */
+.report-search-field,
+.report-filter-search {
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    flex: 1 1 280px;
+    min-width: 260px;
+    max-width: 480px;
+    margin: 0;
+}
+.report-search-field .tdc-search,
+.report-filter-search .tdc-search,
+.report-filters .tdc-search {
+    /* This label is inside a column wrapper: generic filter flex-basis
+       would become a 240px height instead of a horizontal width. */
+    flex: 0 0 40px;
+    min-width: 0;
+    max-width: 100%;
+    max-height: 40px;
+    margin: 0;
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    height: 40px;
+    min-height: 40px;
+    padding: 0 12px;
+    border: 1px solid var(--border-ui, #d6dcef) !important;
+    border-radius: var(--radius, 8px) !important;
+    background: var(--surface, #ffffff) !important;
+    color: var(--text-muted, #7c88b1);
+    box-sizing: border-box;
+    transition: border-color var(--transition, 0.15s ease), box-shadow var(--transition, 0.15s ease);
+}
+.report-search-field .tdc-search svg,
+.report-filter-search .tdc-search svg,
+.report-filters .tdc-search svg {
+    position: static;
+    transform: none;
+    flex: 0 0 auto;
+    width: 15px;
+    height: 15px;
+    stroke: var(--text-muted, #7c88b1);
+    stroke-width: 1.8;
+    fill: none;
+    pointer-events: none;
+}
+.report-search-field .tdc-search input[type="search"],
+.report-search-field .tdc-search input,
+.report-filter-search .tdc-search input[type="search"],
+.report-filter-search .tdc-search input,
+.report-filters .tdc-search input[type="search"],
+.report-filters .tdc-search input {
+    flex: 1 1 auto;
+    width: 100% !important;
+    min-width: 0 !important;
+    height: 38px !important;
+    min-height: 38px !important;
+    padding: 0 4px !important;
+    border: 0 !important;
+    outline: none !important;
+    background: transparent !important;
+    color: var(--text-primary, #172033) !important;
+    font-family: inherit;
+    font-size: 13px;
+    box-shadow: none !important;
+}
+.report-search-field .tdc-search input::placeholder,
+.report-filter-search .tdc-search input::placeholder,
+.report-filters .tdc-search input::placeholder {
+    color: #9aa1bc !important;
+    opacity: 1;
+}
+
+/* Clear Button inside Search */
+.report-search-field .tdc-search__clear,
+.report-filters .tdc-search__clear {
+    flex: 0 0 auto;
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    background: transparent;
+    color: var(--text-muted, #7c88b1);
+    cursor: pointer;
+    font-size: 18px;
+    line-height: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.report-search-field .tdc-search__clear:hover,
+.report-filters .tdc-search__clear:hover {
+    color: var(--text-primary, #172033);
+}
+
+/* Indigo Focus Ring (Never Red or Orange) */
+.report-search-field .tdc-search:focus-within,
+.report-filter-search .tdc-search:focus-within,
+.report-filters .tdc-search:focus-within {
+    outline: none !important;
+    border-color: var(--primary, #303192) !important;
+    box-shadow: 0 0 0 3px rgba(48, 49, 146, 0.16) !important;
+}
+.report-search-field .tdc-search input:focus,
+.report-search-field .tdc-search input:focus-visible,
+.report-filter-search .tdc-search input:focus,
+.report-filter-search .tdc-search input:focus-visible,
+.report-filters .tdc-search input:focus,
+.report-filters .tdc-search input:focus-visible {
+    outline: none !important;
+    border: 0 !important;
+    box-shadow: none !important;
+}
+
+/* Status Filter Dropdown */
+.report-filters .report-filter-status,
+.report-filters label.table-filter:not(.tdc-search) {
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    flex: 0 1 180px;
+    min-width: 160px;
+    max-width: 210px;
+    margin: 0;
+}
+.report-filters .report-filter-status select,
+.report-filters label.table-filter:not(.tdc-search) select {
+    width: 100%;
+    height: 40px;
+    min-height: 40px;
+    padding: 8px 12px;
+    border: 1px solid var(--border-ui, #d6dcef);
+    border-radius: var(--radius, 8px);
+    background: var(--surface, #ffffff);
+    color: var(--text-primary, #172033);
+    font-family: inherit;
+    font-size: 13px;
+    box-sizing: border-box;
+    cursor: pointer;
+    transition: border-color var(--transition, 0.15s ease), box-shadow var(--transition, 0.15s ease);
+}
+.report-filters .report-filter-status select:focus,
+.report-filters label.table-filter:not(.tdc-search) select:focus {
+    outline: none !important;
+    border-color: var(--primary, #303192) !important;
+    box-shadow: 0 0 0 3px rgba(48, 49, 146, 0.16) !important;
+}
+
+/* Filter Actions (Apply Filters + Reset) */
+.report-filter-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+    align-self: flex-end;
+    margin: 0;
+}
+.report-filter-actions .btn {
+    height: 40px;
+    min-height: 40px;
+    padding: 0 14px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    font-size: 12.5px;
+    font-weight: 650;
+    white-space: nowrap;
+    flex-shrink: 0;
+    box-sizing: border-box;
+}
+
+/* Export / Print Group */
+.report-export-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    width: 100%;
+}
+.report-export-actions .export-group {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+/* Responsive Media Queries */
+@media (max-width: 1024px) {
+    .report-filters .quick-period-control { flex: 0 0 120px; }
+    .report-filters .date-range-field { flex: 0 0 150px; }
+    .report-search-field, .report-filter-search { flex: 1 1 280px; min-width: 260px; }
+    .report-filters .report-filter-status, .report-filters label.table-filter:not(.tdc-search) { flex: 0 1 160px; min-width: 140px; }
+}
+
+@media (max-width: 768px) {
+    .report-toolbar { gap: 10px; }
+    .report-filters { gap: 10px; }
+    .report-filters .quick-period-control { flex: 1 1 calc(50% - 5px); width: auto; }
+    .report-filters .date-range-field { flex: 1 1 calc(50% - 5px); max-width: none; }
+    .report-search-field, .report-filter-search { flex: 1 1 100%; min-width: 0; max-width: 100%; width: 100%; }
+    .report-filters .report-filter-status, .report-filters label.table-filter:not(.tdc-search) { flex: 1 1 100%; max-width: 100%; width: 100%; }
+    .report-filter-actions { width: 100%; display: flex; }
+    .report-filter-actions .btn { flex: 1; }
+    .report-export-actions { justify-content: stretch; width: 100%; }
+    .report-export-actions .export-group { width: 100%; display: flex; }
+    .report-export-actions .export-group .btn { flex: 1; }
+}
+

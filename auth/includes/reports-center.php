@@ -936,33 +936,37 @@ if (!function_exists('tdc_rc_render_report')) {
         $statusValue = (string) ($filters['status'] ?? '');
         $isInventory = in_array($key, ['pharmacy-stock', 'pharmacy-low-stock', 'pharmacy-expiry'], true);
         $clearUrl = 'reports.php?section=' . urlencode($key);
-        $html .= '<div class="report-toolbar no-print">'
+        $html .= '<div class="report-toolbar report-filter-toolbar no-print">'
             . '<form class="report-filters report-filter-form" data-report-filter method="get" action="reports.php">'
             . '<input type="hidden" name="section" value="' . tdc_ui_h($key) . '">'
-            . '<label class="quick-period-control">Quick Period<select data-quick-period aria-label="Quick period">'
+            . '<label class="quick-period-control report-filter-group"><span>Quick Period</span><select data-quick-period aria-label="Quick period">'
             . '<option value="custom">Custom</option><option value="today">Today</option><option value="yesterday">Yesterday</option><option value="this_week">This Week</option><option value="this_month">This Month</option><option value="last_month">Last Month</option><option value="this_year">This Year</option>'
             . '</select></label>';
         if (!$isInventory) {
-            $html .= '<label class="date-range-field"><span>From Date</span><input type="date" name="from_date" value="' . tdc_ui_h($fromValue) . '"></label>'
-                . '<label class="date-range-field"><span>To Date</span><input type="date" name="to_date" value="' . tdc_ui_h($toValue) . '"></label>';
+            $html .= '<label class="date-range-field report-filter-group"><span>From Date</span><input type="date" name="from_date" value="' . tdc_ui_h($fromValue) . '"></label>'
+                . '<label class="date-range-field report-filter-group"><span>To Date</span><input type="date" name="to_date" value="' . tdc_ui_h($toValue) . '"></label>';
         }
-        $html .= tdc_search_field('search', $searchValue, 'Search this report...');
+        $html .= '<div class="report-search-field report-filter-search">'
+            . tdc_search_field('search', $searchValue, 'Search this report...')
+            . '</div>';
         if ($statusOptions) {
             $filterLabel = $key === 'transactions' ? 'Filter by account type' : 'Filter by payment status';
             $allLabel = $key === 'transactions' ? 'All account types' : (in_array($key, $financialKeys, true) ? 'All Payment Statuses' : 'All statuses');
-            $html .= '<label class="table-filter"><select name="status" aria-label="' . tdc_ui_h($filterLabel) . '">'
+            $html .= '<label class="table-filter report-filter-status report-filter-group"><select name="status" aria-label="' . tdc_ui_h($filterLabel) . '">'
                 . '<option value="">' . tdc_ui_h($allLabel) . '</option>';
             foreach ($statusOptions as $opt) {
                 $html .= '<option value="' . tdc_ui_h($opt) . '"' . ($statusValue === $opt ? ' selected' : '') . '>' . tdc_ui_h($opt) . '</option>';
             }
             $html .= '</select></label>';
         }
-        $html .= '<button type="submit" class="btn btn-primary btn-sm">' . tdc_icon('filter', 14) . '<span>Apply Filters</span></button>'
+        $html .= '<div class="report-filter-actions">'
+            . '<button type="submit" class="btn btn-primary btn-sm">' . tdc_icon('filter', 14) . '<span>Apply Filters</span></button>'
             . '<a class="btn btn-secondary btn-sm" href="' . tdc_ui_h($clearUrl) . '">' . tdc_icon('refresh', 14) . '<span>Reset</span></a>'
+            . '</div>'
             . '</form>';
         if ($isInventory) $html .= '<span class="report-context">Current inventory snapshot</span>';
         $exportMarkup = str_replace('data-print-page', 'data-print-page data-report-action="print" data-report-section="' . tdc_ui_h($key) . '"', tdc_export_buttons($exportLinks));
-        $html .= $exportMarkup;
+        $html .= '<div class="report-export-actions">' . $exportMarkup . '</div>';
         $html .= '</div>';
 
         $summary = tdc_rc_summary_cards($columns, $rows);

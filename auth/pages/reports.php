@@ -734,19 +734,7 @@ $currentPage   = basename((string) ($_SERVER['SCRIPT_NAME'] ?? 'reports.php'));
     .report-tag{ font-size:9.5px; font-weight:700; letter-spacing:0.06em; text-transform:uppercase; padding:2px 6px; background:var(--navy-10); color:var(--navy-55); }
     .report-breadcrumb{margin-bottom:5px;color:var(--navy-55);font-size:11px;font-weight:650;}.report-head{ display:flex; align-items:flex-start; gap:12px; margin:14px 0 18px; }
     .report-head-icon{ display:grid; place-items:center; width:40px; height:40px; flex-shrink:0; background:var(--navy-10); color:var(--navy); }
-    .quick-period-control { display:grid; gap:4px; color:var(--navy-55); font-size:10px; font-weight:700; letter-spacing:.04em; text-transform:uppercase; }
-.quick-period-control select { min-height:36px; padding:7px 9px; border:1px solid var(--border-ui); border-radius:var(--radius); background:var(--white); color:var(--navy); }
-.selected-period-label { margin-top:7px; color:var(--navy-55); font-size:12px; font-weight:650; }
-.report-table-tools { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-top:12px; color:var(--navy-55); font-size:12px; }
-.report-table-tools label { display:flex; align-items:center; gap:6px; }
-.report-table-tools select { min-height:32px; padding:5px 8px; border:1px solid var(--border-ui); border-radius:var(--radius); }
-.report-table-tools [data-page-status] { margin-right:auto; }
-.data-table-wrap { overflow:auto; max-height:calc(100vh - 330px); }
-.data-table-wrap .data-table thead th { position:sticky; top:0; z-index:1; cursor:pointer; }
-.data-table-wrap .data-table tbody tr:hover { background:var(--primary-soft); }
-.report-toolbar{ display:flex; flex-wrap:wrap; align-items:flex-end; gap:12px; margin-bottom:16px; }
-    .report-context{ align-self:center; color:var(--navy-55); font-size:12px; font-weight:600; }
-    .report-filters{ display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
+    /* Shared report filter styling lives in assets/clinic.css. */
     .report-summary{ display:flex; flex-wrap:wrap; gap:10px; margin-bottom:16px; }
     .report-summary-card{ display:flex; flex-direction:column; gap:2px; min-width:150px; padding:10px 14px; border:var(--border); background:var(--white); }
     .report-summary-label{ font-size:10.5px; font-weight:700; letter-spacing:0.06em; text-transform:uppercase; color:var(--navy-55); }
