@@ -10,7 +10,7 @@ The file does not select a hardcoded database name, drop tables, copy patient re
 
 ## 2. Create the main user — choose ONE method
 
-The username is **superadmin**. A unique strong password is generated on each setup invocation; there is no shared default password. Passwords are stored using PHP `password_hash`, compatible with the application's login. Existing root/admin accounts (even inactive ones) and an existing `superadmin` username block creation; nothing is reset or promoted.
+The username is **superadmin**. The user-requested local default password is **superadmin@2026**. Change this shared default before non-local use. Passwords are stored using PHP `password_hash`, compatible with the application's login. Existing root/admin accounts (even inactive ones) and an existing `superadmin` username block creation; nothing is reset or promoted. A `TDC_BOOTSTRAP_PASSWORD` environment variable overrides the local default and must meet the stronger password requirements below.
 
 ### A. InfinityFree / phpMyAdmin without server terminal access
 
@@ -38,7 +38,7 @@ C:\xampp\php\php.exe scripts\create_default_superadmin.php
 
 On a host with PHP on PATH, use `php scripts/create_default_superadmin.php` instead.
 
-Save the printed password privately. A repeat run leaves the account/password unchanged and does not print a replacement password. `--reset-password` is deliberately unsupported. The script is CLI-only; opening it in a browser returns 404.
+The script prints the local default password after successful creation. A repeat run leaves the account/password unchanged and does not print a replacement password. `--reset-password` is deliberately unsupported. The script is CLI-only; opening it in a browser returns 404.
 
 For an operator-supplied password, set `TDC_BOOTSTRAP_PASSWORD` before running and clear it afterward. It must contain uppercase, lowercase, a digit and a symbol and be 12–72 bytes. Supplied passwords are not printed. Avoid putting real passwords in source files or command history.
 

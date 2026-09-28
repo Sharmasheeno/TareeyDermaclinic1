@@ -29,7 +29,7 @@ The production installer creates the schema and roles but no password. After con
 php scripts/create_default_superadmin.php
 ```
 
-This prints the username `superadmin` and a unique generated password on successful creation. Save it privately. An existing administrator (including an inactive one) or an existing `superadmin` username is left unchanged; this is not a password reset tool. You can optionally supply a strong password through `TDC_BOOTSTRAP_PASSWORD`.
+The script now defaults to the user-requested LOCAL password `superadmin@2026`. For production, override it with a unique strong password through `TDC_BOOTSTRAP_PASSWORD`; do not deploy the shared local default. An existing administrator (including an inactive one) or an existing `superadmin` username is left unchanged; this is not a password reset tool.
 
 If InfinityFree does not provide shell access, run the script LOCALLY with `--sql-output=PRIVATE_FILE.sql`, then import that file through phpMyAdmin after importing the schema. This mode does not connect to any database. Verify the final result is `created=1`, then remove the private SQL file. Keep it outside public web folders. Do not create an unauthenticated web setup endpoint. Do not copy local test accounts into production.
 

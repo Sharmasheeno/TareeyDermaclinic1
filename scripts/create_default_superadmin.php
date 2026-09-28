@@ -4,13 +4,17 @@ declare(strict_types=1);
 if (PHP_SAPI !== 'cli') { http_response_code(404); exit('Not found'); }
 require_once __DIR__ . '/superadmin_bootstrap_lib.php';
 
+// User-requested local setup password. Change it before non-local use.
+const TDC_LOCAL_DEFAULT_ADMIN_PASSWORD = 'superadmin@2026';
+
 $output = null;
 foreach (array_slice($argv, 1) as $argument) {
     if ($argument === '--help') {
         echo "Usage: php scripts/create_default_superadmin.php [--sql-output=PRIVATE_FILE.sql]\n";
         echo "No option: create once in the database configured by db.php.\n";
         echo "--sql-output: generate a private phpMyAdmin import file WITHOUT connecting to a database.\n";
-        echo "Optional password: TDC_BOOTSTRAP_PASSWORD environment variable; otherwise securely generated.\n";
+        echo "Local default password: superadmin@2026 (change before non-local use).\n";
+        echo "Optional override: TDC_BOOTSTRAP_PASSWORD environment variable.\n";
         exit(0);
     }
     if (str_starts_with($argument, '--sql-output=') && $output === null) {
@@ -22,8 +26,10 @@ foreach (array_slice($argv, 1) as $argument) {
 
 try {
     $supplied = getenv('TDC_BOOTSTRAP_PASSWORD');
-    $password = $supplied === false ? 'Aa1!' . bin2hex(random_bytes(18)) : $supplied;
-    tdc_bootstrap_validate_password($password);
+    $password = $supplied === false ? TDC_LOCAL_DEFAULT_ADMIN_PASSWORD : $supplied;
+    // The explicitly requested local default has no uppercase character.
+    // Keep the stronger validation unchanged for operator-supplied overrides.
+    if ($supplied !== false) tdc_bootstrap_validate_password($password);
     $hash = password_hash($password, PASSWORD_DEFAULT);
     if ($output !== null) {
         if ($output === '' || strtolower(pathinfo($output, PATHINFO_EXTENSION)) !== 'sql') {
@@ -52,7 +58,7 @@ try {
     }
     echo "Username: superadmin\n";
     echo $supplied === false
-        ? "Generated password (save privately now): {$password}\n"
+        ? "Local default password: {$password}\nChange this shared default before non-local use.\n"
         : "Password: the value supplied through TDC_BOOTSTRAP_PASSWORD (not displayed).\n";
 } catch (Throwable $e) {
     fwrite(STDERR, 'Setup failed: ' . ($e instanceof PDOException ? 'Database operation failed; check the fresh schema and database configuration.' : $e->getMessage()) . "\n");
