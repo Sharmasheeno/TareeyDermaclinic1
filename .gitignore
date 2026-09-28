@@ -17,7 +17,6 @@ scripts/*-test-results.json
 scripts/*-audit-run.txt
 scripts/*_latest.txt
 scripts/button-action-inventory.json
-scripts/generate_production_install.php
 scripts/migrate_payments_ledger.php
 scripts/reconcile_legacy_pos.php
 scripts/reconcile_pharmacy_cogs.php
@@ -26,6 +25,7 @@ scripts/test_legacy_pos_payment.php
 scripts/test_legacy_pos_reconciliation.php
 scripts/test_pharmacy_cogs.php
 scripts/verify_clean_install.php
+database/superadmin-bootstrap*.sql
 scripts/verify_production_readiness.php
 
 # Development database seed (not for production)

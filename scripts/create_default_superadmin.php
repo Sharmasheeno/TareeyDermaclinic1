@@ -1,103 +1,60 @@
 <?php
-/**
- * One-time local setup script for creating the default Superadmin user.
- *
- * Run from the project root:
- *   C:\xampp\php\php.exe scripts\create_default_superadmin.php
- *
- * To reset the password for the same username:
- *   C:\xampp\php\php.exe scripts\create_default_superadmin.php --reset-password
- */
+/** Create the first root account once; never reset or promote an existing user. */
 declare(strict_types=1);
+if (PHP_SAPI !== 'cli') { http_response_code(404); exit('Not found'); }
+require_once __DIR__ . '/superadmin_bootstrap_lib.php';
 
-if (PHP_SAPI !== 'cli') {
-    http_response_code(404);
-    exit('Not found');
-}
-
-require_once __DIR__ . '/../db.php';
-
-const DEFAULT_SUPERADMIN_NAME = 'Default Superadmin';
-const DEFAULT_SUPERADMIN_ROLE = 'superuser';
-const DEFAULT_SUPERADMIN_USERNAME = 'superadmin';
-
-$resetPassword = in_array('--reset-password', $argv, true);
-$suppliedPassword = getenv('TDC_BOOTSTRAP_PASSWORD');
-$bootstrapPassword = (string) ($suppliedPassword ?: bin2hex(random_bytes(16)));
-if ($suppliedPassword !== false && (
-    mb_strlen($bootstrapPassword) < 12
-    || !preg_match('/[A-Z]/', $bootstrapPassword)
-    || !preg_match('/[a-z]/', $bootstrapPassword)
-    || !preg_match('/[0-9]/', $bootstrapPassword)
-    || !preg_match('/[^A-Za-z0-9]/', $bootstrapPassword)
-)) {
-    fwrite(STDERR, "TDC_BOOTSTRAP_PASSWORD must be at least 12 characters and include upper, lower, number, and symbol characters.\n");
-    exit(1);
+$output = null;
+foreach (array_slice($argv, 1) as $argument) {
+    if ($argument === '--help') {
+        echo "Usage: php scripts/create_default_superadmin.php [--sql-output=PRIVATE_FILE.sql]\n";
+        echo "No option: create once in the database configured by db.php.\n";
+        echo "--sql-output: generate a private phpMyAdmin import file WITHOUT connecting to a database.\n";
+        echo "Optional password: TDC_BOOTSTRAP_PASSWORD environment variable; otherwise securely generated.\n";
+        exit(0);
+    }
+    if (str_starts_with($argument, '--sql-output=') && $output === null) {
+        $output = substr($argument, strlen('--sql-output='));
+    } else {
+        fwrite(STDERR, "Unknown option. Use --help. Password resets are not supported.\n"); exit(1);
+    }
 }
 
 try {
-    $roleId = (int) $pdo->query("SELECT RoleID FROM roles WHERE RoleKey='superuser' LIMIT 1")->fetchColumn();
-    if ($roleId < 1) {
-        throw new RuntimeException('Run scripts/migrate_setup_rbac.php before creating the root SuperAdmin.');
-    }
-    $stmt = $pdo->prepare(
-        'SELECT id, username, role
-         FROM users
-         WHERE username = :username
-         LIMIT 1'
-    );
-    $stmt->execute(['username' => DEFAULT_SUPERADMIN_USERNAME]);
-    $existingUser = $stmt->fetch();
-
-    $passwordHash = password_hash($bootstrapPassword, PASSWORD_DEFAULT);
-
-    if ($existingUser) {
-        if ($resetPassword) {
-            $stmt = $pdo->prepare(
-                'UPDATE users
-                 SET userlegalname = :userlegalname,
-                     role = :role,
-                     role_id = :role_id,
-                     is_active = 1,
-                     is_root = 1,
-                     password = :password
-                 WHERE id = :id'
-            );
-            $stmt->execute([
-                'userlegalname' => DEFAULT_SUPERADMIN_NAME,
-                'role'          => DEFAULT_SUPERADMIN_ROLE,
-                'role_id'       => $roleId,
-                'password'      => $passwordHash,
-                'id'            => $existingUser['id'],
-            ]);
-
-            echo "Default Superadmin password was reset.\n";
-        } else {
-            echo "Default Superadmin already exists. No changes made.\n";
-            echo "Use --reset-password if you want to reset its password.\n";
+    $supplied = getenv('TDC_BOOTSTRAP_PASSWORD');
+    $password = $supplied === false ? 'Aa1!' . bin2hex(random_bytes(18)) : $supplied;
+    tdc_bootstrap_validate_password($password);
+    $hash = password_hash($password, PASSWORD_DEFAULT);
+    if ($output !== null) {
+        if ($output === '' || strtolower(pathinfo($output, PATHINFO_EXTENSION)) !== 'sql') {
+            throw new RuntimeException('Choose a new private .sql file path.');
         }
+        $file = @fopen($output, 'x');
+        if (!$file) throw new RuntimeException('Cannot create output file (path missing or file already exists).');
+        $sql = "-- PRIVATE: import once in phpMyAdmin AFTER the fresh schema. Never upload to public web space.\n"
+            . "-- Final result: created=1 means success; created=0 means an existing account or missing role.\n"
+            . "START TRANSACTION;\n" . tdc_bootstrap_lock_sql() . ";\n"
+            . tdc_bootstrap_insert_sql("'" . $hash . "'") . ";\n"
+            . "SET @tdc_root_created = ROW_COUNT();\nCOMMIT;\nSELECT @tdc_root_created AS created;\n";
+        try {
+            if (fwrite($file, $sql) !== strlen($sql)) throw new RuntimeException('Could not write complete SQL file. Do not import it.');
+        } finally { fclose($file); }
+        echo "Private SQL file prepared. No database was changed.\n";
+        echo "Import it into the fresh database; verify created=1, then delete the private SQL file.\n";
+        echo "Credentials below work only if that import creates the account.\n";
     } else {
-        $stmt = $pdo->prepare(
-            'INSERT INTO users (userlegalname,role,role_id,username,password,is_active,is_root)
-             VALUES (:userlegalname,:role,:role_id,:username,:password,1,1)'
-        );
-        $stmt->execute([
-            'userlegalname' => DEFAULT_SUPERADMIN_NAME,
-            'role'          => DEFAULT_SUPERADMIN_ROLE,
-            'role_id'       => $roleId,
-            'username'      => DEFAULT_SUPERADMIN_USERNAME,
-            'password'      => $passwordHash,
-        ]);
-
-        echo "Default Superadmin created successfully.\n";
+        require __DIR__ . '/../db.php';
+        if (!tdc_bootstrap_create($pdo, $hash)) {
+            echo "An administrator or the superadmin username already exists. No changes made; no password reset.\n";
+            exit(0);
+        }
+        echo "SuperAdmin created successfully.\n";
     }
-
-    echo "\nLogin username: " . DEFAULT_SUPERADMIN_USERNAME . "\n";
-    if ($suppliedPassword === false) echo "Generated password (store securely now): " . $bootstrapPassword . "\n";
-    else echo "Password supplied securely through TDC_BOOTSTRAP_PASSWORD.\n";
-    echo "Role: Superadmin\n";
+    echo "Username: superadmin\n";
+    echo $supplied === false
+        ? "Generated password (save privately now): {$password}\n"
+        : "Password: the value supplied through TDC_BOOTSTRAP_PASSWORD (not displayed).\n";
 } catch (Throwable $e) {
-    error_log('[CREATE DEFAULT SUPERADMIN ERROR] ' . $e->getMessage());
-    fwrite(STDERR, "Failed to create default Superadmin. Check the database connection and users table.\n");
+    fwrite(STDERR, 'Setup failed: ' . ($e instanceof PDOException ? 'Database operation failed; check the fresh schema and database configuration.' : $e->getMessage()) . "\n");
     exit(1);
 }

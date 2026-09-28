@@ -15,24 +15,28 @@ The upgrade file is additive and rerunnable. It creates missing tables, columns,
 2. Import `infinityfree_fresh.sql`.
 3. Create the single production root account using the bootstrap process below.
 
-The fresh file is destructive if imported into a non-empty database because it drops application tables first. It contains no demo users or business records.
+The fresh file is identical to `production_install.sql`. It creates 43 tables and seeds only default roles, permissions, manual payment methods and clinic settings. It contains no users or business records and no DROP statements. Import ONE of these files into an EMPTY database only; it is not an upgrade script. Stop on any import error instead of continuing in a partially populated database.
+
+See [FRESH_DATABASE_SETUP.md](FRESH_DATABASE_SETUP.md) for the complete fresh-install and one-time SuperAdmin instructions, including the no-terminal phpMyAdmin option.
 
 ## Application configuration
 
 Configure the production database credentials on the server through environment variables, or create a server-only `db.local.php` with the InfinityFree SQL host (for example `sql###.infinityfree.com`), database name, database username, and password. Never use `127.0.0.1`, `localhost`, the website domain, or the local XAMPP database name on InfinityFree. Never commit those credentials.
 
-The production installer creates the schema and roles but no password. Create the root account with:
+The production installer creates the schema and roles but no password. After configuring the NEW database, create the root account with:
 
 ```text
-TDC_BOOTSTRAP_PASSWORD="A strong unique password" php scripts/create_default_superadmin.php
+php scripts/create_default_superadmin.php
 ```
 
-If InfinityFree does not provide shell access, run the same bootstrap logic once through a protected deployment-only method, then remove that method. Production should retain one active root SuperAdmin; the local `e2e_local_superuser` is excluded from production checks and should not be copied to the live database.
+This prints the username `superadmin` and a unique generated password on successful creation. Save it privately. An existing administrator (including an inactive one) or an existing `superadmin` username is left unchanged; this is not a password reset tool. You can optionally supply a strong password through `TDC_BOOTSTRAP_PASSWORD`.
+
+If InfinityFree does not provide shell access, run the script LOCALLY with `--sql-output=PRIVATE_FILE.sql`, then import that file through phpMyAdmin after importing the schema. This mode does not connect to any database. Verify the final result is `created=1`, then remove the private SQL file. Keep it outside public web folders. Do not create an unauthenticated web setup endpoint. Do not copy local test accounts into production.
 
 ## Verification
 
 After import, run `scripts/verify_production_readiness.php` from a trusted local environment connected to the production database. It checks role mappings, balanced accounting references, payment reference uniqueness, patient balance reconciliation, and the single-root-SuperAdmin rule.
 
 ### Patient billing adjustments
-Run database/patient_billing_adjustments_migration.sql (or the appended equivalent in the deployment SQL) once. It adds bill-level discount/tax snapshots without changing existing totals or payment rows.
+Existing databases may require `database/patient_billing_adjustments_migration.sql`. Fresh installs already include this table, Services billing links, prescription cost/price snapshots, and the free-consultation flag; do not run legacy migrations over a fresh import.
 
